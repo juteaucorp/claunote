@@ -16,7 +16,7 @@ services:
     volumes:
       - ${KDRIVE_ETUDES}:/etudes
     ports:
-      - "127.0.0.1:8000:8000"   # exposé uniquement via Tailscale / Caddy
+      - "${BIND_ADDR:-127.0.0.1}:8000:8000"   # IP de la VM sur ton VPN, jamais 0.0.0.0
     depends_on: [db]
 
   worker:
