@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_icones.html" import icone %}
 {% block titre %}{{ genres[rev.genre] }} : {{ rev.sujet }}{% endblock %}
-{% block tete %}{% if rev.statut == 'en_attente' %}<meta http-equiv="refresh" content="8">{% endif %}{% endblock %}
+{% block vivant %}{% if rev.statut == 'en_attente' %}recharger{% endif %}{% endblock %}
 {% block contenu %}
 {% include "_reviser.html" %}
 <p class="fil"><a href="/reviser">Réviser</a>{% if rev.campagne_id %} › <a href="/campagne/{{ rev.campagne_id }}">{{ rev.campagne_titre }}</a>{% endif %} › {{ genres[rev.genre] }}</p>

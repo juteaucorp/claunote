@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import datetime as dt
 import html
 import json
@@ -130,6 +131,8 @@ def bandeau_service() -> tuple[str, str] | None:
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.globals["bandeau_service"] = bandeau_service
+# Empreinte du contenu d'une page : le rafraîchissement invisible ne touche à la page que si elle a changé
+templates.env.filters["empreinte"] = lambda html_: hashlib.sha1(str(html_).encode()).hexdigest()[:16]
 templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
 templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirmer()
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
@@ -270,7 +273,7 @@ def bibliotheque(request: Request):
     arbre = defaultdict(lambda: defaultdict(list))
     for r in db.bibliotheque():
         arbre[r["niveau"]][r["matiere"]].append(r)
-    niveaux = [n for n in NIVEAUX if n in arbre]
+    niveaux = [n for n in reversed(NIVEAUX) if n in arbre]  # le plus récent (BTS2) en haut, le collège en bas
     return templates.TemplateResponse(request, "bibliotheque.html", {
         "arbre": arbre, "niveaux": niveaux, "nb_hors_cours": db.nb_hors_cours()})
 

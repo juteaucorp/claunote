@@ -244,15 +244,15 @@
     <nav class="haut" aria-label="Menu">
       <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">Aujourd'hui</a>
       <a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">Cours</a>
-      <a href="/reviser" class="{{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
-      <a href="/agenda" class="{{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
+      <a href="/reviser" id="maj-h-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
+      <a href="/agenda" id="maj-h-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
     </nav>
     <div class="outils">
       <form action="/recherche" class="recherche-entete"><input name="q" type="search" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
       <a href="/recherche" class="bouton-icone loupe" title="Rechercher" aria-label="Rechercher">{{ icone('recherche', 20) }}</a>
       <a href="/deposer" class="bouton-icone {{ 'actif' if chemin.startswith('/deposer') }}" title="Déposer des scans" aria-label="Déposer">{{ icone('deposer', 20) }}</a>
       <details class="menu-plus" data-menu>
-        <summary class="bouton-icone {{ 'actif' if rubrique == 'plus' }}" title="Plus : à vérifier, organiser, compte…" aria-label="Plus">{{ icone('plus', 20) }}{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
+        <summary id="maj-h-plus" class="maj bouton-icone {{ 'actif' if rubrique == 'plus' }}" title="Plus : à vérifier, organiser, compte…" aria-label="Plus">{{ icone('plus', 20) }}{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
         <div class="feuille-haut">{{ liens_plus() }}</div>
       </details>
     </div>
@@ -263,10 +263,10 @@
 <nav class="onglets verre" aria-label="Onglets">
   <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">{{ icone('accueil') }}Aujourd'hui</a>
   <a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}Cours</a>
-  <a href="/reviser" class="{{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
-  <a href="/agenda" class="{{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
+  <a href="/reviser" id="maj-o-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
+  <a href="/agenda" id="maj-o-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
   <details id="plus" data-menu>
-    <summary class="{{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
+    <summary id="maj-o-plus" class="maj {{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
     <div class="feuille verre">{{ liens_plus() }}</div>
   </details>
 </nav>
@@ -274,11 +274,15 @@
 <main>
   {% if not sans_nav %}<p id="retour-scan" class="carte accent"></p>
   {% set panne = bandeau_service() if not chemin.startswith('/etat') else None %}
-  {% if panne %}<a class="carte bandeau" href="/etat">{{ icone('etat', 20) }}<span><strong>{{ panne[0] }}</strong>{% if panne[1] %}<br><span class="doux">{{ panne[1] }}</span>{% endif %}</span></a>{% endif %}
+  <div id="maj-bandeau" class="maj">{% if panne %}<a class="carte bandeau" href="/etat">{{ icone('etat', 20) }}<span><strong>{{ panne[0] }}</strong>{% if panne[1] %}<br><span class="doux">{{ panne[1] }}</span>{% endif %}</span></a>{% endif %}</div>
   {% if mdp_par_defaut() and not chemin.startswith('/compte') %}<p class="carte accent">⚠️ Tu utilises le mot de passe par défaut
     (<code>admin</code> / <code>claunote</code>). <a href="/compte">Change-le maintenant</a>.</p>{% endif %}
   {% endif %}
-  {% block contenu %}{% endblock %}
+  {# Rafraîchissement invisible : la page se met à jour toute seule (voir le script plus bas) #}
+  {% set contenu_html = self.contenu() %}
+  {% set vivant = self.vivant()|trim %}
+  <div id="contenu"{% if vivant %} data-vivant="{{ vivant }}" data-empreinte="{{ contenu_html|empreinte }}"{% endif %}>{{ contenu_html }}</div>
+  {% if false %}{% block contenu %}{% endblock %}{% block vivant %}{% endblock %}{% endif %}
 </main>
 <script>
   // Menus « Plus » : se ferment en touchant ailleurs
@@ -296,6 +300,71 @@
   };
   document.addEventListener("touchstart", precharger, { passive: true });
   document.addEventListener("mousedown", precharger);
+  {% if not sans_nav %}
+  // Rafraîchissement invisible : toutes les 20 s quand la page est à l'écran, et dès le retour
+  // dans l'appli. Les compteurs (menus, bandeau) se mettent à jour partout ; le contenu seulement
+  // sur les pages qui le demandent (block vivant) et jamais pendant que tu écris, coches ou touches l'écran :
+  //   « remplacer » : le contenu change sur place, sans clignoter ;
+  //   « recharger » : page avec ses propres scripts (quiz…), rechargée quand son contenu a changé.
+  (() => {
+    const PERIODE = 20000;
+    let derniere = Date.now(), geste = 0, attente = PERIODE, minuteur = null, en_cours = false;
+    ["pointerdown", "keydown", "wheel", "touchmove", "input"].forEach((t) =>
+      document.addEventListener(t, () => { geste = Date.now(); }, { passive: true, capture: true }));
+    const modifie = (zone) => {
+      const actif = document.activeElement;
+      if (actif && zone.contains(actif) && actif.matches("input, textarea, select, [contenteditable]")) return true;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed && zone.contains(sel.anchorNode)) return true;
+      return [...zone.querySelectorAll("input, textarea, select")].some((c) =>
+        c.type === "checkbox" || c.type === "radio" ? c.checked !== c.defaultChecked
+        : c.tagName === "SELECT" ? [...c.options].some((o) => o.selected !== o.defaultSelected)
+        : c.type !== "hidden" && c.type !== "file" ? c.value !== c.defaultValue : c.files && c.files.length > 0);
+    };
+    const planifier = (ms) => { clearTimeout(minuteur); minuteur = setTimeout(rafraichir, ms); };
+    async function rafraichir() {
+      if (document.hidden || en_cours) return;
+      if (Date.now() - geste < 4000) { planifier(5000); return; }  // tu es en train de toucher la page
+      en_cours = true; derniere = Date.now();
+      try {
+        const r = await fetch(location.href, { credentials: "same-origin", cache: "no-store", headers: { "X-Rafraichir": "1" } });
+        const type = r.headers.get("content-type") || "";
+        if (!r.ok || r.redirected || !type.startsWith("text/html")) throw new Error(r.status);
+        const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+        document.querySelectorAll(".maj[id]").forEach((el) => {
+          const neuf = doc.getElementById(el.id);
+          if (neuf && neuf.outerHTML !== el.outerHTML) { el.replaceWith(neuf); if (window.htmx) htmx.process(neuf); }
+        });
+        const zone = document.getElementById("contenu"), nouvelle = doc.getElementById("contenu");
+        const mode = zone && zone.dataset.vivant;
+        if (mode && nouvelle && nouvelle.dataset.empreinte && nouvelle.dataset.empreinte !== zone.dataset.empreinte
+            && !modifie(zone) && Date.now() - geste > 4000) {
+          if (mode === "recharger" || nouvelle.dataset.vivant !== mode) { location.reload(); return; }
+          const ouverts = [...zone.querySelectorAll("details")].map((d) => d.open);
+          const y = window.scrollY;
+          zone.innerHTML = nouvelle.innerHTML;
+          zone.dataset.empreinte = nouvelle.dataset.empreinte;
+          const details = zone.querySelectorAll("details");
+          if (details.length === ouverts.length) details.forEach((d, i) => { d.open = ouverts[i]; });
+          if (window.htmx) htmx.process(zone);
+          window.scrollTo(0, y);
+        }
+        attente = PERIODE;
+      } catch (_) {
+        attente = Math.min(attente * 2, 120000);  // réseau coupé (VPN) : on espace les essais
+      } finally {
+        en_cours = false;
+        planifier(attente);
+      }
+    }
+    const retour = () => { if (!document.hidden && Date.now() - derniere > 5000) planifier(300); };
+    document.addEventListener("visibilitychange", retour);
+    window.addEventListener("pageshow", (e) => { if (e.persisted) planifier(300); });
+    window.addEventListener("online", () => planifier(300));
+    window.addEventListener("focus", retour);
+    planifier(PERIODE);
+  })();
+  {% endif %}
   {% if not sans_nav %}
   // Pastille sur l'icône de l'appli (flashcards du jour + évaluations de la semaine)
   if (navigator.setAppBadge) {

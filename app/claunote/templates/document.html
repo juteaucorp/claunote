@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block titre %}{{ doc.titre or doc.nom }}{% endblock %}
+{% block vivant %}remplacer{% endblock %}
 {% block contenu %}
 {% if doc.niveau and doc.matiere and doc.type %}
 <p class="doux"><a href="/bibliotheque">Bibliothèque</a> › {{ doc.niveau }} ›
