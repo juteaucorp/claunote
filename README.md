@@ -34,7 +34,7 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Connexion au site (identifiant + mot de passe, changeable sur le site)
 - [x] Organiser : reclassement, actions de masse par date d'ajout, rangement IA, espace « Hors cours »
 - [x] Ergonomie mobile : accueil « Aujourd'hui », onglets en bas, photo depuis le téléphone
-- [ ] Notifications push
+- [x] Appli iPhone (HTTPS local, style Liquid Glass) et notifications push (voir infra/SETUP.md §13)
 
 ## Installation et utilisation
 

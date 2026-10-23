@@ -8,8 +8,9 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1c1b1a" media="(prefers-color-scheme: dark)">
-<link rel="apple-touch-icon" href="/static/icone-192.png">
+<link rel="apple-touch-icon" href="/static/icone-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Claunote">
 {% block tete %}{% endblock %}
@@ -19,22 +20,44 @@
     --fond: #ffffff; --fond-doux: #faf9f5; --carte: #ffffff; --texte: #1f1e1d; --doux: #6f6b63;
     --bord: #ebe7de; --accent: #d97757; --accent-fonce: #b5583a; --accent-pale: #fbeee8;
     --alerte: #b5583a; --ok: #3f7d4e; --ombre: 0 1px 2px rgba(31, 30, 29, .06), 0 4px 14px rgba(31, 30, 29, .04);
+    /* Liquid Glass (iOS 26) : verre dépoli, reflet en haut, ombre douce */
+    --verre: rgba(255, 255, 255, .7); --verre-fort: rgba(255, 255, 255, .93); --verre-bord: rgba(255, 255, 255, .7);
+    --verre-reflet: inset 0 1px 0 rgba(255, 255, 255, .9), inset 0 -1px 0 rgba(255, 255, 255, .25);
+    --verre-ombre: 0 8px 32px rgba(60, 40, 20, .14), 0 1px 3px rgba(60, 40, 20, .08);
+    --verre-flou: blur(22px) saturate(180%);
+    --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(217, 119, 87, .16), transparent 60%),
+      radial-gradient(90% 50% at 0% 100%, rgba(240, 190, 140, .18), transparent 60%);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --fond: #1c1b1a; --fond-doux: #232220; --carte: #262523; --texte: #eeebe4; --doux: #a7a299;
       --bord: #38362f; --accent: #e08a6d; --accent-fonce: #f0a487; --accent-pale: #3a2a23;
       --alerte: #f0a487; --ok: #7cc28d; --ombre: none;
+      --verre: rgba(40, 38, 36, .66); --verre-fort: rgba(40, 38, 36, .93); --verre-bord: rgba(255, 255, 255, .12);
+      --verre-reflet: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 -1px 0 rgba(255, 255, 255, .04);
+      --verre-ombre: 0 8px 32px rgba(0, 0, 0, .45);
+      --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(224, 138, 109, .14), transparent 60%),
+        radial-gradient(90% 50% at 0% 100%, rgba(160, 90, 60, .12), transparent 60%);
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--fond-doux); color: var(--texte); }
+  body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--fond-ambiance), var(--fond-doux);
+    background-attachment: fixed; color: var(--texte); min-height: 100vh; }
+  @view-transition { navigation: auto; }  /* passage d'une page à l'autre en fondu, comme une appli */
+  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .18s; }
+  /* Le flou est porté par ::before : un élément flouté ne laisse pas ses enfants (le menu Plus) flouter la page */
+  .verre { isolation: isolate; border: 1px solid var(--verre-bord); box-shadow: var(--verre-reflet), var(--verre-ombre); }
+  .verre::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--verre);
+    -webkit-backdrop-filter: var(--verre-flou); backdrop-filter: var(--verre-flou); }
+  .feuille.verre::before { background: var(--verre-fort); }
+  @media (prefers-reduced-transparency: reduce) { :root { --verre: var(--carte); --verre-fort: var(--carte); } }
   a { color: var(--accent-fonce); text-underline-offset: 3px; }
   h1, h2, .marque { font-family: ui-serif, Georgia, "Times New Roman", serif; font-weight: 600; letter-spacing: -.01em; }
   h1 { font-size: 1.9rem; line-height: 1.25; margin: 4px 0 20px; }
   h2 { font-size: 1.25rem; line-height: 1.3; margin: 32px 0 12px; }
 
-  header { position: sticky; top: 0; z-index: 10; background: var(--fond); border-bottom: 1px solid var(--bord); padding-top: env(safe-area-inset-top); }
+  header { position: sticky; top: 0; z-index: 10; background: var(--verre-fort); -webkit-backdrop-filter: var(--verre-flou); backdrop-filter: var(--verre-flou);
+    border-bottom: 1px solid var(--verre-bord); box-shadow: 0 1px 0 rgba(0, 0, 0, .04); padding-top: env(safe-area-inset-top); }
   .barre { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 8px 14px; }
   .marque { display: flex; align-items: center; gap: 10px; font-size: 1.35rem; color: var(--texte); text-decoration: none; margin-right: auto; }
   .marque img { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--bord); background: #fff; }
@@ -55,21 +78,22 @@
     .marque img { width: 32px; height: 32px; border-radius: 9px; }
     .icone-entete { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 12px; color: var(--texte); }
     .icone-entete:active { background: var(--fond-doux); }
-    nav.onglets { display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-      background: var(--fond); border-top: 1px solid var(--bord); padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); }
-    nav.onglets > a, nav.onglets summary { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px;
-      color: var(--doux); text-decoration: none; font-size: .7rem; font-weight: 600; list-style: none; border-radius: 12px; }
+    /* Barre d'onglets flottante en verre, comme iOS 26 */
+    nav.onglets { display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 20;
+      max-width: 520px; margin: 0 auto; padding: 5px; border-radius: 32px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    nav.onglets > a, nav.onglets summary { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 2px 6px;
+      color: var(--texte); text-decoration: none; font-size: .66rem; font-weight: 600; list-style: none; border-radius: 26px; transition: background .2s, transform .15s; }
+    nav.onglets > a:active, nav.onglets summary:active { transform: scale(.94); }
     nav.onglets summary::-webkit-details-marker { display: none; }
-    nav.onglets .actif { color: var(--accent-fonce); }
-    nav.onglets .actif svg { background: var(--accent-pale); border-radius: 999px; }
-    nav.onglets svg { padding: 2px 10px; box-sizing: content-box; }
-    nav.onglets .badge { position: absolute; top: 0; left: calc(50% + 8px); margin: 0; min-width: 18px; line-height: 18px; font-size: .68rem; padding: 0 5px; }
+    nav.onglets .actif { color: var(--accent-fonce); background: var(--accent-pale); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
+    nav.onglets .badge { position: absolute; top: 2px; left: calc(50% + 6px); margin: 0; min-width: 18px; line-height: 18px; font-size: .68rem; padding: 0 5px; }
     nav.onglets details { margin: 0; }
-    .feuille { position: fixed; left: 8px; right: 8px; margin-left: auto; max-width: 460px; bottom: calc(70px + env(safe-area-inset-bottom)); background: var(--carte); border: 1px solid var(--bord);
-      border-radius: 18px; box-shadow: 0 10px 40px rgba(0, 0, 0, .18); padding: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-    .feuille a, .feuille button { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 12px; color: var(--texte); text-decoration: none;
+    .feuille { position: fixed; left: 12px; right: 12px; margin-left: auto; max-width: 460px; bottom: calc(80px + env(safe-area-inset-bottom));
+      border-radius: 28px; padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; animation: monter .22s cubic-bezier(.2, .9, .3, 1.2); transform-origin: bottom right; }
+    @keyframes monter { from { opacity: 0; transform: scale(.92) translateY(8px); } }
+    .feuille a, .feuille button { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 18px; color: var(--texte); text-decoration: none;
       font-weight: 500; font-size: .95rem; border: 0; background: none; width: 100%; text-align: left; }
-    .feuille a:active, .feuille button:active { background: var(--fond-doux); }
+    .feuille a:active, .feuille button:active { background: var(--accent-pale); }
     .feuille form { margin: 0; }
     .feuille .badge { margin-left: auto; }
     main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
@@ -166,6 +190,8 @@
     .carte { padding: 14px 16px; border-radius: 16px; }
     .carte.lignes { padding: 2px 16px; }
     button, a.bouton, select, input:not([type=checkbox]):not([type=radio]) { min-height: 44px; }
+    button, a.bouton { border-radius: 999px; padding-left: 18px; padding-right: 18px; }
+    .carte { border-radius: 22px; }
     table.notes .large { display: none; } table.notes td, table.notes th { padding: 6px 4px; }
     iframe.scan { display: none; }
     .scan-mobile { display: flex; }
@@ -203,14 +229,14 @@
     <a href="/deposer" class="icone-entete" aria-label="Déposer un scan">{{ icone('deposer') }}</a>
   </div>
 </header>
-<nav class="onglets" aria-label="Onglets">
+<nav class="onglets verre" aria-label="Onglets">
   <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">{{ icone('accueil') }}Aujourd'hui</a>
   <a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}Cours</a>
   <a href="/reviser" class="{{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
   <a href="/agenda" class="{{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
   <details id="plus">
     <summary class="{{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
-    <div class="feuille">
+    <div class="feuille verre">
       <a href="/deposer">{{ icone('deposer') }}Déposer</a>
       <a href="/cartes">{{ icone('cartes') }}Flashcards{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
       <a href="/a-verifier">{{ icone('verifier') }}À vérifier{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
@@ -218,6 +244,7 @@
       <a href="/hors-cours">{{ icone('hors') }}Hors cours</a>
       <a href="/recherche">{{ icone('recherche') }}Rechercher</a>
       <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" onclick="document.getElementById('plus').open = false">{{ icone('scan') }}Scanner l'inbox</button>
+      <a href="/notifications">{{ icone('cloche') }}Notifications</a>
       <a href="/compte">{{ icone('compte') }}Compte</a>
       <form method="post" action="/deconnexion"><button>{{ icone('sortie') }}Déconnexion</button></form>
     </div>
@@ -239,6 +266,13 @@
   });
   // Appli installable (PWA) : le navigateur n'accepte le service worker qu'en HTTPS ou sur localhost
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  {% if not sans_nav %}
+  // Pastille sur l'icône de l'appli (flashcards du jour + évaluations de la semaine)
+  if (navigator.setAppBadge) {
+    const n = {{ cartes_dues + evals }};
+    (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+  }
+  {% endif %}
 </script>
 </body>
 </html>

@@ -1,0 +1,21 @@
+# HTTPS devant Claunote, sans nom de domaine ni certificat payant :
+# Caddy crée sa propre autorité de certification (« Claunote »), que tu installes une fois sur l'iPhone
+# (page /installer). Les certificats du site se renouvellent tout seuls.
+{
+	# L'iPhone n'envoie pas de nom de serveur (SNI) quand on tape une adresse IP
+	default_sni {$CLAUNOTE_HOTE}
+	skip_install_trust
+	pki {
+		ca local {
+			name "Claunote"
+			root_cn "Claunote (autorite locale)"
+			intermediate_cn "Claunote (intermediaire)"
+		}
+	}
+}
+
+https://{$CLAUNOTE_HOTE} {
+	tls internal
+	encode zstd gzip
+	reverse_proxy web:8000
+}

@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block titre %}Compte{% endblock %}
+{% from "_icones.html" import icone %}
 {% block contenu %}
 <h1>Compte</h1>
 <p class="doux">Connecté en tant que <strong>{{ utilisateur }}</strong>.</p>
+<div class="actions" style="margin-bottom: 16px">
+  <a class="bouton" href="/notifications">{{ icone('cloche', 18) }}Notifications</a>
+  <a class="bouton" href="/installer">{{ icone('telephone', 18) }}Installer sur l'iPhone</a>
+</div>
 <form method="post" action="/compte" class="carte" style="max-width: 420px">
   <strong>Changer le mot de passe</strong>
   {% if erreur %}<p class="alerte">{{ erreur }}</p>{% endif %}
