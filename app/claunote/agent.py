@@ -1,20 +1,29 @@
 """Analyse d'un scan avec Claude Code en mode non interactif (`claude -p`).
 
 Utilise le forfait Claude Pro via CLAUDE_CODE_OAUTH_TOKEN : pas de clé API.
-Une seule passe par document : transcription Markdown + classement en JSON.
+Une passe par document : transcription Markdown + classement en JSON, avec le modèle
+de la tâche (modeles.py). Si l'agent doute, un modèle plus fort donne un second avis.
+
+Les échecs sont triés pour que le worker sache quoi faire :
+- LimiteAtteinte : limite du forfait, pause jusqu'à l'heure de reprise annoncée ;
+- ClaudeIndisponible : panne, réseau, surcharge (déjà réessayé ici) : on réessaie plus tard,
+  sans marquer le document en erreur ; ClaudeDeconnecte : jeton refusé ou expiré ;
+- ErreurAgent : le document lui-même pose problème (illisible, réponse invalide).
 """
 import json
-import os
 import re
 import subprocess
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass, field
 import datetime as dt
 from pathlib import Path
 from xml.etree import ElementTree
 
-MODELE = os.environ.get("CLAUDE_MODEL", "sonnet")
+from claunote import modeles
+
+SEUIL_CONFIANCE = 0.7
 NIVEAUX = ["6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale", "BTS1", "BTS2"]
 TYPES = ["Cours", "TP", "Exercices", "Évaluation", "Notes perso"]
 
@@ -43,15 +52,44 @@ Règles :
   Mets moins de 0.7 si tu hésites.
 """
 
-LIMITE = re.compile(r"usage limit|rate limit|limit reached|too many requests|\b429\b", re.I)
+LIMITE = re.compile(r"usage limit|limit reached|hit your .{0,40}limit|(session|weekly|5-hour) limit|"
+                    r"out of (extra )?usage|rate.?limit|too many requests|\b429\b", re.I)
+CONNEXION = re.compile(r"invalid api key|oauth|authenticat|unauthori[sz]ed|\b401\b|/login|not logged in|"
+                       r"token (has )?expired|invalid.{0,20}credentials", re.I)
+MODELE_REFUSE = re.compile(r"model.{0,80}(not (found|available|supported)|invalid|unknown|does not exist|no access)|"
+                           r"not_found_error|(don't|do not) have access to", re.I)
+PANNE = re.compile(r"overloaded|\b(500|502|503|504|529)\b|internal server error|connection (error|refused|reset)|"
+                   r"econn|etimedout|enotfound|eai_again|fetch failed|network|socket hang up|service unavailable|"
+                   r"temporarily", re.I)
+ATTENTES_PANNE = (20, 90)  # secondes entre deux essais quand Claude ne répond pas
 
 
 class LimiteAtteinte(Exception):
-    """Limite d'usage du forfait atteinte : réessayer plus tard."""
+    """Limite d'usage du forfait atteinte : réessayer à `reprise` (None : heure inconnue)."""
+
+    def __init__(self, message: str, reprise: dt.datetime | None = None, modele: str = ""):
+        super().__init__(message)
+        self.reprise, self.modele = reprise, modele
+
+
+class ClaudeIndisponible(Exception):
+    """Claude ne répond pas (panne, réseau, surcharge) : réessayer plus tard, rien n'est perdu."""
+
+
+class ClaudeDeconnecte(ClaudeIndisponible):
+    """Jeton CLAUDE_CODE_OAUTH_TOKEN refusé ou expiré : à refaire avec `claude setup-token`."""
+
+
+class ModeleIndisponible(Exception):
+    """Le forfait refuse ce modèle : on passe à celui du dessous."""
 
 
 class ErreurAgent(Exception):
     pass
+
+
+def journal(**appel):
+    """Remplacé par le worker pour garder une trace de chaque appel (page État)."""
 
 
 @dataclass
@@ -67,6 +105,8 @@ class Analyse:
     resume: str | None = None
     confiance: float = 0.0
     hors_cours: bool = False
+    modele: str = ""     # modèle qui a lu le document
+    avis: str = ""       # second avis d'un modèle plus fort, s'il y en a eu un
 
 
 def _choix(valeur, options):
@@ -117,31 +157,102 @@ def parse_reponse(texte: str) -> Analyse:
     )
 
 
+def _classer_echec(message: str, code: int, modele: str) -> Exception:
+    if LIMITE.search(message):
+        return LimiteAtteinte(message[:300], modeles.reprise(message), modele)
+    if CONNEXION.search(message):
+        return ClaudeDeconnecte(message[:300])
+    if MODELE_REFUSE.search(message):
+        return ModeleIndisponible(message[:300])
+    if PANNE.search(message) or not message:
+        return ClaudeIndisponible(message[:300] or f"Claude Code s'est arrêté (code {code})")
+    return ErreurAgent(message[:500])
+
+
 def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
-                   entree: str | None = None, timeout: int = 1800) -> str:
+                   entree: str | None = None, timeout: int = 1800, modele: str = "sonnet",
+                   tache: str = "") -> str:
     """Lance `claude -p` et renvoie le texte de la réponse.
 
     `entree` est passé sur l'entrée standard (Claude Code l'ajoute au prompt).
-    Lève LimiteAtteinte si la limite d'usage du forfait est atteinte.
+    Une panne passagère est réessayée deux fois avant de lever ClaudeIndisponible.
     """
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", MODELE]
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", modele]
+    if modele == "opus":
+        cmd += ["--fallback-model", "sonnet"]  # Opus surchargé : Sonnet prend le relais
     if outils:
         cmd += ["--allowedTools", ",".join(outils)]
-    try:
-        p = subprocess.run(cmd, cwd=cwd, input=entree, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as e:
-        raise ErreurAgent(f"Claude Code trop long ({timeout // 60} min)") from e
-    try:
-        sortie = json.loads(p.stdout)
-    except json.JSONDecodeError:
-        sortie = {"is_error": True, "result": p.stdout}
-    texte = str(sortie.get("result") or "")
-    if p.returncode != 0 or sortie.get("is_error"):
-        message = f"{texte} {p.stderr}".strip()
-        if LIMITE.search(message):
-            raise LimiteAtteinte(message[:300])
-        raise ErreurAgent(message[:500] or f"code de sortie {p.returncode}")
-    return texte
+    for attente in (*ATTENTES_PANNE, None):
+        debut = time.monotonic()
+        try:
+            p = subprocess.run(cmd, cwd=cwd, input=entree, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            journal(tache=tache, modele=modele, duree=timeout, resultat="erreur", detail="trop long")
+            raise ErreurAgent(f"Claude Code trop long ({timeout // 60} min)") from e
+        except OSError as e:  # binaire absent ou cassé
+            journal(tache=tache, modele=modele, duree=0, resultat="panne", detail=str(e))
+            raise ClaudeIndisponible(f"Claude Code introuvable : {e}") from e
+        try:
+            sortie = json.loads(p.stdout)
+        except json.JSONDecodeError:
+            sortie = {"is_error": True, "result": p.stdout}
+        if not isinstance(sortie, dict):
+            sortie = {"is_error": True, "result": p.stdout}
+        texte = str(sortie.get("result") or "")
+        duree = round(time.monotonic() - debut, 1)
+        usage = sortie.get("usage") if isinstance(sortie.get("usage"), dict) else {}
+        if p.returncode == 0 and not sortie.get("is_error"):
+            journal(tache=tache, modele=modele, duree=duree, resultat="ok",
+                    jetons_entree=sum(int(usage.get(k) or 0) for k in
+                                      ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")),
+                    jetons_sortie=int(usage.get("output_tokens") or 0))
+            return texte
+        echec = _classer_echec(f"{texte} {p.stderr}".strip(), p.returncode, modele)
+        genre = {LimiteAtteinte: "limite", ClaudeDeconnecte: "connexion", ClaudeIndisponible: "panne",
+                 ModeleIndisponible: "modele"}.get(type(echec), "erreur")
+        journal(tache=tache, modele=modele, duree=duree, resultat=genre, detail=str(echec)[:300])
+        if type(echec) is not ClaudeIndisponible or attente is None:
+            raise echec
+        time.sleep(attente)
+    raise AssertionError("inatteignable")
+
+
+def demander(tache: str, prompt: str, cwd: Path, lire=lambda texte: texte, outils: list[str] | None = None,
+             entree: str | None = None, timeout: int = 1800, modele: str | None = None):
+    """Appelle Claude avec le modèle prévu pour la tâche et lit la réponse avec `lire`.
+
+    Réponse illisible (lire lève ErreurAgent) : un essai avec le modèle au-dessus.
+    Modèle refusé par le forfait, ou limite propre à Opus : le modèle en dessous.
+    Renvoie (réponse lue, modèle qui l'a produite).
+    """
+    modele = modele or modeles.choisir(tache)
+    deja_monte = False
+    while True:
+        try:
+            texte = appeler_claude(prompt, cwd, outils=outils, entree=entree, timeout=timeout, modele=modele, tache=tache)
+        except ModeleIndisponible as e:
+            modeles.marquer_indisponible(modele, None, "refusé par le forfait")
+            modele = modeles.plus_faible(modele)
+            if modele is None:
+                raise ErreurAgent(f"aucun modèle accepté : {e}") from e
+            continue
+        except LimiteAtteinte as e:
+            # Opus a sa propre limite : Sonnet peut souvent continuer, on essaie avant de tout mettre en pause
+            if modele != "opus" or modeles.plus_faible(modele) is None:
+                raise
+            modeles.marquer_indisponible(modele, e.reprise or modeles._maintenant() + dt.timedelta(hours=1),
+                                         "limite d'usage atteinte")
+            modele = modeles.plus_faible(modele)
+            continue
+        try:
+            return lire(texte), modele
+        except ErreurAgent:
+            fort = modeles.plus_fort(modele)
+            if deja_monte or fort is None:
+                raise
+            journal(tache=tache, modele=fort, duree=0, resultat="escalade",
+                    detail=f"réponse de {modeles.NOMS[modele]} illisible, nouvel essai")
+            modele, deja_monte = fort, True
 
 
 # Fichiers bureautiques (souvent déposés par les profs) : Claude Code ne sait pas les lire,
@@ -205,8 +316,15 @@ def heic_en_jpeg(chemin: Path) -> Path:
     return jpeg
 
 
-def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "") -> Analyse:
-    nom = chemin.name
+def illisible(transcription: str) -> bool:
+    """Beaucoup de passages notés [illisible] : un modèle plus fort relira le scan."""
+    n = transcription.count("[illisible")
+    return n >= 4 or (n >= 2 and n / max(1, len(transcription.split())) > 0.02)
+
+
+def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
+             matieres: list[str] | None = None) -> Analyse:
+    nom, tache = chemin.name, "scan"
     if chemin.suffix.lower() in (".heic", ".heif"):
         try:
             nom = heic_en_jpeg(chemin).name
@@ -217,7 +335,7 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "") 
         if not texte.strip():
             raise ErreurAgent(f"aucun texte dans {nom}")
         chemin.with_name(chemin.name + ".txt").write_text(texte)
-        nom = chemin.name + ".txt"
+        nom, tache = chemin.name + ".txt", "texte"
     elif chemin.suffix.lower() in OFFICE:
         try:
             texte = texte_office(chemin)
@@ -226,24 +344,51 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "") 
         if not texte.strip():
             raise ErreurAgent(f"aucun texte dans {nom}")
         chemin.with_name(chemin.name + ".txt").write_text(texte)
-        nom = chemin.name + ".txt"
+        nom, tache = chemin.name + ".txt", "texte"
     prompt = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
-    if nom.endswith(".txt") and nom != chemin.name:
+    if tache == "texte":
         prompt += f"\nC'est le texte extrait du fichier bureautique `{chemin.name}` (mise en page perdue).\n"
     if dossiers and "Pronote" in dossiers:
         prompt += ("\nCe document a été déposé sur Pronote par un professeur (cours, sujet, corrigé…) : "
                    "ce n'est pas un scan, transcris son contenu de la même façon.\n")
+    indices = ""
     if dossiers:
-        prompt += (f"\nIndice : l'élève a rangé ce fichier dans le dossier « {'/'.join(dossiers)} ». "
-                   "Le nom du dossier indique souvent l'année d'étude, parfois la matière.\n")
+        indices += (f"Indice : l'élève a rangé ce fichier dans le dossier « {'/'.join(dossiers)} ». "
+                    "Le nom du dossier indique souvent l'année d'étude, parfois la matière.\n")
     if indice:
-        prompt += (f"D'après l'organisation de ses dossiers (imparfaite, à confirmer par le contenu) : {indice}.\n")
-    return parse_reponse(appeler_claude(prompt, chemin.parent, outils=["Read"]))
+        indices += f"D'après l'organisation de ses dossiers (imparfaite, à confirmer par le contenu) : {indice}.\n"
+    if indices:
+        prompt += "\n" + indices
+    a, modele = demander(tache, prompt, chemin.parent, lire=parse_reponse, outils=["Read"])
+    a.modele = modele
+    if a.confiance >= SEUIL_CONFIANCE or (fort := modeles.plus_fort(modele)) is None:
+        return a
+    # L'agent doute : un modèle plus fort relit le scan s'il était mal lisible,
+    # sinon donne un second avis sur le classement à partir du texte (bien moins coûteux).
+    if tache == "scan" and illisible(a.transcription):
+        try:
+            b, m = demander(tache, prompt, chemin.parent, lire=parse_reponse, outils=["Read"], modele=fort)
+        except ErreurAgent:
+            return a
+        if b.confiance >= a.confiance:
+            b.modele, b.avis = m, f"Relu par {modeles.NOMS[m]} (scan peu lisible pour {modeles.NOMS[modele]})."
+            return b
+        return a
+    try:
+        c = classer(a.transcription, a.titre or chemin.name, matieres or [], indices=indices, modele=fort)
+    except ErreurAgent:
+        return a
+    if c.confiance > a.confiance:
+        a.avis = (f"{modeles.NOMS[modele]} hésitait ({a.confiance:.0%}) ; second avis de {modeles.NOMS[c.modele]} : "
+                  f"{c.matiere or '?'} / {c.niveau or '?'} / {c.type or '?'} ({c.confiance:.0%}).")
+        a.niveau, a.matiere, a.type = c.niveau, c.matiere, c.type
+        a.chapitre, a.hors_cours, a.confiance = c.chapitre or a.chapitre, c.hors_cours, c.confiance
+    return a
 
 
 PROMPT_RECLASSER = """Voici la transcription d'un document d'un élève (du collège au BTS SIO), sur l'entrée.
 Titre actuel : « {titre} ». {annee}
-Classe-le. Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte autour :
+{indices}Classe-le. Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte autour :
 {{"niveau": "...", "matiere": "...", "type": "...", "chapitre": "...", "titre": "...",
   "hors_cours": false, "confiance": 0.0}}
 
@@ -257,19 +402,36 @@ Règles :
 """
 
 
-def reclasser(doc: dict, matieres: list[str]) -> Analyse:
-    """Nouveau classement d'un document déjà transcrit (pas de relecture du scan).
+def classer(transcription: str, titre: str, matieres: list[str], annee: str = "", indices: str = "",
+            modele: str | None = None) -> Analyse:
+    """Classement d'un texte déjà transcrit (pas de relecture du scan). Analyse sans transcription."""
+    prompt = PROMPT_RECLASSER.format(titre=titre, annee=annee, indices=indices, niveaux=", ".join(NIVEAUX),
+                                     types=", ".join(TYPES), matieres=", ".join(matieres) or "aucune")
+    with tempfile.TemporaryDirectory() as vide:
+        a, m = demander("classement", prompt, Path(vide), lire=parse_reponse, entree=transcription[:30_000],
+                        timeout=600, modele=modele)
+    a.modele = m
+    return a
 
+
+def reclasser(doc: dict, matieres: list[str]) -> Analyse:
+    """Nouveau classement d'un document déjà transcrit, demandé depuis la page Organiser.
+
+    Commence par le modèle léger et monte d'un cran tant que l'agent doute.
     Si le document a déjà une année d'étude, elle est imposée (choisie par l'élève).
     """
     if not (doc.get("transcription") or "").strip():
         raise ErreurAgent("pas de transcription : réessaie d'abord l'analyse du scan")
     annee = (f"L'élève a indiqué l'année d'étude : {doc['niveau']}. Garde-la." if doc.get("niveau") else "")
-    prompt = PROMPT_RECLASSER.format(titre=doc.get("titre") or doc["nom"], annee=annee, niveaux=", ".join(NIVEAUX),
-                                     types=", ".join(TYPES), matieres=", ".join(matieres) or "aucune")
-    with tempfile.TemporaryDirectory() as vide:
-        texte = appeler_claude(prompt, Path(vide), entree=doc["transcription"][:30_000], timeout=600)
-    a = parse_reponse(texte)  # sans transcription : celle du document ne change pas
+    args = (doc["transcription"], doc.get("titre") or doc["nom"], matieres, annee)
+    a = classer(*args)
+    dernier = a.modele
+    while a.confiance < SEUIL_CONFIANCE and (fort := modeles.plus_fort(dernier)):
+        b = classer(*args, modele=fort)
+        dernier = b.modele
+        if b.confiance >= a.confiance:
+            b.avis = f"{modeles.NOMS[a.modele]} hésitait ({a.confiance:.0%}), classé par {modeles.NOMS[b.modele]}."
+            a = b
     if doc.get("niveau"):
         a.niveau = doc["niveau"]
     return a
@@ -303,13 +465,18 @@ def interpreter_arborescence(dossiers: dict[str, int], matieres: list[str]) -> t
     lignes = "\n".join(f"{chemin or '(racine)'} ({n})" for chemin, n in sorted(dossiers.items()))
     prompt = PROMPT_ARBORESCENCE.format(niveaux=", ".join(NIVEAUX), types=", ".join(TYPES),
                                         matieres=", ".join(matieres) or "aucune")
+    def lire(texte: str) -> dict:
+        debut, fin = texte.find("{"), texte.rfind("}")
+        try:
+            d = json.loads(texte[debut:fin + 1])
+        except (json.JSONDecodeError, ValueError) as e:
+            raise ErreurAgent(f"JSON invalide : {e}") from e
+        if not isinstance(d, dict):
+            raise ErreurAgent("réponse sans objet JSON")
+        return d
+
     with tempfile.TemporaryDirectory() as vide:
-        texte = appeler_claude(prompt, Path(vide), entree=lignes[:40_000], timeout=600)
-    debut, fin = texte.find("{"), texte.rfind("}")
-    try:
-        d = json.loads(texte[debut:fin + 1])
-    except (json.JSONDecodeError, ValueError) as e:
-        raise ErreurAgent(f"JSON invalide : {e}") from e
+        d, _ = demander("dossiers", prompt, Path(vide), lire=lire, entree=lignes[:40_000], timeout=600)
     compris = {}
     for chemin, v in (d.get("dossiers") or {}).items():
         if chemin in dossiers and isinstance(v, dict):

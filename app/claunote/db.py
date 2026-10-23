@@ -161,6 +161,27 @@ CREATE TABLE IF NOT EXISTS abonnements_push (
     cree_le      TIMESTAMPTZ NOT NULL DEFAULT now(),
     vu_le        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Fiabilité : reprises après une panne, et modèle utilisé
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS essais INT NOT NULL DEFAULT 0;     -- pannes de Claude sur ce document
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS modele TEXT;                      -- modèle qui l'a lu
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS avis TEXT;                        -- second avis d'un modèle plus fort
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS essais INT NOT NULL DEFAULT 0;
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS pdf_essais INT NOT NULL DEFAULT 0; -- copie du PDF dans kDrive
+ALTER TABLE import_lots ADD COLUMN IF NOT EXISTS a_comprendre BOOLEAN NOT NULL DEFAULT false;  -- passe IA à faire
+CREATE INDEX IF NOT EXISTS documents_statut ON documents (statut);
+CREATE TABLE IF NOT EXISTS appels_ia (
+    id             SERIAL PRIMARY KEY,
+    le             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    tache          TEXT NOT NULL,                      -- scan, texte, classement, fiche… (modeles.TACHES)
+    modele         TEXT NOT NULL,
+    resultat       TEXT NOT NULL,                      -- ok, escalade, limite, panne, connexion, modele, erreur
+    duree          REAL NOT NULL DEFAULT 0,            -- secondes
+    jetons_entree  INT NOT NULL DEFAULT 0,
+    jetons_sortie  INT NOT NULL DEFAULT 0,
+    detail         TEXT
+);
+CREATE INDEX IF NOT EXISTS appels_ia_le ON appels_ia (le);
+DELETE FROM appels_ia WHERE le < now() - interval '60 days';
 CREATE TABLE IF NOT EXISTS notifications (
     id           SERIAL PRIMARY KEY,
     cle          TEXT UNIQUE NOT NULL,                 -- empêche d'envoyer deux fois la même chose
@@ -176,7 +197,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
           "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note",
-          "variante_kdrive_id", "variante_nom"}
+          "variante_kdrive_id", "variante_nom", "essais", "modele", "avis"}
 
 
 _pool: ConnectionPool | None = None
@@ -507,7 +528,7 @@ def matieres_revisions() -> list[str]:
 def revisions_en_attente():
     """Révisions à générer ; dans une campagne, dans l'ordre où elles ont été demandées."""
     with connect() as c:
-        return c.execute("SELECT * FROM revisions WHERE statut = 'en_attente' ORDER BY cree_le, id").fetchall()
+        return c.execute("SELECT * FROM revisions WHERE statut = 'en_attente' ORDER BY essais, cree_le, id").fetchall()
 
 
 def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=None, kdrive_id=None, web=None):
@@ -831,7 +852,7 @@ def notification_connue(cle: str) -> bool:
 def notifications_en_attente():
     with connect() as c:
         return c.execute("SELECT * FROM notifications WHERE statut = 'attente' "
-                         "AND cree_le > now() - interval '2 days' ORDER BY id").fetchall()
+                         "AND cree_le > now() - interval '12 hours' ORDER BY id").fetchall()
 
 
 def maj_notification(notif_id: int, statut: str, erreur: str | None = None):
@@ -999,3 +1020,103 @@ def import_dossiers(lot: str) -> dict[str, int]:
                  AND principal IS NULL
                GROUP BY 1 ORDER BY 1""", (lot,)).fetchall()
     return {r["dossier"]: r["n"] for r in rows}
+
+
+# --- Fiabilité : file d'attente, reprises, journal des appels à Claude ---------------
+
+def statuts_kdrive(ids: list[int]) -> dict[int, dict]:
+    """{kdrive_id: {statut, essais}} des fichiers déjà connus (une requête pour toute l'inbox)."""
+    with connect() as c:
+        rows = c.execute("SELECT kdrive_id, statut, essais FROM documents WHERE kdrive_id = ANY(%s)", (ids,)).fetchall()
+    return {r["kdrive_id"]: r for r in rows}
+
+
+def documents_orphelins(dans_inbox: list[int], limite: int = 10):
+    """Documents restés « nouveau » alors que leur fichier n'est plus dans l'inbox.
+
+    Ça arrivait quand le worker s'arrêtait entre le déplacement du scan et l'enregistrement
+    de l'analyse : le fichier est rangé quelque part dans kDrive, il faut le relire.
+    """
+    with connect() as c:
+        return c.execute(
+            """SELECT * FROM documents WHERE statut = 'nouveau' AND NOT (kdrive_id = ANY(%s))
+                 AND maj_le < now() - interval '30 minutes' ORDER BY id LIMIT %s""",
+            (dans_inbox, limite)).fetchall()
+
+
+def compter_essai(table: str, ligne_id: int) -> int:
+    """Une panne de Claude de plus sur ce document ou cette révision ; renvoie le total."""
+    if table not in ("documents", "revisions"):
+        raise ValueError(table)
+    with connect() as c:
+        return c.execute(f"UPDATE {table} SET essais = essais + 1 WHERE id = %s RETURNING essais",
+                         (ligne_id,)).fetchone()["essais"]
+
+
+def revisions_sans_pdf(limite: int = 5):
+    """Révisions prêtes dont la copie PDF dans kDrive a échoué (kDrive en panne à ce moment-là)."""
+    with connect() as c:
+        return c.execute(
+            """SELECT r.*, k.titre AS campagne_titre FROM revisions r LEFT JOIN campagnes k ON k.id = r.campagne_id
+               WHERE r.statut = 'pret' AND r.kdrive_id IS NULL AND r.pdf_essais < 5
+                 AND r.cree_le > now() - interval '30 days' ORDER BY r.id LIMIT %s""", (limite,)).fetchall()
+
+
+def maj_pdf_revision(rev_id: int, kdrive_id: int | None):
+    with connect() as c:
+        c.execute("UPDATE revisions SET kdrive_id = coalesce(%s, kdrive_id), pdf_essais = pdf_essais + 1 "
+                  "WHERE id = %s", (kdrive_id, rev_id))
+
+
+def import_a_comprendre(lot: str):
+    """Le lot a besoin de la passe IA sur ses noms de dossiers, faite dès que Claude est disponible."""
+    with connect() as c:
+        c.execute("""INSERT INTO import_lots (lot, a_comprendre) VALUES (%s, true)
+                     ON CONFLICT (lot) DO UPDATE SET a_comprendre = true""", (lot,))
+
+
+def lots_a_comprendre() -> list[str]:
+    with connect() as c:
+        return [r["lot"] for r in c.execute("SELECT lot FROM import_lots WHERE a_comprendre ORDER BY maj_le")]
+
+
+def lot_compris(lot: str):
+    with connect() as c:
+        c.execute("UPDATE import_lots SET a_comprendre = false, maj_le = now() WHERE lot = %s", (lot,))
+
+
+def journal_ia(tache: str, modele: str, resultat: str, duree: float = 0, jetons_entree: int = 0,
+               jetons_sortie: int = 0, detail: str | None = None):
+    with connect() as c:
+        c.execute("INSERT INTO appels_ia (tache, modele, resultat, duree, jetons_entree, jetons_sortie, detail) "
+                  "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                  (tache or "?", modele, resultat, duree, jetons_entree, jetons_sortie, detail))
+
+
+def appels_ia(limite: int = 25):
+    with connect() as c:
+        return c.execute("SELECT * FROM appels_ia ORDER BY id DESC LIMIT %s", (limite,)).fetchall()
+
+
+def bilan_ia(heures: int = 24):
+    """Appels réussis par modèle sur les dernières heures (page État)."""
+    with connect() as c:
+        return c.execute(
+            """SELECT modele, count(*) FILTER (WHERE resultat = 'ok') AS appels,
+                      count(*) FILTER (WHERE resultat = 'escalade') AS escalades,
+                      coalesce(round(sum(duree) FILTER (WHERE resultat = 'ok') / 60), 0) AS minutes,
+                      coalesce(sum(jetons_sortie), 0) AS jetons_sortie
+               FROM appels_ia WHERE le > now() - make_interval(hours => %s)
+               GROUP BY modele ORDER BY appels DESC""", (heures,)).fetchall()
+
+
+def file_attente() -> dict:
+    """Ce qui attend le worker (page État et bandeau)."""
+    with connect() as c:
+        return c.execute(
+            """SELECT (SELECT count(*) FROM import_fichiers f LEFT JOIN documents d ON d.kdrive_id = f.kdrive_id
+                        WHERE f.decision = 'analyser' AND f.categorie = 'document'
+                          AND coalesce(d.statut, 'nouveau') = 'nouveau') AS scans,
+                      (SELECT count(*) FROM documents WHERE statut = 'reclasser') AS reclassements,
+                      (SELECT count(*) FROM revisions WHERE statut = 'en_attente') AS revisions,
+                      (SELECT count(*) FROM campagnes WHERE statut = 'en_attente') AS campagnes""").fetchone()

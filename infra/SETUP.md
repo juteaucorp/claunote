@@ -99,9 +99,36 @@ Test :
 export $(grep CLAUDE_CODE_OAUTH_TOKEN .env) && claude -p "Réponds juste : ok"
 ```
 
-**Limites du forfait Pro** : le worker traite les scans **par petits lots** et se met en pause
-quand la limite d'usage est atteinte, puis reprend tout seul. La numérisation de tout ton
-stock prendra donc plusieurs jours en tâche de fond, sans rien te coûter de plus.
+**Un modèle par tâche** (page **État du service** du site) :
+
+| Tâche | Modèle | Si l'agent doute |
+|---|---|---|
+| Noms de dossiers d'un import, reclassement, Word/PowerPoint | Haiku (rapide) | Sonnet, puis Opus |
+| Scan manuscrit, fiche, quiz, flashcards, plan, programme | Sonnet | Opus |
+| Épreuve blanche (sujet + corrigé) | Opus | – |
+
+Un classement peu sûr (confiance < 70 %) ou une réponse inutilisable est **refait par le modèle
+au-dessus** avant de finir dans « À vérifier » : moins de tri à faire à la main. Si ton forfait
+refuse Opus, ou si sa limite propre est atteinte, Sonnet le remplace tout seul.
+Réglages : `CLAUDE_MODELES=examen=sonnet` (une tâche), `CLAUDE_MODELE_MAX=sonnet` (jamais Opus).
+L'ancienne ligne `CLAUDE_MODEL` ne sert plus.
+
+**Limites du forfait Pro** : quand la limite d'usage est atteinte, le worker lit **l'heure de
+reprise** annoncée par Claude Code, met **seulement l'IA** en pause jusque-là (Pronote, tri,
+rangement et notifications continuent) et repart tout seul. Un bandeau sur le site affiche
+« l'IA reprend vers 19 h 00 ». La numérisation de tout ton stock prendra plusieurs jours en tâche
+de fond, sans rien te coûter de plus.
+
+**Pannes et redémarrages** : rien n'est perdu.
+
+- Claude ou kDrive ne répond pas : nouvel essai automatique (1, 2, 4… min), le document reste en
+  file et **n'est pas mis en erreur**. Un fichier qui fait planter Claude 3 fois de suite (alors que
+  le reste passe) part dans « À vérifier » avec l'explication.
+- L'analyse est **enregistrée avant** le rangement dans kDrive : si le worker s'arrête au milieu,
+  il finit le rangement au démarrage suivant, sans rappeler Claude.
+- `docker compose up -d --build` : le worker **termine le document en cours** (2 min au plus)
+  avant de s'arrêter, et reprend la file au démarrage, même après plusieurs jours éteint.
+- Détails et derniers appels à Claude : page **État du service** (menu Plus, ou Compte).
 
 ## 6. Utilisation (scan et classement)
 
@@ -220,8 +247,9 @@ Pronote ──► service pronote ──► kDrive : Inbox/<classe>/Pronote/<mat
 Réglages dans `.env` :
 
 - `PRONOTE_INTERVALLE_H=3` : fréquence de la synchro.
-- `PRONOTE_PREPARATION_AUTO=1` : prépare **tout seul** chaque évaluation à moins de 10 jours (consomme
-  ton forfait Claude Pro). `0` par défaut : seulement quand tu cliques.
+- `PRONOTE_PREPARATION_AUTO=1` (conseillé) : prépare **tout seul** chaque évaluation à moins de 10 jours
+  (consomme ton forfait Claude Pro, mais ta fiche est prête avant que tu y penses). `0` : seulement quand
+  tu cliques.
 
 Logs : `docker compose logs -f pronote worker`.
 

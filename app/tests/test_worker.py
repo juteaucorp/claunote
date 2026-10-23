@@ -55,7 +55,9 @@ def test_parcourir_les_sous_dossiers(worker, monkeypatch):
     kd = FauxKD({10: [{"id": 1, "name": "a.pdf", "type": "file"}, {"id": 20, "name": "BTS1", "type": "dir"}],
                  20: [{"id": 21, "name": "Réseaux", "type": "dir"}, {"id": 2, "name": "b.pdf", "type": "file"}],
                  21: [{"id": 3, "name": "c.pdf", "type": "file"}]})
-    monkeypatch.setattr(worker.db, "par_kdrive", lambda i: {"statut": "classe"} if i == 2 else None)
+    monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {2: {"statut": "classe", "essais": 0}})
+    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: [])
+    monkeypatch.setattr(worker.db, "documents_orphelins", lambda ids, n: [])
     monkeypatch.setattr(worker.db, "import_connus", lambda ids: {1: "analyser", 3: "analyser"})
     items = worker.a_traiter(kd)
     assert [(i["name"], i["dossiers"]) for i in items] == [("a.pdf", []), ("c.pdf", ["BTS1", "Réseaux"])]
@@ -90,14 +92,17 @@ def test_analyser_transmet_le_dossier(monkeypatch, tmp_path):
 
 def test_flashcards_enregistrees(worker, monkeypatch):
     from claunote import db, notifications
+    import datetime as dt
     import json
     vu = {}
     cartes = [{"recto": "VLAN ?", "verso": "Réseau virtuel", "source": "D1"}]
     monkeypatch.setattr(worker.revision, "generer", lambda *a: (json.dumps(cartes), {"D1": 3}, []))
     monkeypatch.setattr(db, "documents", lambda ids: [{"id": 3, "titre": "TP VLAN", "nom": "x.pdf"}])
     monkeypatch.setattr(db, "creer_cartes", lambda rev_id, k: vu.update(cartes=(rev_id, k)))
-    monkeypatch.setattr(db, "maj_revision", lambda rev_id, statut, **k: vu.update(statut=statut, kdrive=k.get("kdrive_id")))
+    monkeypatch.setattr(db, "maj_revision", lambda rev_id, statut, **k: vu.update(statut=statut))
+    monkeypatch.setattr(db, "maj_pdf_revision", lambda rev_id, kdrive_id: vu.update(kdrive=kdrive_id))
     monkeypatch.setattr(db, "revision", lambda i: {"id": i, "genre": "cartes", "sujet": "VLAN", "statut": "pret",
+                                                   "cree_le": dt.datetime(2026, 10, 23, 18),
                                                    "contenu": json.dumps(cartes), "reperes": {"D1": 3},
                                                    "matiere": "Réseaux", "niveau": "BTS1", "campagne_titre": None})
     monkeypatch.setattr(notifications, "revision_prete", lambda rev: vu.update(notif=rev["id"]))
@@ -114,7 +119,7 @@ def test_flashcards_enregistrees(worker, monkeypatch):
     worker.traiter_revision(FauxKD(), {"id": 4, "genre": "cartes", "sujet": "VLAN", "doc_ids": [3], "date_eval": None})
     assert vu["cartes"] == (4, cartes) and vu["statut"] == "pret" and vu["kdrive"] == 5 and vu["notif"] == 4
     # Le PDF part dans Etudes/fiches/<matière>/
-    assert vu["dossier"] == ["fiches", "Réseaux"] and vu["fichier"][0].endswith("_cartes_vlan.pdf")
+    assert vu["dossier"] == ["fiches", "Réseaux"] and vu["fichier"][0] == "2026-10-23_cartes_vlan.pdf"
     assert vu["fichier"][1] == b"%PDF-"
 
 
@@ -166,6 +171,8 @@ def test_reclasser_puis_ranger(worker, monkeypatch):
         transcription="", niveau="BTS2", matiere="Réseaux", type="Cours", confiance=0.9))
     monkeypatch.setattr(db, "maj", lambda i, **k: maj.append((i, k)))
     monkeypatch.setattr(db, "marquer_a_ranger", lambda ids, v=True: ranges.append((ids, v)))
+    monkeypatch.setattr(db, "variantes_de", lambda kid: [])
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: None)
     worker.reclasser(doc, ["Réseaux"])
     assert maj[-1][1]["statut"] == "classe" and maj[-1][1]["matiere"] == "Réseaux" and maj[-1][1]["titre"] == "VLAN"
     assert ranges[-1] == ([3], True)
@@ -233,7 +240,8 @@ def test_trier_attend_la_fin_de_la_copie(worker, monkeypatch):
     enregistres, notes = [], []
     monkeypatch.setattr(worker, "STABLE", 0)
     monkeypatch.setattr(worker.db, "import_connus", lambda ids: {})
-    monkeypatch.setattr(worker.db, "par_kdrive", lambda i: None)
+    monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {})
+    monkeypatch.setattr(worker.db, "import_a_comprendre", lambda lot: pytest.fail("trop peu de documents"))
     monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, f: enregistres.append((lot, f)))
     monkeypatch.setattr(worker.notifications, "import_a_confirmer", lambda lot, n: notes.append((lot, n)))
     monkeypatch.setattr(worker.agent, "interpreter_arborescence", lambda *a: pytest.fail("trop peu de documents"))
@@ -249,14 +257,29 @@ def test_trier_attend_la_fin_de_la_copie(worker, monkeypatch):
 
 
 def test_comprendre_organisation_une_passe_ia(worker, monkeypatch):
-    sauves = []
+    fichiers = [importation_fichier(i, f"d{i}.pdf", ["V", "2023-2024"]) for i in range(6)]
+    assert worker.besoin_organisation(fichiers)
+    assert not worker.besoin_organisation(fichiers[:3])  # trop peu de documents
+    assert not worker.besoin_organisation([importation_fichier(i, f"d{i}.pdf", ["V", "BTS1", "Maths"]) for i in range(6)])
+    sauves, finis = [], []
+    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: ["V"])
+    monkeypatch.setattr(worker.db, "import_dossiers", lambda lot: {"V/2023-2024": 6})
     monkeypatch.setattr(worker.db, "matieres", lambda: [])
+    monkeypatch.setattr(worker.db, "etat_ecrire", lambda k, v: None)
     monkeypatch.setattr(worker.db, "import_lot_maj", lambda lot, r, c: sauves.append((lot, r, c)))
+    monkeypatch.setattr(worker.db, "lot_compris", lambda lot: finis.append(lot))
     monkeypatch.setattr(worker.agent, "interpreter_arborescence",
                         lambda dossiers, m: ("Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}}))
-    fichiers = [importation_fichier(i, f"d{i}.pdf", ["V", "2023-2024"]) for i in range(6)]
-    worker.comprendre_organisation("V", fichiers)
-    assert sauves == [("V", "Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}})]
+    worker.comprendre_en_attente()
+    assert sauves == [("V", "Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}})] and finis == ["V"]
+
+    # Limite du forfait : le lot attend le retour de Claude (pas marqué compris)
+    def limite(*a):
+        raise worker.LimiteAtteinte("limit reached")
+    monkeypatch.setattr(worker.agent, "interpreter_arborescence", limite)
+    with pytest.raises(worker.LimiteAtteinte):
+        worker.comprendre_en_attente()
+    assert finis == ["V"]
 
 
 def importation_fichier(i, nom, dossiers):
@@ -321,3 +344,150 @@ def test_analyse_impossible_essaie_l_autre_format(worker, monkeypatch, tmp_path)
     monkeypatch.setattr(worker, "analyser", echec)
     worker.traiter(KDImport({}), {"id": 7, "name": "TP1.doc", "dossiers": ["V"]})
     assert appels == [("bascule", 7, 8), ("oubli", 1)]
+
+
+# --- Fiabilité ------------------------------------------------------------------------
+
+def test_garde_pause_croissante_et_limite(worker, monkeypatch):
+    import datetime as dt
+    g = worker.Garde("Claude")
+    g.echec("panne", "529")
+    assert not g.disponible() and 55 < g.jusqu_a - time.time() <= 60
+    g.echec("panne", "529")
+    assert 115 < g.jusqu_a - time.time() <= 120
+    g.ok()
+    assert g.disponible() and g.etat == "ok" and g.echecs == 0
+    reprise = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)
+    g.limite(worker.LimiteAtteinte("limit reached", reprise))
+    assert g.etat == "limite" and abs(g.jusqu_a - reprise.timestamp() - 60) < 1
+    publie = g.publier()
+    # Après un redémarrage, la limite est restaurée : pas d'appel inutile avant l'heure
+    h = worker.Garde("Claude")
+    h.restaurer(publie)
+    assert not h.disponible() and h.etat == "limite"
+    h2 = worker.Garde("Claude")
+    h2.restaurer({**publie, "jusqu_a": "2020-01-01T00:00:00+00:00"})
+    assert h2.disponible()
+
+
+def test_etape_ouvre_le_bon_disjoncteur(worker, monkeypatch):
+    monkeypatch.setattr(worker.db, "etat_ecrire", lambda k, v: None)
+    monkeypatch.setattr(worker, "CLAUDE", worker.Garde("Claude"))
+    monkeypatch.setattr(worker, "KDRIVE", worker.Garde("kDrive"))
+
+    def leve(e):
+        def f():
+            raise e
+        return f
+    worker.etape("x", leve(worker.LimiteAtteinte("usage limit reached")))
+    assert worker.CLAUDE.etat == "limite" and worker.KDRIVE.disponible()
+    worker.etape("x", leve(worker.KDriveIndisponible("kDrive répond 503")))
+    assert worker.KDRIVE.etat == "panne"
+    worker.CLAUDE.ok()
+    worker.etape("x", leve(worker.ClaudeDeconnecte("Invalid API key")))
+    assert worker.CLAUDE.etat == "connexion"
+    assert worker.etape("x", leve(ValueError("bug"))) is None  # une erreur imprévue n'arrête pas le worker
+
+
+def test_l_analyse_est_gardee_si_kdrive_tombe_au_rangement(worker, monkeypatch, tmp_path):
+    maj, ranges, marques = [], [], []
+    monkeypatch.setattr(worker, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(worker.db, "creer", lambda kid, nom: 1)
+    monkeypatch.setattr(worker.db, "import_lot", lambda lot: None)
+    monkeypatch.setattr(worker.db, "maj", lambda i, **k: maj.append(k))
+    monkeypatch.setattr(worker.db, "marquer_a_ranger", lambda ids, v=True: ranges.append((ids, v)))
+    monkeypatch.setattr(worker.db, "import_marquer", lambda ids, d, **k: marques.append((ids, d)))
+    monkeypatch.setattr(worker.db, "document", lambda i: {"id": 1, "kdrive_id": 7, "nom": "x.pdf", "statut": "classe",
+                                                           "niveau": "BTS1", "matiere": "Réseaux", "type": "TP"})
+    monkeypatch.setattr(worker, "analyser", lambda *a: Analyse("# TP", titre="VLAN", niveau="BTS1", matiere="Réseaux",
+                                                              type="TP", confiance=0.9, modele="sonnet"))
+
+    class Panne(KDImport):
+        def move(self, fid, dest):
+            raise worker.KDriveIndisponible("kDrive répond 503")
+
+    with pytest.raises(worker.KDriveIndisponible):
+        worker.traiter(Panne({}), {"id": 7, "name": "x.pdf", "dossiers": []})
+    # L'analyse est en base, le document reste « à ranger » : le tour suivant le range sans rappeler Claude
+    assert maj[0]["statut"] == "classe" and maj[0]["transcription"] == "# TP" and maj[0]["modele"] == "sonnet"
+    assert ranges == [([1], True)] and marques == [([7], "fait")]
+
+
+def test_claude_qui_plante_toujours_sur_un_fichier(worker, monkeypatch, tmp_path):
+    maj, essais = [], {"n": 0}
+    monkeypatch.setattr(worker, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(worker, "CLAUDE", worker.Garde("Claude"))
+    monkeypatch.setattr(worker.db, "creer", lambda kid, nom: 1)
+    monkeypatch.setattr(worker.db, "import_lot", lambda lot: None)
+    monkeypatch.setattr(worker.db, "maj", lambda i, **k: maj.append(k))
+
+    def compter(table, i):
+        essais["n"] += 1
+        return essais["n"]
+    monkeypatch.setattr(worker.db, "compter_essai", compter)
+
+    def plante(*a):
+        raise worker.ClaudeIndisponible("Claude Code s'est arrêté (code 1)")
+    monkeypatch.setattr(worker, "analyser", plante)
+    item = {"id": 7, "name": "x.pdf", "dossiers": []}
+    for _ in range(2):
+        with pytest.raises(worker.ClaudeIndisponible):  # panne : le worker patientera
+            worker.traiter(KDImport({}), item)
+    worker.traiter(KDImport({}), item)  # 3e fois alors que Claude marche : ce fichier pose problème
+    assert maj == [{"statut": "erreur", "erreur": "Claude Code s'arrête à chaque essai sur ce fichier : "
+                                                  "Claude Code s'est arrêté (code 1)"}]
+    # Pendant une vraie panne de Claude (déjà en échec), on ne met rien en erreur
+    essais["n"], maj[:] = 3, []
+    worker.CLAUDE.echec("panne", "x")
+    with pytest.raises(worker.ClaudeIndisponible):
+        worker.traiter(KDImport({}), item)
+    assert maj == []
+
+
+def test_documents_perdus_hors_de_l_inbox_sont_repris(worker, monkeypatch):
+    import httpx
+    supprimes = []
+    monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {})
+    monkeypatch.setattr(worker.db, "import_connus", lambda ids: {})
+    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: [])
+    monkeypatch.setattr(worker.db, "supprimer", lambda i: supprimes.append(i))
+    monkeypatch.setattr(worker.db, "documents_orphelins", lambda ids, n: [
+        {"id": 1, "kdrive_id": 70, "nom": "a.pdf", "essais": 0, "origine": "BTS1/Réseaux"},
+        {"id": 2, "kdrive_id": 80, "nom": "b.pdf", "essais": 0, "origine": None}])
+
+    class KD(FauxKD):
+        def stat(self, fid):
+            if fid == 80:
+                raise httpx.HTTPStatusError("404", request=None, response=httpx.Response(404))
+            return {"id": fid, "name": "a.pdf"}
+    items = worker.a_traiter(KD({}), [])
+    assert items == [{"id": 70, "name": "a.pdf", "type": "file", "dossiers": ["BTS1", "Réseaux"]}]
+    assert supprimes == [2]  # le fichier n'existe plus : on oublie le document
+
+
+def test_priorites_de_l_inbox(worker, monkeypatch):
+    monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {3: {"statut": "nouveau", "essais": 2}})
+    monkeypatch.setattr(worker.db, "import_connus", lambda ids: {1: "analyser", 2: "analyser", 4: "analyser"})
+    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: ["Vieux"])
+    monkeypatch.setattr(worker.db, "documents_orphelins", lambda ids, n: [])
+    items = [{"id": 1, "name": "a.pdf", "type": "file", "dossiers": ["Divers"]},
+             {"id": 2, "name": "b.pdf", "type": "file", "dossiers": ["BTS2", "Pronote", "CEJM"]},
+             {"id": 3, "name": "c.pdf", "type": "file", "dossiers": []},
+             {"id": 4, "name": "d.pdf", "type": "file", "dossiers": ["Vieux", "Maths"]}]
+    # Pronote d'abord, le fichier qui a déjà planté en dernier, le lot pas encore compris attend
+    assert [i["id"] for i in worker.a_traiter(FauxKD({}), items)] == [2, 1, 3]
+
+
+def test_tour_sans_claude_continue_le_reste(worker, monkeypatch):
+    fait = []
+    monkeypatch.setattr(worker.db, "etat_ecrire", lambda k, v: None)
+    monkeypatch.setattr(worker, "CLAUDE", worker.Garde("Claude"))
+    monkeypatch.setattr(worker, "KDRIVE", worker.Garde("kDrive"))
+    worker.CLAUDE.echec("limite", "usage limit", time.time() + 3600)
+    for nom in ("revisions_en_attente", "reclasser_en_attente", "comprendre_en_attente", "analyser_inbox"):
+        monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
+    for nom in ("ranger_en_attente", "pdf_manquants", "nettoyer_inbox"):
+        monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
+    monkeypatch.setattr(worker, "lire_inbox", lambda kd: fait.append("inbox") or [])
+    worker.tour(None, 0.0)
+    assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "nettoyer_inbox"]

@@ -12,7 +12,9 @@
   {% if doc.variante_kdrive_id %} · <a href="/doc/{{ doc.id }}/fichier?variante=1" target="_blank">version {{ (doc.variante_nom or '').rsplit('.', 1)[-1]|upper }}</a>{% endif %}
   {% if doc.statut == 'hors_cours' %} · <a href="/hors-cours">hors cours</a>
   {% elif doc.statut != 'classe' %} · <span class="alerte">{{ doc.statut|replace('_', ' ') }}</span>{% endif %}
+  {% if doc.modele %} · lu par {{ doc.modele|capitalize }}{% endif %}
 </p>
+{% if doc.avis %}<p class="doux">{{ doc.avis }}</p>{% endif %}
 {% if doc.statut == 'classe' %}
 <form method="post" action="/reviser" class="carte">
   <input type="hidden" name="doc_id" value="{{ doc.id }}">
