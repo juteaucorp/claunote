@@ -68,6 +68,19 @@
   nav.haut a.actif { background: var(--accent-pale); color: var(--accent-fonce); }
   .badge { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: .75rem; line-height: 20px; text-align: center; font-weight: 600; }
   .outils { display: flex; gap: 8px; align-items: center; }
+  /* PC : les pages moins fréquentes sont dans le menu Plus, comme sur le téléphone */
+  .menu-plus { position: relative; margin: 0; }
+  .menu-plus summary { list-style: none; cursor: pointer; }
+  .menu-plus summary::-webkit-details-marker { display: none; }
+  .menu-plus[open] summary { background: var(--accent-pale); color: var(--accent-fonce); border-color: var(--accent-pale); }
+  .feuille-haut { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: 260px; padding: 6px; display: grid; gap: 2px;
+    background: var(--carte); border: 1px solid var(--bord); border-radius: 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, .14); }
+  .feuille-haut a, .feuille-haut button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px;
+    background: none; color: var(--texte); text-decoration: none; font-weight: 500; font-size: .95rem; text-align: left; min-height: 0; }
+  .feuille-haut a:hover, .feuille-haut button:hover { background: var(--fond-doux); }
+  .feuille-haut svg { width: 20px; height: 20px; color: var(--doux); }
+  .feuille-haut form { margin: 0; }
+  .feuille-haut .badge { margin-left: auto; }
   .icone-entete { display: none; }
 
   /* Téléphone : barre du haut réduite, onglets en bas (comme une appli) */
@@ -97,7 +110,8 @@
     .feuille a:active, .feuille button:active { background: var(--accent-pale); }
     .feuille form { margin: 0; }
     .feuille .badge { margin-left: auto; }
-    main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+    /* place pour la barre d'onglets (≈ 72 px + bord de l'écran) : body main, sinon la règle main plus bas l'écrase */
+    body main { padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
   }
 
   main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
@@ -126,9 +140,9 @@
   button:hover { border-color: var(--accent); }
   button.principal { background: var(--accent); color: #fff; border-color: var(--accent); }
   button.principal:hover { background: var(--accent-fonce); border-color: var(--accent-fonce); }
-  .recherche-entete input { width: 170px; border-radius: 999px; padding: 8px 14px; }
-  .loupe { display: none; }
-  @media (max-width: 1180px) and (min-width: 1001px) { .recherche-entete { display: none; } .loupe { display: inline-flex; } .marque { font-size: 1.2rem; } }
+  .recherche-entete input { width: 200px; border-radius: 999px; padding: 8px 14px; }
+  .outils .loupe { display: none; }  /* .outils : sinon .bouton-icone (plus bas) la réaffiche à côté du champ */
+  @media (max-width: 1100px) and (min-width: 1001px) { .recherche-entete { display: none; } .outils .loupe { display: inline-flex; } }
 
   .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
   .grille .carte { margin: 0; }
@@ -210,24 +224,37 @@
 {% set a_importer = nb_import_a_confirmer() %}
 {% set attente = nb_a_verifier() + a_importer %}
 {% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
+{% macro liens_plus() %}
+      <a href="/deposer">{{ icone('deposer') }}Déposer</a>
+      <a href="/import">{{ icone('organiser') }}Import de dossiers{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
+      <a href="/cartes">{{ icone('cartes') }}Flashcards{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
+      <a href="/a-verifier">{{ icone('verifier') }}À vérifier{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>
+      <a href="/organiser">{{ icone('organiser') }}Organiser</a>
+      <a href="/hors-cours">{{ icone('hors') }}Hors cours</a>
+      <a href="/recherche">{{ icone('recherche') }}Rechercher</a>
+      <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" onclick="this.closest('details').open = false">{{ icone('scan') }}Scanner l'inbox</button>
+      <a href="/notifications">{{ icone('cloche') }}Notifications</a>
+      <a href="/etat">{{ icone('etat') }}État du service</a>
+      <a href="/compte">{{ icone('compte') }}Compte</a>
+      <form method="post" action="/deconnexion"><button>{{ icone('sortie') }}Déconnexion</button></form>
+{% endmacro %}
 <header>
   <div class="barre">
     <a class="marque" href="/"><img src="/static/logo.svg" alt="">Claunote</a>
     <nav class="haut" aria-label="Menu">
-      <a href="/" class="{{ 'actif' if chemin == '/' }}">Aujourd'hui</a>
-      <a href="/bibliotheque" class="{{ 'actif' if chemin.startswith(('/bibliotheque', '/liste')) }}">Bibliothèque</a>
-      <a href="/reviser" class="{{ 'actif' if chemin.startswith(('/revis', '/campagne')) }}">Réviser</a>
-      <a href="/cartes" class="{{ 'actif' if chemin.startswith('/cartes') }}">Cartes{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
-      <a href="/agenda" class="{{ 'actif' if chemin.startswith('/agenda') }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
-      <a href="/organiser" class="{{ 'actif' if chemin.startswith(('/organiser', '/hors-cours', '/import')) }}">Organiser</a>
+      <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">Aujourd'hui</a>
+      <a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">Cours</a>
+      <a href="/reviser" class="{{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
+      <a href="/agenda" class="{{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
     </nav>
     <div class="outils">
-      <form action="/recherche" class="recherche-entete"><input name="q" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
+      <form action="/recherche" class="recherche-entete"><input name="q" type="search" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
       <a href="/recherche" class="bouton-icone loupe" title="Rechercher" aria-label="Rechercher">{{ icone('recherche', 20) }}</a>
       <a href="/deposer" class="bouton-icone {{ 'actif' if chemin.startswith('/deposer') }}" title="Déposer des scans" aria-label="Déposer">{{ icone('deposer', 20) }}</a>
-      <a href="/a-verifier" class="bouton-icone {{ 'actif' if chemin.startswith('/a-verifier') }}" title="À vérifier" aria-label="À vérifier">{{ icone('verifier', 20) }}{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
-      <a href="/compte" class="bouton-icone {{ 'actif' if chemin.startswith('/compte') }}" title="Compte et mot de passe" aria-label="Compte">{{ icone('compte', 20) }}</a>
-      <form method="post" action="/deconnexion" class="sortie"><button class="bouton-icone" title="Se déconnecter" aria-label="Se déconnecter">{{ icone('sortie', 20) }}</button></form>
+      <details class="menu-plus" data-menu>
+        <summary class="bouton-icone {{ 'actif' if rubrique == 'plus' }}" title="Plus : à vérifier, organiser, compte…" aria-label="Plus">{{ icone('plus', 20) }}{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
+        <div class="feuille-haut">{{ liens_plus() }}</div>
+      </details>
     </div>
     <a href="/recherche" class="icone-entete" aria-label="Rechercher">{{ icone('recherche') }}</a>
     <a href="/deposer" class="icone-entete" aria-label="Déposer un scan">{{ icone('deposer') }}</a>
@@ -238,22 +265,9 @@
   <a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}Cours</a>
   <a href="/reviser" class="{{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
   <a href="/agenda" class="{{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
-  <details id="plus">
+  <details id="plus" data-menu>
     <summary class="{{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
-    <div class="feuille verre">
-      <a href="/deposer">{{ icone('deposer') }}Déposer</a>
-      <a href="/import">{{ icone('organiser') }}Import de dossiers{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
-      <a href="/cartes">{{ icone('cartes') }}Flashcards{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
-      <a href="/a-verifier">{{ icone('verifier') }}À vérifier{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
-      <a href="/organiser">{{ icone('organiser') }}Organiser</a>
-      <a href="/hors-cours">{{ icone('hors') }}Hors cours</a>
-      <a href="/recherche">{{ icone('recherche') }}Rechercher</a>
-      <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" onclick="document.getElementById('plus').open = false">{{ icone('scan') }}Scanner l'inbox</button>
-      <a href="/notifications">{{ icone('cloche') }}Notifications</a>
-      <a href="/etat">{{ icone('etat') }}État du service</a>
-      <a href="/compte">{{ icone('compte') }}Compte</a>
-      <form method="post" action="/deconnexion"><button>{{ icone('sortie') }}Déconnexion</button></form>
-    </div>
+    <div class="feuille verre">{{ liens_plus() }}</div>
   </details>
 </nav>
 {% endif %}
@@ -267,10 +281,9 @@
   {% block contenu %}{% endblock %}
 </main>
 <script>
-  // Menu « Plus » : se ferme en touchant ailleurs
+  // Menus « Plus » : se ferment en touchant ailleurs
   document.addEventListener("click", (e) => {
-    const plus = document.getElementById("plus");
-    if (plus && plus.open && !plus.contains(e.target)) plus.open = false;
+    document.querySelectorAll("details[data-menu][open]").forEach((m) => { if (!m.contains(e.target)) m.open = false; });
   });
   // Appli installable (PWA) : le navigateur n'accepte le service worker qu'en HTTPS ou sur localhost
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
