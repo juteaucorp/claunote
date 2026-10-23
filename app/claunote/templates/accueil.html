@@ -15,8 +15,8 @@
 {% set attente = nb_a_verifier() %}
 {% if attente %}
 <a class="carte accent ligne-lien" href="/a-verifier">{{ icone('verifier') }}
-  <span><strong>{{ attente }} document{{ 's' if attente > 1 }} à confirmer</strong><br>
-  <span class="doux">L'agent hésite sur leur classement</span></span>{{ icone('fleche', 18) }}</a>
+  <span><strong>{{ attente }} document{{ 's' if attente > 1 }} à vérifier</strong><br>
+  <span class="doux">Classement incertain ou analyse en échec</span></span>{{ icone('fleche', 18) }}</a>
 {% endif %}
 
 {% set dues = nb_cartes_a_revoir() %}

@@ -4,8 +4,8 @@
 <h1>Bibliothèque</h1>
 {% set attente = nb_a_verifier() %}
 {% if attente %}
-<div class="carte accent"><strong>{{ attente }} document{{ 's' if attente > 1 }} à confirmer.</strong>
-  L'agent n'est pas sûr de leur classement : <a href="/a-verifier">vérifie-les</a> en un clic.</div>
+<div class="carte accent"><strong>{{ attente }} document{{ 's' if attente > 1 }} à vérifier.</strong>
+  Classement incertain ou analyse en échec : <a href="/a-verifier">règle-les</a> en un clic.</div>
 {% endif %}
 {% if not niveaux %}
 <div class="carte">Aucun document classé pour l'instant. <a href="/deposer">Dépose des scans</a> ici,

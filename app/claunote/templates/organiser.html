@@ -2,70 +2,127 @@
 {% block titre %}Organiser{% endblock %}
 {% block contenu %}
 <h1>Organiser</h1>
-<p class="doux">Retrouve des documents (par exemple ceux ajoutés entre 14 h et 16 h), coche-les et change leur
-  année, leur matière ou leur type d'un coup, ou laisse l'IA les ranger. Les fichiers suivent dans kDrive.</p>
-{% if message %}<p class="carte accent">{{ message }}</p>{% endif %}
+{% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
 
-<form method="get" action="/organiser" class="carte filtres">
-  <label>Ajouté du<br><input type="datetime-local" name="du" value="{{ f.du }}"></label>
-  <label>au<br><input type="datetime-local" name="au" value="{{ f.au }}"></label>
-  <label>Année<br><select name="niveau">
-    <option value="">Toutes</option>
-    <option value="{{ sans_annee }}" {{ 'selected' if f.niveau == sans_annee }}>Sans année</option>
-    {% for n in niveaux %}<option {{ 'selected' if n == f.niveau }}>{{ n }}</option>{% endfor %}</select></label>
-  <label>Matière<br><select name="matiere"><option value="">Toutes</option>
-    {% for m in matieres %}<option {{ 'selected' if m == f.matiere }}>{{ m }}</option>{% endfor %}</select></label>
-  <label>Type<br><select name="type"><option value="">Tous</option>
-    {% for t in types %}<option {{ 'selected' if t == f.type }}>{{ t }}</option>{% endfor %}</select></label>
-  <label>État<br><select name="statut"><option value="">Tous</option>
-    {% for k, v in statuts.items() %}<option value="{{ k }}" {{ 'selected' if k == f.statut }}>{{ v }}</option>{% endfor %}</select></label>
-  <label>Nom ou dossier<br><input name="texte" value="{{ f.texte }}" placeholder="ex. BTS2, maths…"></label>
-  <div class="actions"><button class="principal">Filtrer</button> <a href="/organiser">Effacer</a></div>
-</form>
+<details class="carte filtres-carte" {{ 'open' if nb_filtres }}>
+  <summary>Filtres{% if nb_filtres %} <span class="compteur">{{ nb_filtres }}</span>{% endif %}
+    <span class="doux">· par exemple « ajoutés aujourd'hui entre 14 h et 16 h »</span></summary>
+  <form method="get" action="/organiser" class="filtres">
+    <input type="hidden" name="par" value="{{ par }}">
+    <label>Ajouté du<input type="datetime-local" name="du" value="{{ f.du }}"></label>
+    <label>au<input type="datetime-local" name="au" value="{{ f.au }}"></label>
+    <label>Année<select name="niveau">
+      <option value="">Toutes</option>
+      <option value="{{ sans_annee }}" {{ 'selected' if f.niveau == sans_annee }}>Sans année</option>
+      {% for n in niveaux %}<option {{ 'selected' if n == f.niveau }}>{{ n }}</option>{% endfor %}</select></label>
+    <label>Matière<select name="matiere"><option value="">Toutes</option>
+      {% for m in matieres %}<option {{ 'selected' if m == f.matiere }}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Type<select name="type"><option value="">Tous</option>
+      {% for t in types %}<option {{ 'selected' if t == f.type }}>{{ t }}</option>{% endfor %}</select></label>
+    <label>État<select name="statut"><option value="">Tous</option>
+      {% for k, v in statuts.items() %}<option value="{{ k }}" {{ 'selected' if k == f.statut }}>{{ v }}</option>{% endfor %}</select></label>
+    <label class="large">Nom ou dossier<input name="texte" value="{{ f.texte }}" placeholder="ex. BTS2, maths…"></label>
+    <div class="actions boutons-filtres"><button class="principal">Filtrer</button>{% if nb_filtres %}<a class="bouton" href="/organiser">Effacer</a>{% endif %}</div>
+  </form>
+</details>
 
 <form method="post" action="/organiser" id="masse">
   <input type="hidden" name="requete" value="{{ requete }}">
-  <div class="carte accent actions barre-masse">
-    <label><input type="checkbox" id="tout"> <strong><span id="nb">0</span> / {{ docs|length }}</strong> sélectionné(s)</label>
-    <select name="action" id="action" aria-label="Action">
-      {% for k, v in actions.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
-    <select name="nouveau_niveau" data-pour="niveau" aria-label="Nouvelle année">{% for n in niveaux %}<option>{{ n }}</option>{% endfor %}</select>
-    <input name="nouvelle_matiere" data-pour="matiere" list="liste-matieres" placeholder="Matière" aria-label="Nouvelle matière">
-    <select name="nouveau_type" data-pour="type" aria-label="Nouveau type">{% for t in types %}<option>{{ t }}</option>{% endfor %}</select>
-    <button class="principal" id="appliquer" disabled>Appliquer</button>
+  <input type="hidden" name="tous" id="tous" value="">
+  <div class="barre-resultats">
+    <label class="tout-cocher"><input type="checkbox" id="tout" aria-label="Tout cocher sur cette page">
+      <span><strong>{{ total }}</strong> document{{ 's' if total > 1 }}{% if pages > 1 %} · page {{ page }}/{{ pages }}{% endif %}</span></label>
+    <label class="doux par-page"><span class="large">par page</span>
+      <select onchange="location = this.value" aria-label="Documents par page">
+        {% for n in par_page %}<option value="{{ lien_page(1, n) }}" {{ 'selected' if n == par }}>{{ n }}</option>{% endfor %}
+      </select></label>
+  </div>
+
+  <div class="carte barre-masse" id="barre" hidden>
+    <div class="selection-info"><strong id="nb">0</strong> sélectionné(s)
+      {% if total > docs|length %}<button type="button" class="lien" id="choisir-tous">Sélectionner les {{ total }} résultats</button>{% endif %}</div>
+    <div class="commandes">
+      <select name="action" id="action" aria-label="Action">
+        {% for k, v in actions.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+      <select name="nouveau_niveau" data-pour="niveau" aria-label="Nouvelle année">{% for n in niveaux %}<option>{{ n }}</option>{% endfor %}</select>
+      <input name="nouvelle_matiere" data-pour="matiere" list="liste-matieres" placeholder="Matière" aria-label="Nouvelle matière">
+      <select name="nouveau_type" data-pour="type" aria-label="Nouveau type">{% for t in types %}<option>{{ t }}</option>{% endfor %}</select>
+      <button class="principal" id="appliquer">Appliquer</button>
+    </div>
   </div>
   <datalist id="liste-matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>
-  {% if docs|length >= 500 %}<p class="alerte">Seuls les 500 plus récents sont affichés : affine les filtres.</p>{% endif %}
-  <div class="tableau">
-  <table class="notes">
-    <thead><tr><th></th><th>Document</th><th>Année</th><th>Matière</th><th class="large">Type</th><th class="large">Ajouté le</th></tr></thead>
-    <tbody>
+
+  <ul class="carte lignes liste-docs">
     {% for d in docs %}
-    <tr>
-      <td><input type="checkbox" name="ids" value="{{ d.id }}" aria-label="Sélectionner"></td>
-      <td><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a>
-        {% if d.statut != 'classe' %}<span class="pastille-etat">{{ statuts.get(d.statut, d.statut) }}</span>{% endif %}
-        {% if d.a_ranger %}<span class="doux">· déplacement…</span>{% endif %}
-        {% if d.origine %}<div class="doux">{{ d.origine }}</div>{% endif %}</td>
-      <td>{{ d.niveau or '–' }}</td>
-      <td>{{ d.matiere or '–' }}</td>
-      <td class="large">{{ d.type or '–' }}</td>
-      <td class="large doux">{{ d.cree_le|paris }}</td>
-    </tr>
+    <li>
+      <input type="checkbox" name="ids" value="{{ d.id }}" aria-label="Sélectionner {{ d.titre or d.nom }}">
+      <div class="corps">
+        <a href="/doc/{{ d.id }}" class="titre">{{ d.titre or d.nom }}</a>
+        {% if d.statut != 'classe' %}<span class="pastille-etat etat-{{ d.statut }}">{{ statuts.get(d.statut, d.statut) }}</span>{% endif %}
+        <div class="doux meta">
+          {% if d.niveau or d.matiere or d.type %}{{ d.niveau or '?' }} · {{ d.matiere or '?' }} · {{ d.type or '?' }}{% else %}non classé{% endif %}
+          {% if d.origine %}<span class="large"> · {{ d.origine }}</span>{% endif %}
+          {% if d.a_ranger %} · déplacement…{% endif %}
+        </div>
+      </div>
+      <span class="fin doux date">{{ d.cree_le|paris }}</span>
+    </li>
     {% else %}
-    <tr><td colspan="6">Aucun document pour ces filtres.</td></tr>
+    <li><div class="corps doux">Aucun document pour ces filtres.</div></li>
     {% endfor %}
-    </tbody>
-  </table>
-  </div>
+  </ul>
 </form>
+
+{% if pages > 1 %}
+<nav class="pagination" aria-label="Pages">
+  {% if page > 1 %}<a class="bouton" href="{{ lien_page(page - 1) }}">‹ Précédente</a>{% else %}<span></span>{% endif %}
+  <span class="doux">{{ (page - 1) * par + 1 }}–{{ [page * par, total]|min }} sur {{ total }}</span>
+  {% if page < pages %}<a class="bouton" href="{{ lien_page(page + 1) }}">Suivante ›</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
+
+<style>
+  .filtres-carte summary { font-weight: 600; }
+  .filtres { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px 14px; margin-top: 14px; }
+  .filtres label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--doux); font-weight: 500; }
+  .filtres label.large { grid-column: span 2; }
+  .filtres input, .filtres select { width: 100%; color: var(--texte); }
+  .boutons-filtres { align-self: end; }
+  .compteur { display: inline-block; min-width: 22px; padding: 0 7px; border-radius: 999px; background: var(--accent); color: #fff; font-size: .78rem; line-height: 22px; text-align: center; }
+  .barre-resultats { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 20px 0 10px; padding: 0 4px; }
+  .tout-cocher { display: flex; align-items: center; gap: 10px; }
+  .tout-cocher input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .par-page { display: flex; align-items: center; gap: 8px; }
+  .par-page select { padding: 4px 8px; min-height: 0; }
+  .barre-masse { position: sticky; top: 72px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; border-color: var(--accent); }
+  .commandes { display: flex; flex-wrap: wrap; gap: 8px; }
+  button.lien { border: 0; background: none; padding: 0 0 0 8px; color: var(--accent-fonce); text-decoration: underline; text-underline-offset: 3px; min-height: 0; }
+  .liste-docs > li { align-items: center; padding: 12px 0; }
+  .liste-docs input[type=checkbox] { width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+  .liste-docs .titre { font-weight: 500; }
+  .liste-docs .meta { margin-top: 2px; }
+  .etat-erreur { background: var(--alerte); color: #fff; }
+  .pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
+  @media (max-width: 760px) {
+    .filtres { grid-template-columns: 1fr 1fr; }
+    .filtres label.large, .boutons-filtres { grid-column: 1 / -1; }
+    .boutons-filtres button, .boutons-filtres a { flex: 1; justify-content: center; }
+    .barre-masse { position: sticky; top: auto; bottom: calc(72px + env(safe-area-inset-bottom)); box-shadow: 0 6px 30px rgba(0, 0, 0, .15); }
+    .commandes, .commandes select, .commandes input, .commandes button { width: 100%; }
+    .liste-docs .date, .liste-docs .large, .par-page .large { display: none; }
+  }
+</style>
 <script>
   const cases = [...document.querySelectorAll('input[name="ids"]')];
-  const action = document.getElementById("action");
+  const action = document.getElementById("action"), tous = document.getElementById("tous");
+  const barre = document.getElementById("barre"), nb = document.getElementById("nb");
+  const choisirTous = document.getElementById("choisir-tous");
   function maj() {
     const n = cases.filter((c) => c.checked).length;
-    document.getElementById("nb").textContent = n;
-    document.getElementById("appliquer").disabled = n === 0;
+    if (n < cases.length) tous.value = "";
+    nb.textContent = tous.value ? "{{ total }}" : n;
+    barre.hidden = n === 0;
+    if (choisirTous) choisirTous.hidden = n < cases.length || !!tous.value;
     document.querySelectorAll("[data-pour]").forEach((el) => {
       const actif = el.dataset.pour === action.value;
       el.hidden = !actif; el.disabled = !actif; el.required = actif;
@@ -74,6 +131,10 @@
   document.getElementById("tout").addEventListener("change", (e) => { cases.forEach((c) => c.checked = e.target.checked); maj(); });
   cases.forEach((c) => c.addEventListener("change", maj));
   action.addEventListener("change", maj);
+  if (choisirTous) choisirTous.addEventListener("click", () => { tous.value = "1"; maj(); });
+  document.getElementById("masse").addEventListener("submit", (e) => {
+    if (action.value === "supprimer" && !confirm(`Supprimer ${nb.textContent} document(s) ? Les fichiers partent dans la corbeille kDrive.`)) e.preventDefault();
+  });
   maj();
 </script>
 {% endblock %}

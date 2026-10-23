@@ -61,7 +61,7 @@ def client(anonyme):
 def test_bibliotheque(client):
     r = client.get("/bibliotheque")
     assert r.status_code == 200
-    assert "BTS1" in r.text and "TP · 3" in r.text and "1 document à confirmer" in r.text and '<span class="badge">1</span>' in r.text
+    assert "BTS1" in r.text and "TP · 3" in r.text and "1 document à vérifier" in r.text and '<span class="badge">1</span>' in r.text
 
 
 def test_document_neutralise_le_html(client):
@@ -100,7 +100,7 @@ def test_classer_deplace_dans_kdrive(client, monkeypatch):
     assert r.status_code == 303
     assert moves == [("path", ["archives", "BTS2", "Réseaux", "Cours"]), ("move", 77, 500), ("move", 78, 500)]
     assert client.appels[-1] == ("maj", 1, {"statut": "classe", "niveau": "BTS2", "matiere": "Réseaux",
-                                            "type": "Cours", "confiance": 1.0, "note": None})
+                                            "type": "Cours", "confiance": 1.0, "note": None, "erreur": None})
     assert client.post("/doc/1/classer", data={"niveau": "Master", "matiere": "x", "type": "TP"}).status_code == 400
 
 
@@ -485,7 +485,7 @@ def test_reclasser_depuis_la_page_du_document(client, monkeypatch):
     assert r.headers["location"] == "/doc/1"
     r = client.post("/doc/1/hors-cours", data={"retour": "/doc/1"}, follow_redirects=False)
     assert r.headers["location"] == "/doc/1" and ("path", ["hors-cours"]) in kd.moves
-    assert client.appels[-1] == ("maj", 1, {"statut": "hors_cours", "note": None})
+    assert client.appels[-1] == ("maj", 1, {"statut": "hors_cours", "note": None, "erreur": None})
     r = client.post("/doc/1/classer", data={"niveau": "BTS2", "matiere": "x", "type": "Cours",
                                             "retour": "https://ailleurs.example"}, follow_redirects=False)
     assert r.headers["location"] == "/"
@@ -506,10 +506,12 @@ def test_page_hors_cours(client, monkeypatch):
 def organiser(client, monkeypatch):
     import datetime as dt
     vu = {}
-    monkeypatch.setattr(db, "organiser", lambda *a: vu.update(filtres=a) or [
-        {"id": 1, "nom": "a.pdf", "titre": "Les VLAN", "statut": "a_verifier", "niveau": None, "matiere": "Réseaux",
-         "type": "TP", "origine": "Scans/lot 3", "cree_le": dt.datetime(2026, 10, 23, 13, 5, tzinfo=dt.timezone.utc),
-         "a_ranger": False}])
+    doc = {"id": 1, "nom": "a.pdf", "titre": "Les VLAN", "statut": "a_verifier", "niveau": None, "matiere": "Réseaux",
+           "type": "TP", "origine": "Scans/lot 3", "cree_le": dt.datetime(2026, 10, 23, 13, 5, tzinfo=dt.timezone.utc),
+           "a_ranger": False, "erreur": None}
+    monkeypatch.setattr(db, "organiser", lambda filtres, limite=25, decalage=0: vu.update(
+        filtres=filtres, limite=limite, decalage=decalage) or ([doc], 60))
+    monkeypatch.setattr(db, "ids_filtres", lambda filtres: vu.update(tous=filtres) or [1, 2, 3])
     monkeypatch.setattr(db, "maj_masse", lambda ids, **k: vu.setdefault("masse", []).append((ids, k)) or len(ids))
     monkeypatch.setattr(db, "completer_classement", lambda ids: vu.setdefault("completer", []).append(ids))
     client.vu = vu
@@ -520,10 +522,51 @@ def test_page_organiser_filtre_par_heure_d_ajout(organiser):
     import datetime as dt
     r = organiser.get("/organiser", params={"du": "2026-10-23T14:00", "au": "2026-10-23T16:00", "niveau": "-"})
     assert r.status_code == 200 and "Les VLAN" in r.text and "Scans/lot 3" in r.text and "23/10/2026 15:05" in r.text
-    du, au, niveau = organiser.vu["filtres"][:3]
-    assert du.isoformat() == "2026-10-23T14:00:00+02:00" and au.hour == 16 and niveau == "-"
-    assert du.utcoffset() == dt.timedelta(hours=2)
+    f = organiser.vu["filtres"]
+    assert f["du"].isoformat() == "2026-10-23T14:00:00+02:00" and f["au"].hour == 16 and f["niveau"] == "-"
+    assert f["du"].utcoffset() == dt.timedelta(hours=2)
     assert organiser.get("/organiser", params={"du": "hier"}).status_code == 400
+
+
+def test_organiser_pagination(organiser):
+    r = organiser.get("/organiser", params={"page": 2, "statut": "classe"})
+    assert organiser.vu["limite"] == 25 and organiser.vu["decalage"] == 25
+    assert "page 2/3" in r.text and "26–50 sur 60" in r.text and "Sélectionner les 60 résultats" in r.text
+    assert "page=1" in r.text and "page=3" in r.text and "statut=classe" in r.text
+    organiser.get("/organiser", params={"par": 100})
+    assert organiser.vu["limite"] == 100
+    organiser.get("/organiser", params={"par": 7})
+    assert organiser.vu["limite"] == 25
+    organiser.get("/organiser", params={"page": 9})  # au-delà de la fin : dernière page
+    assert organiser.vu["decalage"] == 50
+
+
+def test_action_sur_tous_les_resultats(organiser):
+    r = organiser.post("/organiser", data={"action": "niveau", "nouveau_niveau": "BTS2", "tous": "1",
+                                           "requete": "du=2026-10-23T14%3A00&niveau=&statut=classe&par=25"},
+                       follow_redirects=False)
+    assert organiser.vu["masse"][-1] == ([1, 2, 3], {"niveau": "BTS2"})
+    assert organiser.vu["tous"]["statut"] == "classe" and organiser.vu["tous"]["du"].hour == 14
+    assert "3+documents" in r.headers["location"]
+
+
+def test_supprimer(organiser, monkeypatch):
+    supprimes, kd_suppr = [], []
+
+    class KD:
+        def delete(self, fid):
+            if fid == 78:
+                raise RuntimeError("déjà supprimé")
+            kd_suppr.append(fid)
+
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: KD()))
+    monkeypatch.setattr(db, "supprimer", lambda i: supprimes.append(i))
+    r = organiser.post("/doc/1/supprimer", data={"retour": "/a-verifier"}, follow_redirects=False)
+    assert r.headers["location"] == "/a-verifier" and kd_suppr == [77] and supprimes == [1]
+    assert organiser.post("/doc/99/supprimer").status_code == 404
+    r = organiser.post("/organiser", data={"ids": ["1", "99"], "action": "supprimer", "requete": "par=25"},
+                       follow_redirects=False)
+    assert "1+document+supprim" in r.headers["location"] and supprimes == [1, 1]
 
 
 def test_actions_de_masse(organiser):
@@ -544,7 +587,7 @@ def test_actions_de_masse(organiser):
     assert organiser.vu["masse"][-1] == ([1], {"statut": "a_verifier"})
     assert organiser.post("/organiser", data={"ids": ["1"], "action": "niveau", "nouveau_niveau": "Master"}).status_code == 400
     assert organiser.post("/organiser", data={"ids": ["1"], "action": "matiere"}).status_code == 400
-    assert organiser.post("/organiser", data={"ids": ["1"], "action": "supprimer"}).status_code == 400
+    assert organiser.post("/organiser", data={"ids": ["1"], "action": "effacer"}).status_code == 400
 
 
 def test_accueil_aujourd_hui(client, monkeypatch):
@@ -565,6 +608,38 @@ def test_accueil_aujourd_hui(client, monkeypatch):
     r = client.get("/")
     assert "DS VLAN" in r.text and "J-2" in r.text and "Réseaux" in r.text and 'value="cours:1"' in r.text
     assert "Oral" in r.text and "Déjà fait" not in r.text and "8 documents" in r.text
-    assert "1 document à confirmer" in r.text
+    assert "1 document à vérifier" in r.text
     # Navigation mobile : onglets en bas et menu Plus
     assert 'class="onglets"' in r.text and 'id="plus"' in r.text and "Scanner l'inbox" in r.text
+
+
+def test_documents_en_erreur(client, monkeypatch):
+    moves = []
+    erreur = {**DOC, "id": 3, "statut": "erreur", "titre": None, "nom": "scan_flou.pdf", "niveau": None,
+              "matiere": None, "type": None, "erreur": "pas de JSON dans la réponse : 'Je ne peux pas'"}
+    monkeypatch.setattr(db, "a_verifier", lambda: [erreur, {**DOC, "id": 2, "statut": "a_verifier", "note": None,
+                                                            "origine": None, "confiance": 0.5}])
+    r = client.get("/a-verifier")
+    assert "En erreur" in r.text and "scan_flou.pdf" in r.text and "réussi à lire le document" in r.text
+    assert "Classer à la main" in r.text and "/doc/3/supprimer" in r.text and "/doc/3/hors-cours" in r.text
+    assert "À confirmer" in r.text and "Tout réessayer" not in r.text  # un seul en erreur
+
+    class KD:
+        def move(self, fid, dest):
+            moves.append((fid, dest))
+
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: KD()))
+    monkeypatch.setattr(db, "document", lambda i: {**DOC, "statut": "erreur"} if i == 3 else DOC)
+    client.post("/doc/3/reessayer")
+    assert moves == [] and client.appels[-2] == ("maj", 3, {"statut": "nouveau", "erreur": None})
+    client.post("/doc/1/reessayer")  # déjà rangé : remis dans l'inbox
+    assert moves == [(77, main.INBOX_ID)]
+    monkeypatch.setattr(db, "reessayer_erreurs", lambda: 2)
+    assert client.post("/a-verifier/reessayer-tout", follow_redirects=False).status_code == 303
+
+
+def test_explication_erreur():
+    assert "30 minutes" in main.explication_erreur("Claude Code trop long (30 min)")[0]
+    assert "abîmé" in main.explication_erreur("fichier .docx illisible : File is not a zip file")[0]
+    assert "limite" in main.explication_erreur("usage limit reached")[0]
+    assert main.explication_erreur(None)[0] == "L'analyse a échoué."

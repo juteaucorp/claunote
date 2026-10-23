@@ -8,7 +8,7 @@ import tempfile
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 import markdown
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -265,8 +265,31 @@ def recherche(request: Request, q: str = ""):
 
 @app.get("/a-verifier", response_class=HTMLResponse)
 def a_verifier(request: Request):
+    docs = db.a_verifier()
     return templates.TemplateResponse(request, "a_verifier.html", {
-        "docs": db.a_verifier(), "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
+        "doutes": [d for d in docs if d["statut"] != "erreur"], "erreurs": [d for d in docs if d["statut"] == "erreur"],
+        "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
+
+
+ERREURS = [  # motif dans le message technique → explication et conseil
+    (r"limit|429", "La limite de ton forfait Claude était atteinte.", "Réessaie plus tard : ça repartira tout seul."),
+    (r"trop long", "L'analyse a pris plus de 30 minutes.",
+     "Document très long ? Découpe le PDF en plusieurs fichiers, ou classe-le à la main."),
+    (r"illisible|zip|aucun texte", "Le fichier est abîmé, protégé ou vide.",
+     "Ouvre-le pour vérifier ; s'il est inutile, supprime-le, sinon classe-le à la main."),
+    (r"JSON|pas de JSON", "Claude n'a pas réussi à lire le document.",
+     "Scan flou, page blanche ou photo de travers ? Réessaie, ou classe-le à la main."),
+]
+
+
+def explication_erreur(message: str | None) -> tuple[str, str]:
+    for motif, explication, conseil in ERREURS:
+        if re.search(motif, message or "", re.I):
+            return explication, conseil
+    return "L'analyse a échoué.", "Réessaie ; si ça recommence, classe-le à la main ou mets-le hors cours."
+
+
+templates.env.filters["explication_erreur"] = explication_erreur
 
 
 def _deplacer(doc, parts: list[str]):
@@ -286,7 +309,7 @@ def classer(doc_id: int, niveau: str = Form(...), matiere: str = Form(...), type
         raise HTTPException(400, "classement invalide")
     matiere = matiere.strip()
     _deplacer(doc, rangement.dossier(niveau, matiere, type))
-    db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere, type=type, confiance=1.0, note=None)
+    db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere, type=type, confiance=1.0, note=None, erreur=None)
     return RedirectResponse(_suite_sure(retour), status_code=303)
 
 
@@ -294,10 +317,10 @@ def classer(doc_id: int, niveau: str = Form(...), matiere: str = Form(...), type
 def mettre_hors_cours(doc_id: int, retour: str = Form("/hors-cours")):
     """Document administratif ou sans intérêt pour réviser : rangé à part, hors de la bibliothèque."""
     doc = db.document(doc_id)
-    if doc is None or doc["statut"] in ("erreur", "nouveau"):
-        raise HTTPException(400, "document pas encore analysé")
+    if doc is None or doc["statut"] == "nouveau":
+        raise HTTPException(400, "document en cours d'analyse")
     _deplacer(doc, rangement.HORS_COURS)
-    db.maj(doc_id, statut="hors_cours", note=None)
+    db.maj(doc_id, statut="hors_cours", note=None, erreur=None)
     return RedirectResponse(_suite_sure(retour), status_code=303)
 
 
@@ -319,29 +342,59 @@ def _date_heure(valeur: str):
 
 ACTIONS = {"niveau": "Changer l'année", "matiere": "Changer la matière", "type": "Changer le type",
            "ia": "Ranger par l'IA (matière et type, garde l'année)", "hors_cours": "Mettre hors cours",
-           "cours": "Remettre dans les cours"}
+           "cours": "Remettre dans les cours", "supprimer": "Supprimer (corbeille kDrive)"}
+
+
+PAR_PAGE = (25, 50, 100)
+SUPPRESSION_MAX = 200
+
+
+def _filtres_organiser(du="", au="", niveau="", matiere="", type="", statut="", texte="") -> dict:
+    return {"du": _date_heure(du), "au": _date_heure(au), "niveau": niveau, "matiere": matiere, "type_": type,
+            "statut": statut, "texte": texte}
 
 
 @app.get("/organiser", response_class=HTMLResponse)
 def organiser(request: Request, du: str = "", au: str = "", niveau: str = "", matiere: str = "", type: str = "",
-              statut: str = "", texte: str = "", message: str = ""):
+              statut: str = "", texte: str = "", page: int = 1, par: int = 25, message: str = ""):
     filtres = {"du": du, "au": au, "niveau": niveau, "matiere": matiere, "type": type, "statut": statut, "texte": texte}
-    docs = db.organiser(_date_heure(du), _date_heure(au), niveau, matiere, type, statut, texte)
+    par = par if par in PAR_PAGE else PAR_PAGE[0]
+    page = max(page, 1)
+    docs, total = db.organiser(_filtres_organiser(**filtres), par, (page - 1) * par)
+    pages = max(1, -(-total // par))
+    if page > pages:  # page demandée au-delà de la fin (après une action de masse)
+        page = pages
+        docs, total = db.organiser(_filtres_organiser(**filtres), par, (page - 1) * par)
+    actifs = {k: v for k, v in filtres.items() if v}
     return templates.TemplateResponse(request, "organiser.html", {
-        "docs": docs, "f": filtres, "requete": urlencode(filtres), "message": message, "niveaux": NIVEAUX,
-        "types": TYPES, "matieres": db.matieres(), "statuts": db.STATUTS, "actions": ACTIONS,
-        "sans_annee": db.SANS_ANNEE})
+        "docs": docs, "total": total, "page": page, "pages": pages, "par": par, "par_page": PAR_PAGE,
+        "f": filtres, "nb_filtres": len(actifs), "requete": urlencode({**filtres, "par": par}),
+        "lien_page": lambda n, p=par: "/organiser?" + urlencode({**filtres, "par": p, "page": n}),
+        "message": message, "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres(), "statuts": db.STATUTS,
+        "actions": ACTIONS, "sans_annee": db.SANS_ANNEE})
 
 
 @app.post("/organiser")
 def action_de_masse(ids: list[int] = Form([]), action: str = Form(...), nouveau_niveau: str = Form(""),
-                    nouvelle_matiere: str = Form(""), nouveau_type: str = Form(""), requete: str = Form("")):
+                    nouvelle_matiere: str = Form(""), nouveau_type: str = Form(""), requete: str = Form(""),
+                    tous: str = Form("")):
+    """`tous` : l'action porte sur tous les résultats du filtre, pas seulement la page affichée."""
     valeur = {"niveau": nouveau_niveau, "matiere": nouvelle_matiere, "type": nouveau_type}.get(action, "").strip()
     if action not in ACTIONS:
         raise HTTPException(400, "action inconnue")
     if (action == "niveau" and valeur not in NIVEAUX) or (action == "type" and valeur not in TYPES) \
             or (action == "matiere" and not valeur):
         raise HTTPException(400, "choisis la nouvelle valeur")
+    if tous == "1":
+        criteres = {k: v[0] for k, v in parse_qs(requete).items()
+                    if k in ("du", "au", "niveau", "matiere", "type", "statut", "texte")}
+        ids = db.ids_filtres(_filtres_organiser(**criteres))
+    if action == "supprimer":
+        if len(ids) > SUPPRESSION_MAX:
+            raise HTTPException(400, f"pas plus de {SUPPRESSION_MAX} suppressions à la fois")
+        n = sum(_supprimer(i) for i in ids)
+        message = f"{n} document{'s' if n > 1 else ''} supprimé{'s' if n > 1 else ''} (fichiers dans la corbeille kDrive)."
+        return RedirectResponse(f"/organiser?{requete}&{urlencode({'message': message})}", status_code=303)
     if action in ("niveau", "matiere", "type"):
         n = db.maj_masse(ids, **{action: valeur})
         db.completer_classement(ids)
@@ -357,14 +410,51 @@ def action_de_masse(ids: list[int] = Form([]), action: str = Form(...), nouveau_
         message += " L'IA les range dans les minutes qui viennent (recharge la page)."
     elif n:
         message += " Les fichiers sont déplacés dans kDrive en arrière-plan."
+    if len(ids) > n:
+        message += f" {len(ids) - n} ignoré{'s' if len(ids) - n > 1 else ''} (en analyse, ou en erreur pour l'IA)."
     return RedirectResponse(f"/organiser?{requete}&{urlencode({'message': message})}", status_code=303)
 
 
+def _supprimer(doc_id: int) -> bool:
+    """Scan et transcription à la corbeille kDrive (récupérables 30 jours), puis oubli en base."""
+    doc = db.document(doc_id)
+    if doc is None:
+        return False
+    kd = KDrive.from_env()
+    for fid in (doc["kdrive_id"], doc["kdrive_md_id"]):
+        if fid:
+            try:
+                kd.delete(fid)
+            except Exception as e:  # déjà supprimé à la main dans kDrive : on oublie quand même
+                print(f"suppression kDrive impossible ({fid}) : {e}", flush=True)
+    db.supprimer(doc_id)
+    return True
+
+
+@app.post("/doc/{doc_id}/supprimer")
+def supprimer_document(doc_id: int, retour: str = Form("/a-verifier")):
+    if not _supprimer(doc_id):
+        raise HTTPException(404)
+    return RedirectResponse(_suite_sure(retour), status_code=303)
+
+
 @app.post("/doc/{doc_id}/reessayer")
-def reessayer(doc_id: int):
-    """Remet un document en erreur dans la file : le worker le réanalysera."""
+def reessayer(doc_id: int, retour: str = Form("/a-verifier")):
+    """Relance l'analyse : le worker reprend le fichier dans l'inbox kDrive."""
+    doc = db.document(doc_id)
+    if doc is None:
+        raise HTTPException(404)
+    if doc["statut"] != "erreur":  # déjà rangé ailleurs : on le remet dans l'inbox
+        KDrive.from_env().move(doc["kdrive_id"], INBOX_ID)
     db.maj(doc_id, statut="nouveau", erreur=None)
     db.demander_scan()
+    return RedirectResponse(_suite_sure(retour), status_code=303)
+
+
+@app.post("/a-verifier/reessayer-tout")
+def reessayer_tout():
+    if db.reessayer_erreurs():
+        db.demander_scan()
     return RedirectResponse("/a-verifier", status_code=303)
 
 
