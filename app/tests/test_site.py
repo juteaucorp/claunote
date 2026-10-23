@@ -215,6 +215,17 @@ def agenda(client, monkeypatch):
          "valeur": {"genre": 0, "points": 15.5}, "sur": {"genre": 0, "points": 20},
          "moyenne_classe": {"genre": 0, "points": 11}}])
     monkeypatch.setattr(db, "etat_valeur", lambda k: "2026-10-23T14:00" if k == "pronote_synchro" else None)
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: client.appels.append(("etat", k, v)))
+    monkeypatch.setattr(db, "documents_pronote", lambda limite=30: [
+        {"le": bientot, "matiere": "SISR - RESEAUX", "nom": "cours-vlan.pdf", "titre": "Chapitre 3", "categorie": "Cours",
+         "statut": "depose", "url": None, "erreur": None, "doc_id": 12, "doc_statut": "classe", "doc_titre": "Les VLAN"},
+        {"le": bientot, "matiere": "SISR - RESEAUX", "nom": "Packet Tracer", "titre": "", "categorie": "Cours",
+         "statut": "lien", "url": "https://www.netacad.com/pt", "erreur": None, "doc_id": None, "doc_statut": None,
+         "doc_titre": None},
+        {"le": bientot, "matiere": "CEJM", "nom": "piege", "titre": "", "categorie": "", "statut": "lien",
+         "url": "javascript:alert(1)", "erreur": None, "doc_id": None, "doc_statut": None, "doc_titre": None},
+        {"le": bientot, "matiere": "CEJM", "nom": "dossier4.pdf", "titre": "Lire", "categorie": "Travail à faire",
+         "statut": "depose", "url": None, "erreur": None, "doc_id": None, "doc_statut": None, "doc_titre": None}])
     monkeypatch.setattr(pronote, "preparer", lambda e: 42 if e["matiere"] == "SISR - RESEAUX" else None)
     client.evs = evs
     return client
@@ -228,6 +239,7 @@ def test_agenda_connexion_qr(agenda):
     r = agenda.post("/agenda/connexion-qr", data={"qr": ' {"jeton":"j"} ', "pin": "1234"})
     assert ("qr", '{"jeton":"j"}', "1234") in FauxPronote.appels
     assert "Connecté à Pronote : 2 évaluation(s)" in r.text and "JUTEAU Anto" in r.text
+    assert ("etat", "pronote_demande", "oui") in agenda.appels and "scan" in agenda.appels
 
 
 def test_agenda_connecte(agenda):
@@ -238,6 +250,9 @@ def test_agenda_connecte(agenda):
     assert "Test &lt;b&gt;unit 4&lt;/b&gt;" in r.text
     assert "15,5/20" in r.text and "coef 2" in r.text and "2026-10-23 à 14:00" in r.text
     assert 'class="carte evenement fait"' in r.text
+    assert '<a href="/doc/12">Les VLAN</a>' in r.text and "classé" in r.text
+    assert 'href="https://www.netacad.com/pt"' in r.text and "javascript:" not in r.text
+    assert "en analyse…" in r.text
 
 
 def test_agenda_service_absent(agenda, monkeypatch):

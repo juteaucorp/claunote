@@ -248,9 +248,16 @@ def _agenda(request: Request, erreur: str | None = None, message: str | None = N
         evaluations = [{**e, "cours": pronote.trouver_matiere(e["matiere"], matieres)}
                        for e in db.evenements_a_venir("evaluation", 60)]
         ctx |= {"evaluations": evaluations, "devoirs": db.evenements_a_venir("devoir", 14),
+                "documents": db.documents_pronote(30),
                 "notes": db.notes_recentes(15), "synchro": db.etat_valeur("pronote_synchro"),
                 "erreurs_synchro": db.etat_valeur("pronote_erreurs"), "paris": pronote.PARIS}
     return templates.TemplateResponse(request, "agenda.html", ctx)
+
+
+def _demander_documents():
+    """Le worker récupère les documents des profs (trop long pour une page web)."""
+    db.etat_ecrire("pronote_demande", "oui")
+    db.demander_scan()  # réveille le worker
 
 
 def _connecter(request: Request, connexion) -> HTMLResponse:
@@ -259,7 +266,9 @@ def _connecter(request: Request, connexion) -> HTMLResponse:
         r = pronote.synchroniser()
     except pronote.ErreurPronote as e:
         return _agenda(request, erreur=str(e))
-    return _agenda(request, message=f"Connecté à Pronote : {r.get('evenements', 0)} évaluation(s) et devoir(s) récupérés.")
+    _demander_documents()
+    return _agenda(request, message=f"Connecté à Pronote : {r.get('evenements', 0)} évaluation(s) et devoir(s) récupérés. "
+                                    "Les documents des profs arrivent dans la bibliothèque dans quelques minutes.")
 
 
 @app.get("/agenda", response_class=HTMLResponse)
@@ -285,7 +294,9 @@ def agenda_synchroniser(request: Request):
         r = pronote.synchroniser()
     except pronote.ErreurPronote as e:
         return _agenda(request, erreur=str(e))
-    msg = f"Synchronisé : {r.get('evenements', 0)} évaluation(s) et devoir(s)."
+    _demander_documents()
+    msg = (f"Synchronisé : {r.get('evenements', 0)} évaluation(s) et devoir(s). "
+           "Les nouveaux documents des profs sont récupérés en arrière-plan.")
     if r.get("preparees"):
         msg += f" {len(r['preparees'])} révision(s) lancée(s)."
     return _agenda(request, message=msg)

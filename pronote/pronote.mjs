@@ -356,5 +356,88 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
 
       return { devoirs, controles, notes, erreurs, du: iso(debut), au: iso(fin) };
     }),
+
+    /**
+     * Documents déposés par les profs (Contenu et ressources + pièces jointes du Travail à faire)
+     * depuis la rentrée. Télécharge ceux dont la clé n'est pas dans `deja`, jusqu'à `maxOctets`.
+     */
+    documents: ({ deja = [], maxOctets = MAX_OCTETS_LOT, maintenant = new Date() } = {}) => enFile(async () => {
+      const session = await ouvrir();
+      const fin = new Date(maintenant.getTime() + 28 * JOUR);
+      const rentree = session.instance?.firstDate ?? new Date(maintenant.getTime() - 120 * JOUR);
+      const erreurs = [];
+      const ressources = await section("contenu et ressources", () =>
+        pawnote.resourcesFromIntervals(session, rentree, fin), erreurs) ?? [];
+      const devoirs = await section("travail à faire", () =>
+        pawnote.assignmentsFromIntervals(session, rentree, fin), erreurs) ?? [];
+      const pieces = listerPieces(ressources, devoirs);
+
+      const vus = new Set(deja);
+      let octets = 0;
+      let restant = 0;
+      const documents = [];
+      for (const piece of pieces) {
+        if (vus.has(piece.cle)) continue;
+        vus.add(piece.cle);
+        if (piece.lien) {
+          documents.push({ ...piece, url: piece.lien });
+          continue;
+        }
+        if (octets >= maxOctets) {
+          restant++;
+          continue;
+        }
+        try {
+          const r = await fetch(piece.url, { headers: { "User-Agent": UA_APPLI } });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const contenu = Buffer.from(await r.arrayBuffer());
+          if (contenu.length > MAX_OCTETS_FICHIER) {
+            documents.push({ ...piece, url: undefined, erreur: `fichier trop gros (${Math.round(contenu.length / 1e6)} Mo)` });
+            continue;
+          }
+          octets += contenu.length;
+          documents.push({ ...piece, url: undefined, contenu: contenu.toString("base64") });
+        } catch (e) {
+          documents.push({ ...piece, url: undefined, erreur: `téléchargement impossible : ${e.message}` });
+        }
+      }
+      return { documents, restant, erreurs };
+    }),
   };
+}
+
+const MAX_OCTETS_LOT = 40e6;
+const MAX_OCTETS_FICHIER = 25e6;
+const UA_APPLI = "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+  + "Mobile/15E148 PRONOTE Mobile APP Version/2.0.11";
+
+const jourIso = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : "");
+const texteSimple = (html) => (html ?? "").replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ").replace(/\s+/gu, " ").trim();
+
+/**
+ * Pièces jointes des ressources et des devoirs. Les ids Pronote changent d'une session à l'autre :
+ * la clé stable est source + matière + jour + nom du fichier.
+ */
+export function listerPieces(ressources, devoirs) {
+  const pieces = [];
+  const ajouter = (source, matiere, date, titre, categorie, fichier) => {
+    const lien = fichier.kind === 0;
+    pieces.push({
+      cle: `${source}:${matiere}:${jourIso(date)}:${fichier.name}`,
+      source, matiere, date: date instanceof Date ? date.toISOString() : null,
+      titre: titre.slice(0, 200), categorie, nom: fichier.name,
+      ...(lien ? { lien: fichier.url } : { url: fichier.url }),
+    });
+  };
+  for (const r of ressources) {
+    for (const c of r.contents ?? []) {
+      const titre = c.title || texteSimple(c.description).slice(0, 120) || "Contenu du cours";
+      for (const f of c.files ?? []) ajouter("ressource", r.subject?.name ?? "", r.startDate, titre, c.categoryText ?? "", f);
+    }
+  }
+  for (const d of devoirs) {
+    const titre = texteSimple(d.description).slice(0, 120) || "Travail à faire";
+    for (const f of d.attachments ?? []) ajouter("devoir", d.subject?.name ?? "", d.deadline, titre, "Travail à faire", f);
+  }
+  return pieces;
 }

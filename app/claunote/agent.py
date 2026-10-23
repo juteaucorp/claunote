@@ -7,9 +7,11 @@ import json
 import os
 import re
 import subprocess
+import zipfile
 from dataclasses import dataclass, field
 import datetime as dt
 from pathlib import Path
+from xml.etree import ElementTree
 
 MODELE = os.environ.get("CLAUDE_MODEL", "sonnet")
 NIVEAUX = ["6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale", "BTS1", "BTS2"]
@@ -133,8 +135,60 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
     return texte
 
 
+# Fichiers bureautiques (souvent déposés par les profs) : Claude Code ne sait pas les lire,
+# on en extrait le texte dans un .txt à côté.
+OFFICE = {
+    ".docx": ("word/document.xml", "w:p"),
+    ".pptx": ("ppt/slides/slide*.xml", "a:p"),
+    ".xlsx": ("xl/sharedStrings.xml", "x:si"),
+    ".odt": ("content.xml", "text:p"),
+    ".odp": ("content.xml", "text:p"),
+    ".ods": ("content.xml", "text:p"),
+}
+ESPACES_XML = {
+    "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+}
+
+
+def texte_office(chemin: Path) -> str:
+    """Texte d'un .docx/.pptx/.xlsx/.odt/.odp/.ods, un paragraphe par ligne (diapos dans l'ordre)."""
+    motif, balise = OFFICE[chemin.suffix.lower()]
+    prefixe, nom = balise.split(":")
+    with zipfile.ZipFile(chemin) as z:
+        noms = sorted((n for n in z.namelist() if Path(n).match(motif)),
+                      key=lambda n: int(re.sub(r"\D", "", Path(n).stem) or 0))
+        lignes = []
+        for n in noms:
+            racine = ElementTree.fromstring(z.read(n))
+            if len(noms) > 1:
+                lignes.append(f"\n--- {Path(n).stem} ---")
+            for p in racine.iter(f"{{{ESPACES_XML[prefixe]}}}{nom}"):
+                texte = "".join(p.itertext()).strip()
+                if texte:
+                    lignes.append(texte)
+    return "\n".join(lignes)
+
+
 def analyser(chemin: Path, dossiers: list[str] | None = None) -> Analyse:
-    prompt = PROMPT.format(nom=chemin.name, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
+    nom = chemin.name
+    if chemin.suffix.lower() in OFFICE:
+        try:
+            texte = texte_office(chemin)
+        except (zipfile.BadZipFile, ElementTree.ParseError, KeyError) as e:
+            raise ErreurAgent(f"fichier {chemin.suffix} illisible : {e}") from e
+        if not texte.strip():
+            raise ErreurAgent(f"aucun texte dans {nom}")
+        chemin.with_name(chemin.name + ".txt").write_text(texte)
+        nom = chemin.name + ".txt"
+    prompt = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
+    if nom != chemin.name:
+        prompt += f"\nC'est le texte extrait du fichier bureautique `{chemin.name}` (mise en page perdue).\n"
+    if dossiers and "Pronote" in dossiers:
+        prompt += ("\nCe document a été déposé sur Pronote par un professeur (cours, sujet, corrigé…) : "
+                   "ce n'est pas un scan, transcris son contenu de la même façon.\n")
     if dossiers:
         prompt += (f"\nIndice : l'élève a rangé ce fichier dans le dossier « {'/'.join(dossiers)} ». "
                    "Le nom du dossier indique souvent l'année d'étude, parfois la matière.\n")
