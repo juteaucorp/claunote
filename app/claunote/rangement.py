@@ -28,3 +28,28 @@ def nouveau_nom(a: Analyse, nom_actuel: str) -> str:
     ext = PurePosixPath(nom_actuel).suffix.lower()
     base = slug(a.titre or "") or slug(PurePosixPath(nom_actuel).stem) or "document"
     return f"{a.date.isoformat()}_{base}{ext}" if a.date else f"{base}{ext}"
+
+
+# Noms de dossiers reconnus comme année d'étude (comparés sans accents ni majuscules)
+_NIVEAUX_DOSSIER = [
+    (r"bts\D{0,8}1(?!\d)|\b1\s*(ere|re)?\s*annee\s*(de\s*)?bts|sio\s*1(?!\d)", "BTS1"),
+    (r"bts\D{0,8}2(?!\d)|\b2\s*(eme|e)?\s*annee\s*(de\s*)?bts|sio\s*2(?!\d)", "BTS2"),
+    (r"terminale|\btle\b|\bterm\b", "Terminale"),
+    (r"premiere|\b1\s*(ere|re)\b", "Première"),
+    (r"seconde|\b2\s*(nde|de)\b", "Seconde"),
+    (r"\b3\s*(e|eme)\b|troisieme", "3e"),
+    (r"\b4\s*(e|eme)\b|quatrieme", "4e"),
+    (r"\b5\s*(e|eme)\b|cinquieme", "5e"),
+    (r"\b6\s*(e|eme)\b|sixieme", "6e"),
+]
+
+
+def niveau_depuis_dossier(dossiers: list[str]) -> str | None:
+    """Année d'étude lue dans les noms de dossiers (le plus profond d'abord)."""
+    for nom in reversed(dossiers):
+        texte = unicodedata.normalize("NFKD", nom).encode("ascii", "ignore").decode().lower()
+        texte = re.sub(r"[_\-.]+", " ", texte)
+        for motif, niveau in _NIVEAUX_DOSSIER:
+            if re.search(motif, texte):
+                return niveau
+    return None

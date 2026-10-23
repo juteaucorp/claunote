@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block titre %}Déposer{% endblock %}
+{% block contenu %}
+<h1>Déposer des scans</h1>
+{% if envoyes %}
+<div class="carte accent">
+  <strong>{{ envoyes|length }} fichier{{ 's' if envoyes|length > 1 }} envoyé{{ 's' if envoyes|length > 1 }} dans l'inbox.</strong>
+  L'analyse démarre dans quelques secondes ; les documents apparaîtront dans la Bibliothèque
+  ou dans « À vérifier ».
+  <details><summary>Voir la liste</summary><ul>{% for e in envoyes %}<li>{{ e }}</li>{% endfor %}</ul></details>
+</div>
+{% endif %}
+{% if ignores %}
+<div class="carte"><span class="alerte">Ignorés (format non pris en charge) :</span> {{ ignores|join(', ') }}</div>
+{% endif %}
+
+<form id="depot" method="post" action="/deposer" enctype="multipart/form-data" class="carte">
+  <label class="zone" id="zone">
+    <img src="/static/logo.svg" alt="" width="56" height="56">
+    <strong>Glisse tes fichiers ou un dossier ici</strong>
+    <span class="doux">PDF ou photos (JPG, PNG, HEIC). Un document = un fichier.</span>
+    <input type="file" name="fichiers" id="fichiers" multiple accept=".pdf,.jpg,.jpeg,.png,.heic,.webp">
+  </label>
+  <p class="boutons">
+    <button type="button" onclick="document.getElementById('fichiers').click()">Choisir des fichiers</button>
+    <button type="button" onclick="document.getElementById('dossier').click()">Choisir un dossier</button>
+    <input type="file" id="dossier" webkitdirectory multiple hidden>
+  </p>
+  <p><label>Année d'étude (facultatif)<br>
+    <select name="niveau">
+      <option value="">Laisser l'agent deviner ou lire le nom du dossier</option>
+      {% for n in niveaux %}<option>{{ n }}</option>{% endfor %}
+    </select></label></p>
+  <p id="selection" class="doux"></p>
+  <button class="principal" id="envoyer">Envoyer</button>
+</form>
+
+<div class="carte">
+  <strong>Astuce : dépose un dossier entier par année.</strong>
+  <p class="doux">Un dossier nommé « BTS1 », « Terminale », « 3e »… fixe l'année d'étude de tout ce qu'il contient.
+  Si le contenu d'un fichier ne colle pas avec le nom du dossier, il part dans « À vérifier » pour que tu confirmes.</p>
+</div>
+
+<style>
+  .zone { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 36px 16px;
+          border: 2px dashed var(--bord); border-radius: 14px; background: var(--fond-doux); cursor: pointer; }
+  .zone.survol { border-color: var(--accent); background: var(--accent-pale); }
+  .zone input { display: none; }
+  .boutons { display: flex; flex-wrap: wrap; gap: 8px; }
+</style>
+<script>
+  // Garde le chemin relatif des fichiers d'un dossier (BTS1/Réseaux/tp1.pdf) pour le serveur
+  const form = document.getElementById('depot'), zone = document.getElementById('zone');
+  const choixFichiers = document.getElementById('fichiers'), choixDossier = document.getElementById('dossier');
+  let selection = [];
+
+  function montrer(liste) {
+    selection = liste;
+    document.getElementById('selection').textContent =
+      liste.length ? liste.length + ' fichier(s) prêt(s) : ' + liste.slice(0, 5).map(x => x.chemin).join(', ') + (liste.length > 5 ? '…' : '') : '';
+  }
+  const depuisInput = input => montrer([...input.files].map(f => ({ fichier: f, chemin: f.webkitRelativePath || f.name })));
+  choixFichiers.addEventListener('change', () => depuisInput(choixFichiers));
+  choixDossier.addEventListener('change', () => depuisInput(choixDossier));
+
+  async function lireEntree(entree, chemin, liste) {
+    if (entree.isFile) {
+      const f = await new Promise(ok => entree.file(ok));
+      liste.push({ fichier: f, chemin: chemin + f.name });
+    } else if (entree.isDirectory) {
+      const lecteur = entree.createReader();
+      let lot;
+      do {
+        lot = await new Promise(ok => lecteur.readEntries(ok));
+        for (const e of lot) await lireEntree(e, chemin + entree.name + '/', liste);
+      } while (lot.length);
+    }
+  }
+  ['dragenter', 'dragover'].forEach(t => zone.addEventListener(t, e => { e.preventDefault(); zone.classList.add('survol'); }));
+  ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, () => zone.classList.remove('survol')));
+  zone.addEventListener('drop', async e => {
+    e.preventDefault();
+    const liste = [];
+    for (const item of [...e.dataTransfer.items]) {
+      const entree = item.webkitGetAsEntry && item.webkitGetAsEntry();
+      if (entree) await lireEntree(entree, '', liste);
+    }
+    montrer(liste);
+  });
+
+  form.addEventListener('submit', async e => {
+    if (!selection.length) return;  // sans sélection JS, envoi classique du formulaire
+    e.preventDefault();
+    const donnees = new FormData();
+    selection.forEach(s => donnees.append('fichiers', s.fichier, s.chemin));
+    donnees.append('niveau', form.niveau.value);
+    const bouton = document.getElementById('envoyer');
+    bouton.disabled = true; bouton.textContent = 'Envoi en cours…';
+    const reponse = await fetch('/deposer', { method: 'POST', body: donnees });
+    document.open(); document.write(await reponse.text()); document.close();
+  });
+</script>
+{% endblock %}

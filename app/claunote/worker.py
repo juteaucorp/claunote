@@ -1,16 +1,16 @@
 """Surveille l'inbox kDrive, analyse chaque nouveau scan et le range.
 
-Pour chaque fichier de l'inbox pas encore traité :
+Pour chaque fichier de l'inbox (sous-dossiers compris) pas encore traité :
 téléchargement → analyse Claude Code → base de données → déplacement dans
 archives/<niveau>/<matière>/<type> (ou a-verifier/) + transcription .md à côté.
+Un sous-dossier nommé avec l'année d'étude (« BTS1 », « Terminale »…) fixe le niveau.
 """
+import datetime as dt
+import json
 import os
 import shutil
 import time
 from pathlib import Path, PurePosixPath
-
-import datetime as dt
-import json
 
 from claunote import db, rangement, revision
 from claunote.agent import ErreurAgent, LimiteAtteinte, analyser
@@ -28,12 +28,31 @@ def log(msg: str):
     print(msg, flush=True)
 
 
+def appliquer_dossier(a, dossiers: list[str]) -> str | None:
+    """Le niveau du dossier l'emporte ; un désaccord avec le contenu part en vérification.
+
+    Renvoie la note à afficher sur la page « À vérifier », ou None.
+    """
+    niveau = rangement.niveau_depuis_dossier(dossiers)
+    if niveau is None:
+        return None
+    if a.niveau and a.niveau != niveau:
+        note = (f"Le dossier « {'/'.join(dossiers)} » indique {niveau}, "
+                f"mais le contenu ressemble à du {a.niveau}.")
+        a.niveau = niveau
+        a.confiance = min(a.confiance, rangement.SEUIL_CONFIANCE - 0.01)
+        return note
+    a.niveau = niveau
+    return None
+
+
 def traiter(kd: KDrive, item: dict):
+    dossiers = item.get("dossiers", [])
     doc_id = db.creer(item["id"], item["name"])
     dossier_local = CACHE_DIR / str(item["id"])
     chemin = kd.download(item["id"], dossier_local / item["name"])
     try:
-        a = analyser(chemin)
+        a = analyser(chemin, dossiers)
     except ErreurAgent as e:
         db.maj(doc_id, statut="erreur", erreur=str(e))
         log(f"erreur d'analyse : {item['name']} : {e}")
@@ -41,6 +60,9 @@ def traiter(kd: KDrive, item: dict):
     finally:
         shutil.rmtree(dossier_local, ignore_errors=True)
 
+    note = appliquer_dossier(a, dossiers)
+    if note is None and not rangement.est_classe(a):
+        note = f"L'agent n'est pas sûr du classement (confiance {a.confiance:.0%})."
     classe = rangement.est_classe(a)
     parts = rangement.dossier(a.niveau, a.matiere, a.type) if classe else rangement.A_VERIFIER
     dest_id = kd.ensure_path(ETUDES_ID, parts)
@@ -61,7 +83,8 @@ def traiter(kd: KDrive, item: dict):
     db.maj(doc_id, nom=nom, statut="classe" if classe else "a_verifier", titre=a.titre,
            niveau=a.niveau, matiere=a.matiere, type=a.type, chapitre=a.chapitre, date_doc=a.date,
            mots_cles=a.mots_cles, resume=a.resume, transcription=a.transcription,
-           confiance=a.confiance, erreur=None, kdrive_md_id=md.get("id"))
+           confiance=a.confiance, erreur=None, kdrive_md_id=md.get("id"),
+           origine="/".join(dossiers) or None, note=None if classe else note)
     log(f"{'classé' if classe else 'à vérifier'} : {item['name']} → {'/'.join(parts)}/{nom}")
 
 
@@ -86,16 +109,39 @@ def traiter_revision(kd: KDrive, rev: dict):
     log(f"révision prête : {rev['genre']} « {rev['sujet']} »")
 
 
+def parcourir(kd: KDrive, dossier_id: int, dossiers: list[str], profondeur: int = 0):
+    """Fichiers d'un dossier et de ses sous-dossiers, avec le chemin des dossiers traversés."""
+    for item in kd.list_dir(dossier_id):
+        if item["type"] == "dir" and profondeur < 4:
+            yield from parcourir(kd, item["id"], dossiers + [item["name"]], profondeur + 1)
+        elif item["type"] == "file":
+            yield {**item, "dossiers": dossiers}
+
+
 def a_traiter(kd: KDrive) -> list[dict]:
     """Fichiers de l'inbox jamais vus, ou restés 'nouveau' (ex. limite atteinte)."""
     items = []
-    for item in kd.list_dir(INBOX_ID):
-        if item["type"] != "file":
-            continue
+    for item in parcourir(kd, INBOX_ID, []):
         doc = db.par_kdrive(item["id"])
         if doc is None or doc["statut"] == "nouveau":
             items.append(item)
     return items
+
+
+DELAI_NETTOYAGE = 10 * 60  # un dossier modifié récemment est peut-être encore en cours d'envoi
+
+
+def nettoyer_inbox(kd: KDrive, dossier_id: int = INBOX_ID, racine: bool = True) -> bool:
+    """Met à la corbeille les sous-dossiers de l'inbox vidés par le rangement. Vrai si vide."""
+    vide = True
+    for item in kd.list_dir(dossier_id):
+        ancien = time.time() - item.get("last_modified_at", 0) > DELAI_NETTOYAGE
+        if item["type"] == "dir" and nettoyer_inbox(kd, item["id"], racine=False) and ancien:
+            kd.delete(item["id"])
+            log(f"dossier vide supprimé de l'inbox : {item['name']}")
+        else:
+            vide = False
+    return vide and not racine
 
 
 def attendre(secondes: int):
@@ -119,9 +165,11 @@ def main():
             for rev in db.revisions_en_attente():
                 log(f"révision : {rev['genre']} « {rev['sujet']} »")
                 traiter_revision(kd, rev)
-            for item in a_traiter(kd)[:LOT]:
-                log(f"analyse : {item['name']}")
+            items = a_traiter(kd)
+            for item in items[:LOT]:
+                log(f"analyse : {'/'.join(item['dossiers'] + [item['name']])}")
                 traiter(kd, item)
+            nettoyer_inbox(kd)
         except LimiteAtteinte as e:
             log(f"limite du forfait atteinte, pause {PAUSE_LIMITE // 60} min : {e}")
             pause = PAUSE_LIMITE

@@ -7,11 +7,12 @@ import os
 import tempfile
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import markdown
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
@@ -33,6 +34,9 @@ async def lifespan(app):
 
 app = FastAPI(title="Claunote", lifespan=lifespan)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".webp"}
 
 
 def surligner(extrait: str | None) -> Markup:
@@ -65,7 +69,7 @@ def bibliotheque(request: Request):
         arbre[r["niveau"]][r["matiere"]].append(r)
     niveaux = [n for n in NIVEAUX if n in arbre]
     return templates.TemplateResponse(request, "bibliotheque.html", {
-        "arbre": arbre, "niveaux": niveaux, "nb_a_verifier": len(db.a_verifier())})
+        "arbre": arbre, "niveaux": niveaux})
 
 
 @app.get("/liste", response_class=HTMLResponse)
@@ -102,6 +106,41 @@ def _nettoyer(dossier: Path):
     dossier.rmdir()
 
 
+@app.get("/deposer", response_class=HTMLResponse)
+def page_deposer(request: Request):
+    return templates.TemplateResponse(request, "deposer.html", {"niveaux": NIVEAUX})
+
+
+@app.post("/deposer", response_class=HTMLResponse)
+def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: str = Form("")):
+    """Envoie les fichiers dans l'inbox kDrive, en gardant les dossiers d'un dossier déposé.
+
+    Un niveau choisi devient un sous-dossier de l'inbox : le worker s'en sert comme année d'étude.
+    """
+    if niveau and niveau not in NIVEAUX:
+        raise HTTPException(400, "niveau inconnu")
+    kd = KDrive.from_env()
+    dossiers_kdrive: dict[tuple, int] = {}
+    envoyes, ignores = [], []
+    for f in fichiers:
+        parts = [p for p in PurePosixPath((f.filename or "").replace("\\", "/")).parts if p not in ("", ".", "..", "/")]
+        if not parts:
+            continue
+        chemin = ([niveau] if niveau else []) + parts
+        if PurePosixPath(parts[-1]).suffix.lower() not in EXTENSIONS:
+            ignores.append("/".join(parts))
+            continue
+        dossiers = tuple(chemin[:-1])
+        if dossiers not in dossiers_kdrive:
+            dossiers_kdrive[dossiers] = kd.ensure_path(INBOX_ID, list(dossiers))
+        kd.upload(dossiers_kdrive[dossiers], chemin[-1], f.file.read(), conflict="rename")
+        envoyes.append("/".join(chemin))
+    if envoyes:
+        db.demander_scan()
+    return templates.TemplateResponse(request, "deposer.html", {
+        "niveaux": NIVEAUX, "envoyes": envoyes, "ignores": ignores})
+
+
 @app.get("/recherche", response_class=HTMLResponse)
 def recherche(request: Request, q: str = ""):
     resultats = db.recherche(q) if q.strip() else []
@@ -126,7 +165,7 @@ def classer(doc_id: int, niveau: str = Form(...), matiere: str = Form(...), type
     kd.move(doc["kdrive_id"], dest_id)
     if doc["kdrive_md_id"]:
         kd.move(doc["kdrive_md_id"], dest_id)
-    db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere, type=type, confiance=1.0)
+    db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere, type=type, confiance=1.0, note=None)
     return RedirectResponse("/a-verifier", status_code=303)
 
 

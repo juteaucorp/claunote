@@ -2,7 +2,8 @@
 {% block titre %}À vérifier{% endblock %}
 {% block contenu %}
 <h1>À vérifier</h1>
-<p class="doux">Documents que l'agent n'a pas su classer avec certitude, ou dont l'analyse a échoué.</p>
+<p class="doux">L'agent te demande de confirmer ces documents : il n'était pas sûr de leur classement,
+ou l'analyse a échoué. Ton choix range le fichier dans kDrive.</p>
 <datalist id="matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>
 {% for d in docs %}
 <div class="carte">
@@ -11,7 +12,9 @@
     <p class="alerte">Erreur : {{ d.erreur }}</p>
     <form method="post" action="/doc/{{ d.id }}/reessayer"><button>Réessayer l'analyse</button></form>
   {% else %}
-    <p class="doux">Proposition : {{ d.niveau or '?' }} · {{ d.matiere or '?' }} · {{ d.type or '?' }} (confiance {{ '%.0f'|format((d.confiance or 0) * 100) }} %)</p>
+    {% if d.note %}<p class="alerte">{{ d.note }}</p>{% endif %}
+    <p class="doux">Proposition : {{ d.niveau or '?' }} · {{ d.matiere or '?' }} · {{ d.type or '?' }}
+      (confiance {{ '%.0f'|format((d.confiance or 0) * 100) }} %){% if d.origine %} · déposé dans « {{ d.origine }} »{% endif %}</p>
     <form method="post" action="/doc/{{ d.id }}/classer">
       <select name="niveau" aria-label="Niveau">{% for n in niveaux %}<option {{ 'selected' if n == d.niveau }}>{{ n }}</option>{% endfor %}</select>
       <input name="matiere" list="matieres" value="{{ d.matiere or '' }}" placeholder="Matière" required aria-label="Matière">

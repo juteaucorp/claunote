@@ -1,11 +1,15 @@
 {% extends "base.html" %}
+{% block titre %}Bibliothèque{% endblock %}
 {% block contenu %}
 <h1>Bibliothèque</h1>
-{% if nb_a_verifier %}
-<p class="alerte"><a href="/a-verifier">{{ nb_a_verifier }} document{{ 's' if nb_a_verifier > 1 }} à vérifier</a></p>
+{% set attente = nb_a_verifier() %}
+{% if attente %}
+<div class="carte accent"><strong>{{ attente }} document{{ 's' if attente > 1 }} à confirmer.</strong>
+  L'agent n'est pas sûr de leur classement : <a href="/a-verifier">vérifie-les</a> en un clic.</div>
 {% endif %}
 {% if not niveaux %}
-<div class="carte">Aucun document classé pour l'instant. Dépose des scans dans <code>Etudes/inbox</code> sur kDrive, puis clique sur « Scanner maintenant ».</div>
+<div class="carte">Aucun document classé pour l'instant. <a href="/deposer">Dépose des scans</a> ici,
+  ou dans <code>Etudes/inbox</code> sur kDrive.</div>
 {% endif %}
 {% for niveau in niveaux %}
 <h2>{{ niveau }}</h2>

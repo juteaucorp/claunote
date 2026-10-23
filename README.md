@@ -27,6 +27,7 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Phase 1 : pipeline d'ingestion (transcription + classement par Claude Code)
 - [x] Phase 2 : site MVP (bibliothèque, recherche, « à vérifier »)
 - [x] Phase 3 : agent de révision (fiches, quiz, plans, sources citées)
+- [x] Avant Pronote : dossiers par année, dépôt depuis le site, confirmation des doutes, nouveau look
 - [ ] Phase 4 : Pronote
 - [ ] Phase 5 : flashcards, Anki, PWA
 
