@@ -8,7 +8,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "pawnote": "1.6.2"
+    "@blockshub/pawnote-lts": "1.6.4"
   },
   "engines": { "node": ">=20" }
 }

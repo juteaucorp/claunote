@@ -1,6 +1,7 @@
 // Service HTTP interne (réseau Docker uniquement) entre Claunote et Pronote.
 import { createServer } from "node:http";
-import * as pawnote from "pawnote";
+// Fork maintenu de Pawnote (archivé) : gère le nouveau défi de connexion de Pronote 2026
+import * as pawnote from "@blockshub/pawnote-lts";
 import { creerCompte, ErreurPronote, traduire } from "./pronote.mjs";
 
 const compte = creerCompte({ pawnote, fichier: process.env.ETAT_FICHIER ?? "./compte.json" });
