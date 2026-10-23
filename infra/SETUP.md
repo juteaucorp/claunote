@@ -9,7 +9,7 @@ apparaît sur `http://<vm>:8000/inbox` (via ton VPN).
 
 | Ressource | Minimum (MVP) | Recommandé | Pourquoi |
 | --- | --- | --- | --- |
-| vCPU | 2 | **4** | l'OCR de l'imprimé (OCRmyPDF) tourne sur le CPU : 4 cœurs = gros lots 2× plus vite |
+| vCPU | 2 | **4** | l'OCR de l'imprimé (OCRmyPDF) tourne sur le CPU : plus de cœurs = gros lots traités plus vite |
 | RAM | 4 Go | **8 Go** | Postgres + site + worker ~2 Go ; 8 Go si on fait les embeddings en local (phase 3) |
 | Disque VM | 20 Go | **40 Go SSD** | OS + images Docker ~8 Go, base < 2 Go, cache rclone 10 Go |
 | GPU | aucun | aucun | l'IA (transcription, fiches) passe par l'API Claude |
