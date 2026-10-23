@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { creerCompte, creerFetcher, lireQr, traduire } from "../pronote.mjs";
+import { creerCompte, creerFetcher, lireQr, pageLisible, traduire } from "../pronote.mjs";
 
 const maths = { id: "s1", name: "MATHEMATIQUES", inGroups: false };
 const reseau = { id: "s2", name: "SISR - RESEAUX", inGroups: false };
@@ -210,7 +210,7 @@ test("fetcher : suit les redirections des GET avec les cookies, pas celles des P
       if (!opts.headers.Cookie?.includes("etab=1")) {
         return reponse(302, "", { location: "/pronote/mobile.eleve.html?fd=1&login=true", "set-cookie": "etab=1; Path=/" });
       }
-      return reponse(200, "<html>>PRONOTE 2026.0.1</html>");
+      return reponse(200, "<html>>PRONOTE 2026.0.1<script>try{Start({h:1})}catch(e){}</script></html>");
     }
     return reponse(302, "", { location: "https://ailleurs/" });
   };
@@ -242,4 +242,53 @@ test("page indisponible : le message dit ce que le serveur a répondu", () => {
   assert.match(traduire(e, fetcher).message,
     /renvoyé sa page.*GET https:\/\/x\/pronote\/mobile\.eleve\.html → HTTP 302, redirige vers https:\/\/ent\.fr\/cas\/login/);
   assert.match(traduire(e).message, /^Pronote n'a pas renvoyé sa page/);
+});
+
+const START = "<script>try{Start({h:'1',a:6,d:true})}catch(e){}</script>";
+
+test("pageLisible : version affichée autrement, page sans Start", () => {
+  assert.equal(pageLisible(`<div>>PRONOTE 2025.2.6</div>${START}`), `<div>>PRONOTE 2025.2.6</div>${START}`);
+  assert.match(pageLisible(`<span>PRONOTE&nbsp;2026.1.3</span>${START}`), />PRONOTE 2026\.1\.3/);
+  assert.match(pageLisible(`<script>var info={"version":"2026.1.3"}</script>${START}`), />PRONOTE 2026\.1\.3/);
+  assert.match(pageLisible(`<footer>Index Éducation 2026.1.3</footer>${START}`), />PRONOTE 2026\.1\.3/);
+  assert.equal(pageLisible("<title>Mettez à jour l'application</title>"), null);
+  assert.equal(pageLisible(START), null);
+});
+
+test("fetcher : page non reconnue avec l'UA de l'appli → nouvel essai en navigateur de bureau, gardé ensuite", async () => {
+  const vus = [];
+  const faux = async (url, opts) => {
+    const ua = opts.headers["User-Agent"];
+    vus.push(ua.includes("PRONOTE Mobile") ? "appli" : "bureau");
+    if (url.includes("mobile.eleve.html")) {
+      return ua.includes("PRONOTE Mobile")
+        ? reponse(200, "<title>Application obsolète</title><p>Mettez à jour</p>")
+        : reponse(200, `<div>>PRONOTE 2026.1.3</div>${START}`);
+    }
+    return reponse(200, "{}");
+  };
+  const journal = [];
+  const fetcher = creerFetcher({ fetch: faux, journal: (m) => journal.push(m) });
+  const entetes = { "User-Agent": "Mozilla/5.0 PRONOTE Mobile APP Version/2.0.11", Cookie: "appliMobile=1" };
+  const r = await fetcher({ url: new URL("https://x/pronote/mobile.eleve.html?fd=1&login=true"), headers: entetes });
+  assert.match(r.content, /PRONOTE 2026\.1\.3/);
+  await fetcher({ url: new URL("https://x/pronote/appelfonction/3/1"), method: "POST", headers: entetes, content: "{}" });
+  assert.deepEqual(vus, ["appli", "bureau", "bureau"]);
+  assert.match(journal[0], /Application obsolète/);
+});
+
+test("fetcher : page jamais reconnue → gardée pour diagnostic, titre dans l'erreur", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const dossier = await mkdtemp(join(tmpdir(), "diag-"));
+  const diagnostic = join(dossier, "page.html");
+  const fetcher = creerFetcher({
+    fetch: async () => reponse(200, "<title>Connexion ENT</title><p>Redirection…</p>"),
+    journal: () => {}, diagnostic,
+  });
+  const r = await fetcher({ url: new URL("https://x/pronote/mobile.eleve.html"), headers: { "User-Agent": "PRONOTE Mobile" } });
+  assert.match(r.content, /Connexion ENT/);
+  assert.match(await readFile(diagnostic, "utf8"), /Redirection/);
+  const e = new Error("x");
+  e.name = "PageUnavailableError";
+  assert.match(traduire(e, fetcher).message, /HTTP 200, page « Connexion ENT »/);
 });
