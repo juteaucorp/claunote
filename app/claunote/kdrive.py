@@ -67,6 +67,15 @@ class KDrive:
                 return item["id"]
         return self.mkdir(parent_id, name)["id"]
 
+    def ensure_path(self, parent_id: int, parts: list[str]) -> int:
+        """Crée si besoin une suite de sous-dossiers et renvoie l'ID du dernier."""
+        for name in parts:
+            parent_id = self.find_or_create_dir(parent_id, name)
+        return parent_id
+
+    def rename(self, file_id: int, name: str) -> None:
+        self.http.post(self._url(f"/files/{file_id}/rename"), json={"name": name}).raise_for_status()
+
     def move(self, file_id: int, dest_dir_id: int) -> None:
         self.http.post(self._url(f"/files/{file_id}/move/{dest_dir_id}")).raise_for_status()
 

@@ -1,4 +1,9 @@
 FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# Claude Code : l'agent IA, authentifié par CLAUDE_CODE_OAUTH_TOKEN (forfait Pro)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

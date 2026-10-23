@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block titre %}{{ doc.titre or doc.nom }}{% endblock %}
+{% block contenu %}
+{% if doc.niveau and doc.matiere and doc.type %}
+<p class="doux"><a href="/">Bibliothèque</a> › {{ doc.niveau }} ›
+  <a href="/liste?niveau={{ doc.niveau|urlencode }}&matiere={{ doc.matiere|urlencode }}&type={{ doc.type|urlencode }}">{{ doc.matiere }} · {{ doc.type }}</a></p>
+{% endif %}
+<h1>{{ doc.titre or doc.nom }}</h1>
+<p class="doux">
+  {{ doc.chapitre or '' }}{% if doc.date_doc %} · {{ doc.date_doc.strftime('%d/%m/%Y') }}{% endif %}
+  · <a href="/doc/{{ doc.id }}/fichier" target="_blank">scan original</a>
+  {% if doc.statut != 'classe' %} · <span class="alerte">{{ doc.statut|replace('_', ' ') }}</span>{% endif %}
+</p>
+{% if doc.resume %}<div class="carte"><strong>Résumé</strong><p>{{ doc.resume }}</p></div>{% endif %}
+{% if doc.mots_cles %}<p class="doux">Mots-clés : {{ doc.mots_cles|join(', ') }}</p>{% endif %}
+<h2>Transcription</h2>
+<div class="carte transcription">{{ transcription|safe }}</div>
+<h2>Scan</h2>
+<iframe src="/doc/{{ doc.id }}/fichier" title="Scan original"></iframe>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block titre %}Recherche : {{ q }}{% endblock %}
+{% block contenu %}
+<h1>Recherche</h1>
+<form action="/recherche"><input name="q" value="{{ q }}" placeholder="ex. suites géométriques" size="32" aria-label="Recherche"> <button class="principal">Chercher</button></form>
+{% if q %}<p class="doux">{{ resultats|length }} résultat{{ 's' if resultats|length > 1 }}</p>{% endif %}
+{% for r in resultats %}
+<div class="carte">
+  <a href="/doc/{{ r.id }}"><strong>{{ r.titre or r.nom }}</strong></a>
+  <div class="doux">{{ r.niveau or '?' }} · {{ r.matiere or '?' }} · {{ r.type or '?' }}</div>
+  <p>{{ r.extrait|surligner }}</p>
+</div>
+{% endfor %}
+{% endblock %}

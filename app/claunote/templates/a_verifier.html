@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block titre %}À vérifier{% endblock %}
+{% block contenu %}
+<h1>À vérifier</h1>
+<p class="doux">Documents que l'agent n'a pas su classer avec certitude, ou dont l'analyse a échoué.</p>
+<datalist id="matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>
+{% for d in docs %}
+<div class="carte">
+  <a href="/doc/{{ d.id }}"><strong>{{ d.titre or d.nom }}</strong></a>
+  {% if d.statut == 'erreur' %}
+    <p class="alerte">Erreur : {{ d.erreur }}</p>
+    <form method="post" action="/doc/{{ d.id }}/reessayer"><button>Réessayer l'analyse</button></form>
+  {% else %}
+    <p class="doux">Proposition : {{ d.niveau or '?' }} · {{ d.matiere or '?' }} · {{ d.type or '?' }} (confiance {{ '%.0f'|format((d.confiance or 0) * 100) }} %)</p>
+    <form method="post" action="/doc/{{ d.id }}/classer">
+      <select name="niveau" aria-label="Niveau">{% for n in niveaux %}<option {{ 'selected' if n == d.niveau }}>{{ n }}</option>{% endfor %}</select>
+      <input name="matiere" list="matieres" value="{{ d.matiere or '' }}" placeholder="Matière" required aria-label="Matière">
+      <select name="type" aria-label="Type">{% for t in types %}<option {{ 'selected' if t == d.type }}>{{ t }}</option>{% endfor %}</select>
+      <button class="principal">Classer</button>
+    </form>
+  {% endif %}
+</div>
+{% else %}
+<p>Rien à vérifier.</p>
+{% endfor %}
+{% endblock %}
