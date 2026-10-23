@@ -194,9 +194,9 @@ CHAMPS_MASSE = {"statut", "niveau", "matiere", "type"}
 SANS_ANNEE = "-"
 
 
-def organiser(du=None, au=None, niveau: str = "", matiere: str = "", type_: str = "", statut: str = "",
-              texte: str = "", limite: int = 500):
-    """Documents filtrés pour la page Organiser ; `du`/`au` portent sur la date d'ajout."""
+def _filtres(du=None, au=None, niveau: str = "", matiere: str = "", type_: str = "", statut: str = "",
+             texte: str = "") -> tuple[str, list]:
+    """Clause WHERE des filtres de la page Organiser ; `du`/`au` portent sur la date d'ajout."""
     conditions, params = [], []
     for sql, valeur in (("cree_le >= %s", du), ("cree_le <= %s", au), ("matiere = %s", matiere or None),
                         ("type = %s", type_ or None), ("statut = %s", statut or None)):
@@ -211,12 +211,26 @@ def organiser(du=None, au=None, niveau: str = "", matiere: str = "", type_: str 
     if texte.strip():
         conditions.append("(nom ILIKE %s OR titre ILIKE %s OR origine ILIKE %s)")
         params += [f"%{texte.strip()}%"] * 3
-    where = " AND ".join(conditions) or "true"
+    return " AND ".join(conditions) or "true", params
+
+
+def organiser(filtres: dict, limite: int = 25, decalage: int = 0) -> tuple[list, int]:
+    """Une page de documents filtrés, et le nombre total de résultats."""
+    where, params = _filtres(**filtres)
     with connect() as c:
-        return c.execute(
-            f"""SELECT id, nom, titre, statut, niveau, matiere, type, origine, cree_le, a_ranger
-                FROM documents WHERE {where} ORDER BY cree_le DESC, id DESC LIMIT %s""",
-            (*params, limite)).fetchall()
+        total = c.execute(f"SELECT count(*) AS n FROM documents WHERE {where}", params).fetchone()["n"]
+        docs = c.execute(
+            f"""SELECT id, nom, titre, statut, niveau, matiere, type, origine, cree_le, a_ranger, erreur
+                FROM documents WHERE {where} ORDER BY cree_le DESC, id DESC LIMIT %s OFFSET %s""",
+            (*params, limite, decalage)).fetchall()
+    return docs, total
+
+
+def ids_filtres(filtres: dict) -> list[int]:
+    """Tous les documents d'un filtre (« appliquer à tous les résultats »)."""
+    where, params = _filtres(**filtres)
+    with connect() as c:
+        return [r["id"] for r in c.execute(f"SELECT id FROM documents WHERE {where}", params).fetchall()]
 
 
 def maj_masse(ids: list[int], **champs) -> int:
@@ -228,12 +242,14 @@ def maj_masse(ids: list[int], **champs) -> int:
         return 0
     cols = ", ".join(f"{k} = %s" for k in champs)
     with connect() as c:
-        # Un classement choisi à la main est sûr ; un document en erreur (sans analyse) n'est pas touché
+        # Un classement choisi à la main est sûr. Un document en analyse n'est pas touché ;
+        # un document en erreur peut être classé à la main, mais pas par l'IA (pas de transcription).
+        exclus = ["nouveau", "erreur"] if champs.get("statut") == "reclasser" else ["nouveau"]
         return c.execute(
             f"""UPDATE documents SET {cols}, a_ranger = true, maj_le = now(),
                   confiance = CASE WHEN %s THEN 1.0 ELSE confiance END, note = NULL
-                WHERE id = ANY(%s) AND statut NOT IN ('erreur', 'nouveau')""",
-            (*champs.values(), champs.get("statut") != "reclasser", ids)).rowcount
+                WHERE id = ANY(%s) AND NOT (statut = ANY(%s))""",
+            (*champs.values(), champs.get("statut") != "reclasser", ids, exclus)).rowcount
 
 
 def completer_classement(ids: list[int]) -> int:
@@ -241,8 +257,20 @@ def completer_classement(ids: list[int]) -> int:
     with connect() as c:
         return c.execute(
             """UPDATE documents SET statut = CASE WHEN niveau IS NOT NULL AND matiere IS NOT NULL
-                                                   AND type IS NOT NULL THEN 'classe' ELSE 'a_verifier' END
-               WHERE id = ANY(%s) AND statut IN ('classe', 'a_verifier')""", (ids,)).rowcount
+                                                   AND type IS NOT NULL THEN 'classe' ELSE 'a_verifier' END,
+                                    erreur = NULL
+               WHERE id = ANY(%s) AND statut IN ('classe', 'a_verifier', 'erreur')""", (ids,)).rowcount
+
+
+def reessayer_erreurs() -> int:
+    """Remet tous les documents en erreur dans la file d'analyse."""
+    with connect() as c:
+        return c.execute("UPDATE documents SET statut = 'nouveau', erreur = NULL WHERE statut = 'erreur'").rowcount
+
+
+def supprimer(doc_id: int):
+    with connect() as c:
+        c.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
 
 
 def a_reclasser(limite: int):

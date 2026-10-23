@@ -1,41 +1,99 @@
 {% extends "base.html" %}
-{% block titre %}À vérifier<style>
-  .classer { display: flex; flex-wrap: wrap; gap: 8px; }
-  @media (max-width: 760px) { .classer { display: grid; grid-template-columns: 1fr 1fr; } .classer input { grid-column: 1 / -1; } }
-</style>
-{% endblock %}
+{% block titre %}À vérifier{% endblock %}
+{% macro classer(d, libelle='Classer') %}
+<form method="post" action="/doc/{{ d.id }}/classer" class="classer">
+  <input type="hidden" name="retour" value="/a-verifier">
+  <select name="niveau" aria-label="Année">{% for n in niveaux %}<option {{ 'selected' if n == d.niveau }}>{{ n }}</option>{% endfor %}</select>
+  <input name="matiere" list="matieres" value="{{ d.matiere or '' }}" placeholder="Matière" required aria-label="Matière">
+  <select name="type" aria-label="Type">{% for t in types %}<option {{ 'selected' if t == d.type }}>{{ t }}</option>{% endfor %}</select>
+  <button class="principal">{{ libelle }}</button>
+</form>
+{% endmacro %}
 {% block contenu %}
 <h1>À vérifier</h1>
-<p class="doux">L'agent te demande de confirmer ces documents : il n'était pas sûr de leur classement,
-ou l'analyse a échoué. Ton choix range le fichier dans kDrive.</p>
 <datalist id="matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>
-{% for d in docs %}
-<div class="carte">
-  <a href="/doc/{{ d.id }}"><strong>{{ d.titre or d.nom }}</strong></a>
-  {% if d.statut == 'erreur' %}
-    <p class="alerte">Erreur : {{ d.erreur }}</p>
-    <form method="post" action="/doc/{{ d.id }}/reessayer"><button>Réessayer l'analyse</button></form>
-  {% else %}
-    {% if d.note %}<p class="alerte">{{ d.note }}</p>{% endif %}
-    <p class="doux">Proposition : {{ d.niveau or '?' }} · {{ d.matiere or '?' }} · {{ d.type or '?' }}
-      (confiance {{ '%.0f'|format((d.confiance or 0) * 100) }} %){% if d.origine %} · déposé dans « {{ d.origine }} »{% endif %}</p>
-    <form method="post" action="/doc/{{ d.id }}/classer" class="classer">
-      <select name="niveau" aria-label="Niveau">{% for n in niveaux %}<option {{ 'selected' if n == d.niveau }}>{{ n }}</option>{% endfor %}</select>
-      <input name="matiere" list="matieres" value="{{ d.matiere or '' }}" placeholder="Matière" required aria-label="Matière">
-      <select name="type" aria-label="Type">{% for t in types %}<option {{ 'selected' if t == d.type }}>{{ t }}</option>{% endfor %}</select>
-      <button class="principal">Classer</button>
-    </form>
-    <form method="post" action="/doc/{{ d.id }}/hors-cours" style="margin-top: 8px">
-      <input type="hidden" name="retour" value="/a-verifier">
-      <button>Hors cours</button> <span class="doux">administratif, sans intérêt pour réviser</span>
-    </form>
+
+{% if not doutes and not erreurs %}
+<div class="carte">Rien à vérifier : tout est classé ✓</div>
+{% endif %}
+
+{% if erreurs %}
+<div class="entete-section">
+  <h2>En erreur <span class="compteur">{{ erreurs|length }}</span></h2>
+  {% if erreurs|length > 1 %}
+  <form method="post" action="/a-verifier/reessayer-tout"><button>Tout réessayer</button></form>
   {% endif %}
 </div>
-{% else %}
-<p>Rien à vérifier.</p>
+<p class="doux intro">L'analyse de ces fichiers a échoué : ils attendent toujours dans l'inbox kDrive.</p>
+{% for d in erreurs %}
+{% set explication, conseil = d.erreur|explication_erreur %}
+<div class="carte doc-erreur">
+  <div class="tete">
+    <div>
+      <a href="/doc/{{ d.id }}/fichier" target="_blank"><strong>{{ d.titre or d.nom }}</strong></a>
+      <div class="alerte">{{ explication }}</div>
+      <div class="doux">{{ conseil }}</div>
+    </div>
+    <div class="actions">
+      <form method="post" action="/doc/{{ d.id }}/reessayer"><button class="principal">Réessayer</button></form>
+    </div>
+  </div>
+  <details>
+    <summary>Classer à la main</summary>
+    {{ classer(d) }}
+  </details>
+  <div class="actions pied">
+    <form method="post" action="/doc/{{ d.id }}/hors-cours"><input type="hidden" name="retour" value="/a-verifier">
+      <button>Hors cours</button></form>
+    <form method="post" action="/doc/{{ d.id }}/supprimer" onsubmit="return confirm('Supprimer {{ d.nom|e }} ? Le fichier part dans la corbeille kDrive.')">
+      <input type="hidden" name="retour" value="/a-verifier"><button class="danger">Supprimer</button></form>
+    <details class="technique"><summary>Détail technique</summary><code>{{ d.erreur }}</code></details>
+  </div>
+</div>
 {% endfor %}
+{% endif %}
+
+{% if doutes %}
+<div class="entete-section"><h2>À confirmer <span class="compteur">{{ doutes|length }}</span></h2></div>
+<p class="doux intro">L'agent n'était pas sûr du classement. Ton choix range le fichier dans kDrive.</p>
+{% for d in doutes %}
+<div class="carte">
+  <a href="/doc/{{ d.id }}"><strong>{{ d.titre or d.nom }}</strong></a>
+  {% if d.note %}<div class="alerte">{{ d.note }}</div>{% endif %}
+  <div class="doux">Proposition : {{ d.niveau or '?' }} · {{ d.matiere or '?' }} · {{ d.type or '?' }}
+    (confiance {{ '%.0f'|format((d.confiance or 0) * 100) }} %){% if d.origine %} · déposé dans « {{ d.origine }} »{% endif %}</div>
+  {{ classer(d) }}
+  <div class="actions pied">
+    <form method="post" action="/doc/{{ d.id }}/hors-cours"><input type="hidden" name="retour" value="/a-verifier">
+      <button>Hors cours</button></form>
+    <span class="doux">administratif, sans intérêt pour réviser</span>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
 <style>
-  .classer { display: flex; flex-wrap: wrap; gap: 8px; }
-  @media (max-width: 760px) { .classer { display: grid; grid-template-columns: 1fr 1fr; } .classer input { grid-column: 1 / -1; } }
+  .entete-section { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 4px; }
+  .entete-section h2 { margin: 0; }
+  .entete-section form { margin: 0; }
+  .compteur { display: inline-block; min-width: 24px; padding: 0 8px; border-radius: 999px; background: var(--accent-pale); color: var(--accent-fonce); font: 600 .85rem/24px ui-sans-serif, system-ui, sans-serif; text-align: center; vertical-align: middle; }
+  .intro { margin: 0 0 12px; }
+  .classer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .classer input { flex: 1 1 180px; }
+  .doc-erreur .tete { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .pied { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--bord); }
+  .pied form { margin: 0; }
+  .technique { margin: 0 0 0 auto; }
+  .technique summary { color: var(--doux); font-weight: 400; font-size: .88rem; }
+  .technique code { display: block; margin-top: 6px; font-size: .82rem; color: var(--doux); overflow-wrap: anywhere; }
+  button.danger { color: var(--alerte); }
+  button.danger:hover { border-color: var(--alerte); }
+  @media (max-width: 760px) {
+    .classer { display: grid; grid-template-columns: 1fr 1fr; }
+    .classer input { grid-column: 1 / -1; }
+    .doc-erreur .tete { flex-direction: column; }
+    .doc-erreur .tete .actions, .doc-erreur .tete button { width: 100%; }
+    .technique { margin: 0; width: 100%; }
+  }
 </style>
 {% endblock %}
