@@ -10,20 +10,20 @@ Plan complet : https://claude.ai/artifact/TftXx2h7fafSkS1WjNLMKK
 
 ```
 Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
-                              │ WebDAV (rclone mount)
+                              │ API REST kDrive (jeton)
                               ▼
 ┌──────────────── VM Linux (Docker Compose) ────────────────┐
 │  worker (OCR, classement) ──▶ PostgreSQL + pgvector        │
-│  agent IA (fiches, résumés) ─▶ API Claude                  │
+│  agent IA (fiches, résumés) ─▶ Claude Code (forfait Pro)   │
 │  site FastAPI + HTMX ◀── Pronote (Pawnote)                 │
 └──────────────────────────▲─────────────────────────────────┘
-                           │ VPN (Tailscale)
+                           │ VPN perso
                           Toi
 ```
 
 ## Phases
 
-- [ ] **Phase 0** : VM, montage kDrive, Docker Compose, Tailscale (ce dépôt)
+- [ ] **Phase 0** : VM, montage kDrive, Docker Compose (ce dépôt)
 - [ ] Phase 1 : pipeline d'ingestion (OCR + classement)
 - [ ] Phase 2 : site MVP (bibliothèque, recherche, « à vérifier »)
 - [ ] Phase 3 : agent de révision

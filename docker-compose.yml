@@ -12,11 +12,8 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}
-      ETUDES_DIR: /etudes
-    volumes:
-      - ${KDRIVE_ETUDES}:/etudes
     ports:
-      - "127.0.0.1:8000:8000"   # exposé uniquement via Tailscale / Caddy
+      - "${BIND_ADDR:-127.0.0.1}:8000:8000"   # IP de la VM sur ton VPN, jamais 0.0.0.0
     depends_on: [db]
 
   worker:
@@ -26,10 +23,11 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}
-      ETUDES_DIR: /etudes
+      CACHE_DIR: /cache
     volumes:
-      - ${KDRIVE_ETUDES}:/etudes
+      - cache:/cache   # copies locales des scans en cours de traitement
     depends_on: [db]
 
 volumes:
   pgdata:
+  cache:
