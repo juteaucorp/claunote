@@ -8,6 +8,7 @@ import tempfile
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlencode
 
 import markdown
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -17,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import db, rangement, revision
+from claunote import db, pronote, rangement, revision
 from claunote.agent import NIVEAUX, TYPES
 from claunote.kdrive import KDrive
 
@@ -35,6 +36,8 @@ async def lifespan(app):
 app = FastAPI(title="Claunote", lifespan=lifespan)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
+templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
+templates.env.filters["note"] = pronote.libelle_note
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".webp"}
 
@@ -178,10 +181,12 @@ def reessayer(doc_id: int):
 
 
 @app.get("/reviser", response_class=HTMLResponse)
-def reviser(request: Request):
+def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str = "", genre: str = ""):
+    """Les paramètres préremplissent le formulaire (depuis l'agenda Pronote)."""
     return templates.TemplateResponse(request, "reviser.html", {
         "choix": db.niveaux_matieres(), "genres": revision.GENRES, "revisions": db.revisions(),
-        "demain": dt.date.today() + dt.timedelta(days=1)})
+        "demain": dt.date.today() + dt.timedelta(days=1),
+        "pre": {"sujet": sujet, "matiere": matiere, "date_eval": date_eval, "genre": genre}})
 
 
 @app.post("/reviser")
@@ -228,6 +233,89 @@ def voir_revision(request: Request, rev_id: int):
     return templates.TemplateResponse(request, "revision.html", {
         "rev": rev, "genres": revision.GENRES, "contenu": contenu, "questions": questions,
         "reperes": reperes, "sources": db.documents(list(reperes.values()))})
+
+
+# --- Agenda (Pronote) -------------------------------------------------------
+
+def _agenda(request: Request, erreur: str | None = None, message: str | None = None):
+    try:
+        etat = pronote.Client().etat()
+    except pronote.ErreurPronote as e:
+        etat, erreur = {"connecte": False, "injoignable": True}, erreur or str(e)
+    ctx = {"etat": etat, "erreur": erreur, "message": message}
+    if etat.get("connecte"):
+        matieres = sorted({r["matiere"] for r in db.niveaux_matieres()})
+        evaluations = [{**e, "cours": pronote.trouver_matiere(e["matiere"], matieres)}
+                       for e in db.evenements_a_venir("evaluation", 60)]
+        ctx |= {"evaluations": evaluations, "devoirs": db.evenements_a_venir("devoir", 14),
+                "notes": db.notes_recentes(15), "synchro": db.etat_valeur("pronote_synchro"),
+                "erreurs_synchro": db.etat_valeur("pronote_erreurs"), "paris": pronote.PARIS}
+    return templates.TemplateResponse(request, "agenda.html", ctx)
+
+
+def _connecter(request: Request, connexion) -> HTMLResponse:
+    try:
+        connexion()
+        r = pronote.synchroniser()
+    except pronote.ErreurPronote as e:
+        return _agenda(request, erreur=str(e))
+    return _agenda(request, message=f"Connecté à Pronote : {r.get('evenements', 0)} évaluation(s) et devoir(s) récupérés.")
+
+
+@app.get("/agenda", response_class=HTMLResponse)
+def agenda(request: Request):
+    return _agenda(request)
+
+
+@app.post("/agenda/connexion-qr", response_class=HTMLResponse)
+def agenda_connexion_qr(request: Request, qr: str = Form(...), pin: str = Form(...)):
+    return _connecter(request, lambda: pronote.Client().connexion_qr(qr.strip(), pin.strip()))
+
+
+@app.post("/agenda/connexion", response_class=HTMLResponse)
+def agenda_connexion(request: Request, url: str = Form(...), identifiant: str = Form(...),
+                     mot_de_passe: str = Form(...)):
+    return _connecter(request, lambda: pronote.Client().connexion_identifiants(url.strip(), identifiant.strip(),
+                                                                               mot_de_passe))
+
+
+@app.post("/agenda/synchroniser", response_class=HTMLResponse)
+def agenda_synchroniser(request: Request):
+    try:
+        r = pronote.synchroniser()
+    except pronote.ErreurPronote as e:
+        return _agenda(request, erreur=str(e))
+    msg = f"Synchronisé : {r.get('evenements', 0)} évaluation(s) et devoir(s)."
+    if r.get("preparees"):
+        msg += f" {len(r['preparees'])} révision(s) lancée(s)."
+    return _agenda(request, message=msg)
+
+
+@app.post("/agenda/deconnexion")
+def agenda_deconnexion():
+    try:
+        pronote.Client().deconnexion()
+    except pronote.ErreurPronote:
+        pass
+    return RedirectResponse("/agenda", status_code=303)
+
+
+@app.post("/agenda/preparer")
+def agenda_preparer(ev_id: str = Form(...)):
+    """Évaluation Pronote → révision sur les cours de la matière (ou formulaire prérempli)."""
+    ev = db.evenement(ev_id)
+    if ev is None:
+        raise HTTPException(404)
+    if ev["revision_id"]:
+        return RedirectResponse(f"/revision/{ev['revision_id']}", status_code=303)
+    rev_id = pronote.preparer(ev)
+    if rev_id:
+        return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+    le = ev["le"].astimezone(pronote.PARIS).date()
+    plan = (le - dt.date.today()).days >= pronote.JOURS_PLAN
+    params = {"sujet": ev["titre"] if ev["id"].startswith("devoir:") else "",
+              "genre": "plan" if plan else "fiche", "date_eval": le.isoformat() if plan else ""}
+    return RedirectResponse(f"/reviser?{urlencode(params)}", status_code=303)
 
 
 @app.post("/scan", response_class=HTMLResponse)

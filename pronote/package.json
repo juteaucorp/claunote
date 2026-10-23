@@ -1,0 +1,14 @@
+{
+  "name": "claunote-pronote",
+  "private": true,
+  "type": "module",
+  "description": "Petit service interne qui parle à Pronote via Pawnote pour Claunote",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pawnote": "1.6.2"
+  },
+  "engines": { "node": ">=20" }
+}

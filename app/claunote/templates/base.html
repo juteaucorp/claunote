@@ -67,7 +67,16 @@
   iframe { width: 100%; height: 72vh; border: 1px solid var(--bord); border-radius: 12px; background: #fff; }
   b { background: var(--accent-pale); color: inherit; border-radius: 3px; padding: 0 2px; }
   #retour-scan:empty { display: none; }
-  @media (max-width: 640px) { .recherche-entete input { width: 140px; } h1 { font-size: 1.5rem; } }
+  .evenement { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-start; }
+  .evenement .jour { min-width: 58px; text-align: center; border-radius: 10px; background: var(--accent-pale); color: var(--accent-fonce); padding: 4px 6px; line-height: 1.2; }
+  .evenement .jour strong { display: block; font-size: 1.3rem; }
+  .evenement .corps { flex: 1 1 220px; min-width: 0; }
+  .evenement form { margin: 0; }
+  .fait { opacity: .55; text-decoration: line-through; }
+  table.notes { width: 100%; border-collapse: collapse; }
+  table.notes td, table.notes th { padding: 6px 8px; border-bottom: 1px solid var(--bord); text-align: left; }
+  table.notes td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  @media (max-width: 640px) { .recherche-entete input { width: 140px; } h1 { font-size: 1.5rem; } table.notes .large { display: none; } table.notes td, table.notes th { padding: 6px 4px; } }
 </style>
 </head>
 <body>
@@ -79,6 +88,8 @@
       <a href="/" class="{{ 'actif' if chemin == '/' or chemin.startswith('/liste') }}">Bibliothèque</a>
       <a href="/deposer" class="{{ 'actif' if chemin.startswith('/deposer') }}">Déposer</a>
       <a href="/reviser" class="{{ 'actif' if chemin.startswith('/revis') }}">Réviser</a>
+      {% set evals = nb_evaluations_proches() %}
+      <a href="/agenda" class="{{ 'actif' if chemin.startswith('/agenda') }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
       {% set attente = nb_a_verifier() %}
       <a href="/a-verifier" class="{{ 'actif' if chemin.startswith('/a-verifier') }}">À vérifier{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
     </nav>

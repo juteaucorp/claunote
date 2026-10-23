@@ -8,17 +8,17 @@
 <form method="post" action="/reviser" class="carte">
   <p><label>Matière<br>
     <select name="niveau_matiere" required>
-      {% for c in choix %}<option value="{{ c.niveau }}|{{ c.matiere }}">{{ c.niveau }} · {{ c.matiere }}</option>{% endfor %}
+      {% for c in choix %}<option value="{{ c.niveau }}|{{ c.matiere }}" {{ 'selected' if c.matiere == pre.matiere }}>{{ c.niveau }} · {{ c.matiere }}</option>{% endfor %}
     </select></label></p>
   <p><label>Sujet ou chapitre (facultatif)<br>
-    <input name="sujet" size="40" placeholder="ex. VLAN et routage inter-VLAN"></label></p>
+    <input name="sujet" size="40" placeholder="ex. VLAN et routage inter-VLAN" value="{{ pre.sujet }}"></label></p>
   <div class="choix">
     {% for g, libelle in genres.items() %}
-    <label><input type="radio" name="genre" value="{{ g }}" {{ 'checked' if loop.first }}> {{ libelle }}</label>
+    <label><input type="radio" name="genre" value="{{ g }}" {{ 'checked' if g == pre.genre or (not pre.genre and loop.first) }}> {{ libelle }}</label>
     {% endfor %}
   </div>
   <p><label>Date de l'évaluation (pour un plan de révision)<br>
-    <input type="date" name="date_eval" min="{{ demain.isoformat() }}"></label></p>
+    <input type="date" name="date_eval" min="{{ demain.isoformat() }}" value="{{ pre.date_eval }}"></label></p>
   <button class="principal">Générer</button>
   <p class="doux">L'agent utilise uniquement tes cours de cette matière, les plus proches du sujet d'abord.</p>
 </form>

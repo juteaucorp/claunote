@@ -14,7 +14,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:8000:8000"   # IP de la VM sur ton VPN, jamais 0.0.0.0
-    depends_on: [db]
+    depends_on: [db, pronote]
 
   worker:
     build: ./app
@@ -26,8 +26,18 @@ services:
       CACHE_DIR: /cache
     volumes:
       - cache:/cache   # copies locales des scans en cours de traitement
-    depends_on: [db]
+    depends_on: [db, pronote]
+
+  pronote:
+    build: ./pronote
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Paris
+    volumes:
+      - pronote:/data   # jeton de reconnexion Pronote (jamais le mot de passe)
+    # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
 
 volumes:
   pgdata:
   cache:
+  pronote:

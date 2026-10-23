@@ -48,6 +48,28 @@ CREATE TABLE IF NOT EXISTS revisions (
     kdrive_id  BIGINT,
     cree_le    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS pronote_evenements (
+    id           TEXT PRIMARY KEY,                     -- cours:<id> ou devoir:<id> (ids Pronote)
+    genre        TEXT NOT NULL,                        -- evaluation, devoir
+    matiere      TEXT NOT NULL,                        -- nom Pronote
+    titre        TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    le           TIMESTAMPTZ NOT NULL,
+    fait         BOOLEAN NOT NULL DEFAULT false,
+    revision_id  INT REFERENCES revisions(id) ON DELETE SET NULL,
+    vu_le        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS pronote_notes (
+    id              TEXT PRIMARY KEY,
+    matiere         TEXT NOT NULL,
+    le              TIMESTAMPTZ,
+    valeur          JSONB,
+    sur             JSONB,
+    moyenne_classe  JSONB,
+    coefficient     REAL,
+    commentaire     TEXT NOT NULL DEFAULT '',
+    periode         TEXT
+);
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -204,3 +226,84 @@ def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=No
     with connect() as c:
         c.execute("UPDATE revisions SET statut = %s, contenu = %s, reperes = %s, erreur = %s, kdrive_id = %s "
                   "WHERE id = %s", (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, rev_id))
+
+
+# --- Pronote ----------------------------------------------------------------
+
+def etat_valeur(cle: str):
+    with connect() as c:
+        r = c.execute("SELECT valeur FROM etat WHERE cle = %s", (cle,)).fetchone()
+        return r["valeur"] if r else None
+
+
+def etat_ecrire(cle: str, valeur: str | None):
+    with connect() as c:
+        if valeur is None:
+            c.execute("DELETE FROM etat WHERE cle = %s", (cle,))
+        else:
+            c.execute("INSERT INTO etat VALUES (%s, %s) ON CONFLICT (cle) DO UPDATE SET valeur = EXCLUDED.valeur",
+                      (cle, valeur))
+
+
+def enregistrer_pronote(evenements: list[dict], debut, sources: list[str], notes: list[dict] | None,
+                        periode: str | None):
+    """Remplace la fenêtre synchronisée : un contrôle annulé côté Pronote disparaît aussi ici.
+
+    `sources` : préfixes d'id (« cours: », « devoir: ») bien reçus ; les autres ne sont pas touchés.
+    """
+    with connect() as c, c.transaction():
+        ids = [e["id"] for e in evenements]
+        for prefixe in sources:
+            c.execute("DELETE FROM pronote_evenements WHERE le >= %s AND id LIKE %s AND NOT (id = ANY(%s))",
+                      (debut, prefixe + "%", ids))
+        for e in evenements:
+            c.execute(
+                """INSERT INTO pronote_evenements (id, genre, matiere, titre, description, le, fait)
+                   VALUES (%(id)s, %(genre)s, %(matiere)s, %(titre)s, %(description)s, %(le)s, %(fait)s)
+                   ON CONFLICT (id) DO UPDATE SET genre = EXCLUDED.genre, matiere = EXCLUDED.matiere,
+                     titre = EXCLUDED.titre, description = EXCLUDED.description, le = EXCLUDED.le,
+                     fait = EXCLUDED.fait, vu_le = now()""", e)
+        if notes is not None:
+            c.execute("DELETE FROM pronote_notes WHERE periode = %s", (periode,))
+            for n in notes:
+                c.execute(
+                    """INSERT INTO pronote_notes (id, matiere, le, valeur, sur, moyenne_classe, coefficient,
+                         commentaire, periode)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (id) DO UPDATE SET valeur = EXCLUDED.valeur, sur = EXCLUDED.sur,
+                         moyenne_classe = EXCLUDED.moyenne_classe, commentaire = EXCLUDED.commentaire,
+                         periode = EXCLUDED.periode""",
+                    (n["id"], n["matiere"], n["date"], Jsonb(n["valeur"]), Jsonb(n["sur"]),
+                     Jsonb(n["moyenne_classe"]), n["coefficient"], n["commentaire"], periode))
+
+
+def evenements_a_venir(genre: str | None = None, jours: int = 60):
+    with connect() as c:
+        return c.execute(
+            """SELECT e.*, r.statut AS revision_statut, r.genre AS revision_genre FROM pronote_evenements e
+               LEFT JOIN revisions r ON r.id = e.revision_id
+               WHERE e.le >= date_trunc('day', now()) AND e.le < now() + make_interval(days => %s)
+                 AND (%s::text IS NULL OR e.genre = %s)
+               ORDER BY e.le""", (jours, genre, genre)).fetchall()
+
+
+def evenement(ev_id: str):
+    with connect() as c:
+        return c.execute("SELECT * FROM pronote_evenements WHERE id = %s", (ev_id,)).fetchone()
+
+
+def lier_revision(ev_id: str, rev_id: int):
+    with connect() as c:
+        c.execute("UPDATE pronote_evenements SET revision_id = %s WHERE id = %s", (rev_id, ev_id))
+
+
+def notes_recentes(limite: int = 20):
+    with connect() as c:
+        return c.execute("SELECT * FROM pronote_notes ORDER BY le DESC NULLS LAST LIMIT %s", (limite,)).fetchall()
+
+
+def nb_evaluations_proches(jours: int = 7) -> int:
+    with connect() as c:
+        return c.execute("SELECT count(*) AS n FROM pronote_evenements WHERE genre = 'evaluation' "
+                         "AND le >= date_trunc('day', now()) AND le < now() + make_interval(days => %s)",
+                         (jours,)).fetchone()["n"]

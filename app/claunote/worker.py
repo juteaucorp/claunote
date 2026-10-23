@@ -12,7 +12,7 @@ import shutil
 import time
 from pathlib import Path, PurePosixPath
 
-from claunote import db, rangement, revision
+from claunote import db, pronote, rangement, revision
 from claunote.agent import ErreurAgent, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive
 
@@ -22,6 +22,7 @@ CACHE_DIR = Path(os.environ.get("CACHE_DIR", "/cache"))
 INTERVALLE = 60          # secondes entre deux vérifications de l'inbox
 PAUSE_LIMITE = 30 * 60   # pause quand la limite du forfait Pro est atteinte
 LOT = int(os.environ.get("WORKER_LOT", "5"))  # documents analysés par passage
+SYNCHRO_PRONOTE = int(os.environ.get("PRONOTE_INTERVALLE_H", "3")) * 3600
 
 
 def log(msg: str):
@@ -154,12 +155,28 @@ def attendre(secondes: int):
         time.sleep(5)
 
 
+def synchro_pronote(prochaine: float) -> float:
+    """Synchronise Pronote si c'est l'heure ; renvoie l'heure (monotonic) de la suivante."""
+    if time.monotonic() < prochaine:
+        return prochaine
+    try:
+        r = pronote.synchroniser()
+        if r["connecte"]:
+            log(f"pronote : {r['evenements']} évaluation(s)/devoir(s), {len(r['preparees'])} révision(s) lancée(s)"
+                + (f", erreurs : {r['erreurs']}" if r["erreurs"] else ""))
+    except Exception as e:
+        log(f"pronote : synchro impossible : {e}")
+    return time.monotonic() + SYNCHRO_PRONOTE
+
+
 def main():
     db.init()
     kd = KDrive.from_env()
     log(f"worker : surveillance du dossier kDrive {INBOX_ID}")
+    prochaine_synchro = 0.0
     while True:
         pause = INTERVALLE
+        prochaine_synchro = synchro_pronote(prochaine_synchro)
         try:
             # Les révisions passent avant les scans : tu attends le résultat sur le site
             for rev in db.revisions_en_attente():

@@ -150,3 +150,48 @@ Page **Réviser** du site : choisis une matière, un sujet (facultatif) et le ty
 - Depuis la page d'un document : boutons **Fiche** et **Quiz** sur ce seul document.
 - Chaque support est aussi copié dans `Etudes/fiches/` sur kDrive (en Markdown).
 - Les révisions passent **avant** les scans dans la file du worker.
+
+## 8. Pronote (phase 4)
+
+Page **Agenda** du site. Un petit service `pronote` (Node + [Pawnote](https://github.com/LiterateInk/Pawnote.js))
+tourne à côté du site, **sans port ouvert** : seuls le site et le worker lui parlent.
+
+```
+Pronote ──(Pawnote, jeton)──► service pronote ──► worker (toutes les 3 h) ──► PostgreSQL ──► page Agenda
+                                                                              └─► « Préparer » ─► fiche / plan
+```
+
+**Connexion (une seule fois)**
+
+1. Sur Pronote (ordinateur), clique sur l'icône **QR code** (« connexion à l'application mobile »), choisis un
+   code à 4 chiffres : le QR code s'affiche.
+2. Sur Claunote, page **Agenda** : colle une capture d'écran du QR code (Ctrl+V) ou choisis l'image,
+   puis entre le code à 4 chiffres. Le QR code est lu **dans ton navigateur**.
+3. Sans ENT, tu peux aussi utiliser l'adresse Pronote + identifiant + mot de passe.
+
+**Le mot de passe n'est jamais stocké** : seul le jeton de reconnexion de Pronote est gardé dans le
+volume Docker `pronote` (fichier lisible par le seul service), et il change à chaque synchro. Si Pronote
+le refuse un jour (changement de mot de passe, fin d'année), la page Agenda te demande de te reconnecter.
+
+**Ce qui est récupéré** (4 semaines à venir) :
+
+| Pronote | Sur Claunote |
+| --- | --- |
+| Cours marqués « devoir surveillé / évaluation » dans l'emploi du temps | **Évaluations à venir** |
+| Travail à faire qui annonce un DS, contrôle, interro, examen, partiel, CCF… | **Évaluations à venir** |
+| Autre travail à faire (2 semaines) | **Devoirs** |
+| Notes de la période en cours | **Dernières notes** |
+
+**Préparer une évaluation** : bouton **Préparer**. La matière Pronote est reliée à tes cours classés
+(« CULTURE ECONOMIQUE, JURIDIQUE ET MANAGERIALE » → CEJM, « SISR - RESEAUX » → Réseaux…), au niveau le
+plus récent. À 3 jours ou plus : un **plan de révision** ; plus près : une **fiche**. Si aucun cours ne
+correspond, le formulaire Réviser s'ouvre prérempli.
+
+Réglages dans `.env` :
+
+- `PRONOTE_INTERVALLE_H=3` : fréquence de la synchro.
+- `PRONOTE_PREPARATION_AUTO=1` : prépare **tout seul** chaque évaluation à moins de 10 jours (consomme
+  ton forfait Claude Pro). `0` par défaut : seulement quand tu cliques.
+
+Logs : `docker compose logs -f pronote worker`.
+
