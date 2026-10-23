@@ -8,6 +8,7 @@ repères pour que le site puisse renvoyer vers le cours d'origine.
 """
 import datetime as dt
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -21,11 +22,21 @@ CORRIGE = "## Corrigé"  # sépare le sujet d'une épreuve blanche de son corrig
 BUDGET = 120_000  # caractères de cours envoyés au maximum
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
+SOURCES_WEB = "## Sources web"  # fin d'un support Markdown : les pages web consultées
+OUTILS_WEB = ["WebSearch", "WebFetch"]
+
 COMMUN = """Tu aides un élève (du collège au BTS SIO) à réviser à partir de SES cours, fournis
 ci-dessous. Chaque document commence par un repère [D1], [D2]…
 Règles :
-- N'utilise QUE ces documents. Si une notion manque, ne l'invente pas.
-- Cite la source de chaque point important avec son repère, par exemple [D2].
+- Ses cours d'abord : ils sont la base de tout, cite la source de chaque point important avec
+  son repère, par exemple [D2]. N'invente rien.
+- Le web seulement si c'est utile, à toi d'en juger (WebSearch, WebFetch) : une notion des cours
+  incomplète ou illisible, un point à confirmer (définition, chiffre, article de loi, commande,
+  date), une erreur probable dans les cours, ou le format officiel d'une épreuve. Si les cours
+  suffisent, ne cherche pas. Le web complète ou corrige, il ne remplace jamais les cours : en cas
+  de désaccord, garde les deux et signale-le (« Attention : le cours dit…, la source officielle dit… »).
+- Sources fiables seulement (sites officiels, éducation nationale, documentation officielle,
+  Légifrance, Wikipédia en dernier recours). Marque chaque apport du web par [W1], [W2]…
 - Écris en français, simplement, sans HTML ni LaTeX (formules en texte : u_n = u_0 × q^n).
 {consigne}"""
 
@@ -38,22 +49,22 @@ Fais une fiche de révision sur « {sujet} », en Markdown, avec ces sections :
 ## Méthodes (étapes numérotées)
 ## Pièges fréquents
 ## Pour s'entraîner (3 questions, puis les réponses dans une section « Réponses »)
-Réponds uniquement avec la fiche.
+Réponds uniquement avec la fiche{web_md}.
 """,
     "quiz": COMMUN + """
 Fais un quiz de {nb} questions à choix multiples sur « {sujet} ».
 Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {{"questions": [{{"question": "...", "choix": ["...", "...", "...", "..."], "reponse": 0,
-  "explication": "...", "source": "D1"}}]}}
+  "explication": "...", "source": "D1"}}]{web_json}}}
 `reponse` est l'indice (à partir de 0) de la bonne réponse dans `choix`.
-""",
+{note_web}""",
     "cartes": COMMUN + """
 Fais {nb_cartes} flashcards sur « {sujet} » : une notion par carte (définition, commande,
 formule, date, schéma à expliquer…). Recto : une question courte et précise. Verso : la réponse
 en 1 à 3 lignes, sans recopier la question.
 Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
-{{"cartes": [{{"recto": "...", "verso": "...", "source": "D1"}}]}}
-""",
+{{"cartes": [{{"recto": "...", "verso": "...", "source": "D1"}}]{web_json}}}
+{note_web}""",
     "examen": COMMUN + """
 Fais un sujet d'épreuve blanche sur « {sujet} », comme un vrai sujet d'examen de ce niveau
 (contrôle, bac ou BTS selon les cours), faisable en {duree}. En Markdown :
@@ -63,14 +74,14 @@ Une ligne avec la durée, le barème total sur 20 et le matériel autorisé.
 appuyées sur les notions et exercices des cours (cite les repères [Dn] seulement dans le corrigé).
 Puis une section qui commence exactement par la ligne « """ + CORRIGE + """ » : la réponse rédigée de chaque
 question, le barème détaillé et les erreurs qui coûtent des points.
-Réponds uniquement avec le sujet puis le corrigé.
+Réponds uniquement avec le sujet puis le corrigé{web_md}.
 """,
     "plan": COMMUN + """
 L'évaluation sur « {sujet} » a lieu le {date_eval}. Aujourd'hui nous sommes le {aujourdhui}.
 Fais un plan de révision en Markdown, jour par jour jusqu'à la veille de l'évaluation :
 pour chaque jour, un titre « ### {{jour}} {{date}} », 20 à 45 minutes de travail, les notions
 à revoir avec leur repère [Dn] et un petit exercice. Garde le dernier jour pour une révision
-globale. Termine par une liste des 5 notions les plus probables à l'évaluation.
+globale. Termine par une liste des 5 notions les plus probables à l'évaluation{web_md}.
 """,
 }
 
@@ -109,7 +120,42 @@ def prompt(genre: str, sujet: str, date_eval: dt.date | None = None, aujourdhui:
     aujourdhui = aujourdhui or dt.date.today()
     return PROMPTS[genre].format(sujet=sujet, nb=10, nb_cartes=20, aujourdhui=date_fr(aujourdhui),
                                  date_eval=date_fr(date_eval) if date_eval else "", duree="2 heures",
-                                 consigne=bloc_consigne(consigne))
+                                 consigne=bloc_consigne(consigne), web_md=WEB_MD, web_json=WEB_JSON,
+                                 note_web=NOTE_WEB_JSON)
+
+
+WEB_MD = (f", puis, seulement si tu as utilisé le web, une dernière section « {SOURCES_WEB} » avec une ligne "
+          "par page : « - [W1] Titre de la page — https://… »")
+WEB_JSON = ', "web": [{"repere": "W1", "titre": "...", "url": "https://..."}]'
+NOTE_WEB_JSON = 'Mets la clé "web" seulement si tu as utilisé le web ; "source" peut alors valoir "W1".\n'
+
+
+def _web_propre(sources) -> list[dict]:
+    propres = []
+    for w in sources if isinstance(sources, list) else []:
+        if isinstance(w, dict) and re.fullmatch(r"W\d+", str(w.get("repere") or "")) \
+                and str(w.get("url") or "").startswith(("https://", "http://")):
+            propres.append({"repere": w["repere"], "titre": str(w.get("titre") or w["url"]).strip()[:200],
+                            "url": str(w["url"]).strip()})
+    return propres
+
+
+def separer_web(texte: str) -> tuple[str, list[dict]]:
+    """Retire la section « Sources web » d'un support Markdown et la renvoie en liste."""
+    i = texte.rfind(SOURCES_WEB)
+    if i < 0:
+        return texte, []
+    sources = [{"repere": m.group(1), "titre": m.group(2).strip(" -—–:"), "url": m.group(3)}
+               for m in re.finditer(r"\[(W\d+)\]\s*(.*?)\s*(https?://\S+?)[)>.,]*$", texte[i:], re.M)]
+    return texte[:i].rstrip(), _web_propre(sources)
+
+
+def web_json(texte: str) -> list[dict]:
+    debut, fin = texte.find("{"), texte.rfind("}")
+    try:
+        return _web_propre(json.loads(texte[debut:fin + 1]).get("web"))
+    except (ValueError, AttributeError):
+        return []
 
 
 def separer_corrige(texte: str) -> tuple[str, str]:
@@ -156,19 +202,23 @@ def parse_cartes(texte: str) -> list[dict]:
 
 
 def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None = None,
-            consigne: str = "") -> tuple[str, dict]:
-    """Renvoie (contenu, repères). Contenu : Markdown, ou JSON pour un quiz et des flashcards."""
+            consigne: str = "") -> tuple[str, dict, list[dict]]:
+    """Renvoie (contenu, repères des cours, sources web). Contenu : Markdown, ou JSON pour un quiz et des flashcards.
+
+    L'agent peut chercher sur le web s'il le juge utile ; les cours restent la base.
+    """
     if not docs:
         raise ErreurAgent("aucun document à utiliser")
     texte_cours, reperes = contexte(docs)
-    with tempfile.TemporaryDirectory() as vide:  # aucun fichier accessible : tout est dans l'entrée
-        texte = appeler_claude(prompt(genre, sujet, date_eval, consigne=consigne), Path(vide),
-                               entree=texte_cours, timeout=900)
+    with tempfile.TemporaryDirectory() as vide:  # aucun fichier local : les cours sont dans l'entrée
+        texte = appeler_claude(prompt(genre, sujet, date_eval, consigne=consigne), Path(vide), outils=OUTILS_WEB,
+                               entree=texte_cours, timeout=1200)
     if genre == "quiz":
-        return json.dumps(parse_quiz(texte), ensure_ascii=False), reperes
+        return json.dumps(parse_quiz(texte), ensure_ascii=False), reperes, web_json(texte)
     if genre == "cartes":
-        return json.dumps(parse_cartes(texte), ensure_ascii=False), reperes
-    return texte.strip(), reperes
+        return json.dumps(parse_cartes(texte), ensure_ascii=False), reperes, web_json(texte)
+    contenu, web = separer_web(texte.strip())
+    return contenu, reperes, web
 
 
 def nom_fichier(genre: str, sujet: str, quand: dt.date, extension: str = "md") -> str:

@@ -134,19 +134,19 @@ def ranger_en_attente(kd: KDrive):
 def traiter_revision(kd: KDrive, rev: dict):
     """Génère une fiche, un quiz, des flashcards, une épreuve ou un plan, puis en dépose le PDF dans Etudes/fiches/."""
     try:
-        contenu, reperes = revision.generer(rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]),
-                                            rev["date_eval"], rev.get("consigne") or "")
+        contenu, reperes, web = revision.generer(rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]),
+                                                 rev["date_eval"], rev.get("consigne") or "")
     except ErreurAgent as e:
         db.maj_revision(rev["id"], "erreur", erreur=str(e))
         log(f"erreur de révision {rev['id']} : {e}")
         return
     if rev["genre"] == "cartes":
         db.creer_cartes(rev["id"], json.loads(contenu))
-    db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes)
+    db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, web=web)
     kdrive_id = copier_pdf(kd, db.revision(rev["id"]))
     if kdrive_id:
-        db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, kdrive_id=kdrive_id)
-    log(f"révision prête : {rev['genre']} « {rev['sujet']} »")
+        db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, kdrive_id=kdrive_id, web=web)
+    log(f"révision prête : {rev['genre']} « {rev['sujet']} »" + (f" ({len(web)} source(s) web)" if web else ""))
     try:
         if not rev.get("campagne_id"):  # une campagne prévient une seule fois, quand tout est prêt
             notifications.revision_prete(rev)

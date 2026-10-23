@@ -86,9 +86,11 @@
     {% for k in s.cartes %}<tr><td>{{ k.recto }}</td><td>{{ k.verso }}</td></tr>{% endfor %}</table>
   {% endif %}
   {% if s.corrige %}<div class="corrige">{{ s.corrige }}</div>{% endif %}
-  {% if s.sources %}
+  {% if s.sources or s.web %}
   <div class="sources"><strong>Sources :</strong>
-    {% for r, t in s.sources %}[{{ r }}] {{ t }}{{ ' · ' if not loop.last }}{% endfor %}</div>
+    {% for r, t in s.sources %}[{{ r }}] {{ t }}{{ ' · ' if not loop.last }}{% endfor %}
+    {% if s.web %}<br><strong>Web :</strong>
+    {% for w in s.web %}[{{ w.repere }}] {{ w.titre }} ({{ w.url }}){{ ' · ' if not loop.last }}{% endfor %}{% endif %}</div>
   {% endif %}
 </div>
 {% endfor %}

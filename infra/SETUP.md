@@ -148,7 +148,11 @@ est au programme et l'historique **Déjà fait** (filtres par type, matière, re
 | **Épreuve blanche** | un sujet type examen avec barème, et son corrigé à part |
 | **Plan de révision** | un programme jour par jour jusqu'à la date de l'évaluation |
 
-- L'agent n'utilise **que tes cours** : chaque point renvoie au document source (`[D1]`, cliquable).
+- **Tes cours d'abord** : chaque point renvoie au document source (`[D1]`, cliquable).
+- **Web automatique** : l'agent cherche sur le web seulement s'il le juge utile (notion incomplète,
+  point à confirmer, erreur probable, format officiel d'une épreuve). Chaque apport est marqué `[W1]`
+  avec le lien de la page, et la page affiche « 🌐 Complété avec le web ». Un support qui cherche sur
+  le web prend un peu plus de temps et de forfait.
 - Tu peux **cocher les cours** à utiliser, et donner un **contexte** (consignes du prof, points faibles…).
   Sans cours cochés, le sujet sert de recherche dans la matière ; s'il ne trouve rien, toute la matière est utilisée.
 - **Campagne** : plusieurs matières × plusieurs supports d'un coup (24 au maximum) + un **programme

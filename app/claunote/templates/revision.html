@@ -15,6 +15,7 @@
   {% if rev.date_eval %}<span>· Évaluation le {{ rev.date_eval.strftime('%d/%m/%Y') }}</span>{% endif %}
   {% if rev.score %}<span class="etat ok">Dernier score : {{ rev.score.bonnes }}/{{ rev.score.total }}</span>
   {% elif rev.fait_le %}<span class="etat ok">Fait le {{ (rev.fait_le|paris)[:10] }}</span>{% endif %}
+  {% if web %}<a class="etat" href="#sources" title="Tes cours restent la base ; le web a servi à compléter ou vérifier">🌐 Complété avec le web · {{ web|length }}</a>{% endif %}
 </p>
 
 {% if rev.statut == 'pret' %}
@@ -24,7 +25,7 @@
   <a class="bouton" href="#" data-partager data-pdf="/revision/{{ rev.id }}/pdf" data-nom="{{ nom_pdf }}" data-titre="{{ rev.sujet }}">{{ icone('partager', 18) }}<span>Partager</span></a>
   {% if rev.genre != 'quiz' %}
   <form method="post" action="/revision/{{ rev.id }}/fait"><input type="hidden" name="fait" value="{{ '0' if rev.fait_le else '1' }}">
-    <button class="{{ 'fait' if rev.fait_le }}">{{ icone('check', 18) }}<span>{{ 'Fait' if rev.fait_le else 'Marquer comme fait' }}</span></button></form>
+    <button class="{{ 'deja-fait' if rev.fait_le }}">{{ icone('check', 18) }}<span>{{ 'Fait' if rev.fait_le else 'Marquer comme fait' }}</span></button></form>
   {% endif %}
   <details class="menu-plus">
     <summary aria-label="Plus d'actions">{{ icone('plus', 20) }}</summary>
@@ -61,7 +62,8 @@
     <details class="explication"><summary>Voir la réponse</summary>
       <p><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse] }}</strong></p>
       <p>{{ q.explication }}
-      {% if q.source in reperes %}<a href="/doc/{{ reperes[q.source] }}">[{{ q.source }}]</a>{% endif %}</p>
+      {% if q.source in reperes %}<a href="/doc/{{ reperes[q.source] }}">[{{ q.source }}]</a>
+      {% elif q.source in web %}<a class="web" href="{{ web[q.source].url }}" target="_blank" rel="noopener noreferrer">[{{ q.source }}]</a>{% endif %}</p>
     </details>
   </fieldset>
   {% endfor %}
@@ -108,7 +110,8 @@
 <details class="carte">
   <summary>{{ k.recto }}</summary>
   <p>{{ k.verso|e|replace('\n', '<br>'|safe) }}
-  {% if k.source in reperes %}<a href="/doc/{{ reperes[k.source] }}">[{{ k.source }}]</a>{% endif %}</p>
+  {% if k.source in reperes %}<a href="/doc/{{ reperes[k.source] }}">[{{ k.source }}]</a>
+  {% elif k.source in web %}<a class="web" href="{{ web[k.source].url }}" target="_blank" rel="noopener noreferrer">[{{ k.source }}]</a>{% endif %}</p>
 </details>
 {% endfor %}
 {% else %}
@@ -122,15 +125,20 @@
 <details class="carte"><summary>Contexte donné à l'IA</summary><p>{{ rev.consigne|e|replace('\n', '<br>'|safe) }}</p></details>
 {% endif %}
 
-{% if sources %}
-<h2>Sources</h2>
+{% if sources or web %}
+<h2 id="sources">Sources</h2>
 <ul class="carte lignes">
   {% for repere, doc_id in reperes.items() %}
     {% for d in sources if d.id == doc_id %}
     <li><span class="etiquette">{{ repere }}</span><div class="corps"><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a> <span class="doux">{{ d.type }}</span></div></li>
     {% endfor %}
   {% endfor %}
+  {% for w in web.values() %}
+  <li><span class="etiquette etiquette-web">{{ w.repere }}</span><div class="corps"><a href="{{ w.url }}" target="_blank" rel="noopener noreferrer">{{ w.titre }} ↗</a>
+    <div class="doux">{{ w.url.split('/')[2] }} · web</div></div></li>
+  {% endfor %}
 </ul>
+{% if web %}<p class="doux">[D…] = tes cours, la base de ce support. [W…] = pages web consultées par l'agent pour compléter ou vérifier.</p>{% endif %}
 {% endif %}
 <style>
   .tete-revision { margin-bottom: 4px; }
@@ -157,6 +165,9 @@
   .question.reussie .num-q { background: var(--ok); color: #fff; }
   .question.ratee .num-q { background: var(--alerte); color: #fff; }
   .resultat { font-size: 1.05rem; }
+  .etiquette-web { --g: var(--g-plan); }
+  a.web { color: var(--g-plan); }
+  a.etat { text-decoration: none; }
   .resultat .score { font-size: 1.6rem; font-family: ui-serif, Georgia, serif; margin-right: 8px; }
 </style>
 {% endblock %}

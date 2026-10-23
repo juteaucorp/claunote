@@ -90,7 +90,7 @@ def test_flashcards_enregistrees(worker, monkeypatch):
     import json
     vu = {}
     cartes = [{"recto": "VLAN ?", "verso": "Réseau virtuel", "source": "D1"}]
-    monkeypatch.setattr(worker.revision, "generer", lambda *a: (json.dumps(cartes), {"D1": 3}))
+    monkeypatch.setattr(worker.revision, "generer", lambda *a: (json.dumps(cartes), {"D1": 3}, []))
     monkeypatch.setattr(db, "documents", lambda ids: [{"id": 3, "titre": "TP VLAN", "nom": "x.pdf"}])
     monkeypatch.setattr(db, "creer_cartes", lambda rev_id, k: vu.update(cartes=(rev_id, k)))
     monkeypatch.setattr(db, "maj_revision", lambda rev_id, statut, **k: vu.update(statut=statut, kdrive=k.get("kdrive_id")))

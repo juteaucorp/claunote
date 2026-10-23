@@ -43,12 +43,17 @@ def test_generer_passe_les_cours_sur_l_entree(monkeypatch):
 
     def faux(prompt, cwd, outils=None, entree=None, timeout=0):
         vu.update(prompt=prompt, entree=entree, outils=outils)
-        return "## L'essentiel\nUn VLAN… [D1]"
+        return ("## L'essentiel\nUn VLAN… [D1], norme 802.1Q [W1]\n\n## Sources web\n"
+                "- [W1] IEEE 802.1Q — https://fr.wikipedia.org/wiki/IEEE_802.1Q\n")
 
     monkeypatch.setattr(revision, "appeler_claude", faux)
-    contenu, reperes = revision.generer("fiche", "VLAN", DOCS)
-    assert contenu.startswith("## L'essentiel") and reperes["D1"] == 11
-    assert "[D1] VLAN" in vu["entree"] and "« VLAN »" in vu["prompt"] and vu["outils"] is None
+    contenu, reperes, web = revision.generer("fiche", "VLAN", DOCS)
+    assert contenu == "## L'essentiel\nUn VLAN… [D1], norme 802.1Q [W1]" and reperes["D1"] == 11
+    assert web == [{"repere": "W1", "titre": "IEEE 802.1Q", "url": "https://fr.wikipedia.org/wiki/IEEE_802.1Q"}]
+    assert "[D1] VLAN" in vu["entree"] and "« VLAN »" in vu["prompt"]
+    # Le web est permis, l'agent décide ; les cours restent la base
+    assert vu["outils"] == ["WebSearch", "WebFetch"] and "Ses cours d'abord" in vu["prompt"]
+    assert "## Sources web" in vu["prompt"]
     with pytest.raises(ErreurAgent):
         revision.generer("fiche", "VLAN", [])
 
@@ -127,3 +132,15 @@ def test_entree_programme():
         [{"le": dt.datetime(2026, 11, 3, 8), "matiere": "MATHS", "genre": "evaluation", "titre": "DS"}])
     assert "BTS blanc lundi" in e and "Maths (BTS2) sur « suites » : supports préparés : Épreuve blanche, Fiche" in e
     assert "mardi 03/11/2026 : MATHS (evaluation) DS" in e
+
+
+def test_sources_web_d_un_quiz():
+    texte = ('{"questions": [{"question": "Q", "choix": ["a", "b"], "reponse": 0, "source": "W1"}], '
+             '"web": [{"repere": "W1", "titre": "ANSSI", "url": "https://cyber.gouv.fr/x"}, '
+             '{"repere": "W2", "url": "javascript:alert(1)"}, {"repere": "pas un repère", "url": "https://a.b"}]}')
+    assert revision.web_json(texte) == [{"repere": "W1", "titre": "ANSSI", "url": "https://cyber.gouv.fr/x"}]
+    assert revision.web_json('{"questions": []}') == [] and revision.web_json("rien") == []
+    p = revision.prompt("quiz", "RGPD")
+    assert '"web": [{"repere": "W1"' in p and "{{" not in p
+    # Pas de section web : le texte reste entier
+    assert revision.separer_web("# Fiche\n## Pièges") == ("# Fiche\n## Pièges", [])
