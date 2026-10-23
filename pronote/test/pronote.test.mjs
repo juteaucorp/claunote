@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { creerCompte, lireQr } from "../pronote.mjs";
+import { creerCompte, creerFetcher, lireQr, traduire } from "../pronote.mjs";
 
 const maths = { id: "s1", name: "MATHEMATIQUES", inGroups: false };
 const reseau = { id: "s2", name: "SISR - RESEAUX", inGroups: false };
@@ -192,4 +192,54 @@ test("connexion QR : PIN avec espaces accepté, QR passé à Pawnote nettoyé", 
   const [, info] = pawnote.appels.find((a) => a[0] === "qr");
   assert.equal(info.pin, "1234");
   assert.equal(info.qr.jeton, "abc");
+});
+
+function reponse(status, corps = "", entetes = {}) {
+  return new Response(status >= 300 && status < 400 ? null : corps, { status, headers: entetes });
+}
+
+test("fetcher : suit les redirections des GET avec les cookies, pas celles des POST", async () => {
+  const vus = [];
+  const journal = [];
+  const faux = async (url, opts) => {
+    vus.push([opts.method, url, opts.headers.Cookie]);
+    if (url.startsWith("http://lycee.fr/pronote/")) {
+      return reponse(301, "", { location: "https://lycee.fr/pronote/mobile.eleve.html?fd=1&login=true" });
+    }
+    if (url === "https://lycee.fr/pronote/mobile.eleve.html?fd=1&login=true") {
+      if (!opts.headers.Cookie?.includes("etab=1")) {
+        return reponse(302, "", { location: "/pronote/mobile.eleve.html?fd=1&login=true", "set-cookie": "etab=1; Path=/" });
+      }
+      return reponse(200, "<html>>PRONOTE 2026.0.1</html>");
+    }
+    return reponse(302, "", { location: "https://ailleurs/" });
+  };
+  const fetcher = creerFetcher({ fetch: faux, journal: (m) => journal.push(m) });
+  const r = await fetcher({ url: new URL("http://lycee.fr/pronote/mobile.eleve.html?fd=1&login=true"), headers: { Cookie: "appliMobile=1" } });
+  assert.equal(r.status, 200);
+  assert.match(r.content, /PRONOTE 2026/);
+  assert.equal(vus.at(-1)[2], "appliMobile=1; etab=1");
+  assert.equal(journal.length, 2);
+  vus.length = 0;
+  const p = await fetcher({ url: new URL("https://lycee.fr/pronote/appelfonction/3/x"), method: "POST", content: "{}" });
+  assert.equal(p.status, 302);
+  assert.equal(vus.length, 1);
+  assert.deepEqual(fetcher.dernier, { methode: "POST", url: "https://lycee.fr/pronote/appelfonction/3/x", statut: 302, lieu: "https://ailleurs/" });
+});
+
+test("fetcher : s'arrête après 5 redirections", async () => {
+  let n = 0;
+  const fetcher = creerFetcher({ fetch: async () => (n++, reponse(302, "", { location: "/boucle" })), journal: () => {} });
+  const r = await fetcher({ url: new URL("https://x/pronote/mobile.eleve.html") });
+  assert.equal(r.status, 302);
+  assert.equal(n, 6);
+});
+
+test("page indisponible : le message dit ce que le serveur a répondu", () => {
+  const e = new Error("The requested page does not exist");
+  e.name = "PageUnavailableError";
+  const fetcher = { dernier: { methode: "GET", url: "https://x/pronote/mobile.eleve.html", statut: 302, lieu: "https://ent.fr/cas/login" } };
+  assert.match(traduire(e, fetcher).message,
+    /renvoyé sa page.*GET https:\/\/x\/pronote\/mobile\.eleve\.html → HTTP 302, redirige vers https:\/\/ent\.fr\/cas\/login/);
+  assert.match(traduire(e).message, /^Pronote n'a pas renvoyé sa page/);
 });
