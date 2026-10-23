@@ -14,7 +14,7 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
                               ▼
 ┌──────────────── VM Linux (Docker Compose) ────────────────┐
 │  worker (OCR, classement) ──▶ PostgreSQL + pgvector        │
-│  agent IA (fiches, résumés) ─▶ API Claude                  │
+│  agent IA (fiches, résumés) ─▶ Claude Code (forfait Pro)   │
 │  site FastAPI + HTMX ◀── Pronote (Pawnote)                 │
 └──────────────────────────▲─────────────────────────────────┘
                            │ VPN perso
