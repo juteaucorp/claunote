@@ -211,3 +211,52 @@ Réglages dans `.env` :
 
 Logs : `docker compose logs -f pronote worker`.
 
+
+## 9. Connexion au site
+
+Le site demande un identifiant et un mot de passe. **Par défaut : `admin` / `claunote`** — à changer dans
+le `.env` :
+
+```
+CLAUNOTE_UTILISATEUR=admin
+CLAUNOTE_MOT_DE_PASSE=mon-nouveau-mot-de-passe
+```
+
+puis `docker compose up -d`. Pour ne pas l'écrire en clair, génère un hash et colle-le à la place :
+
+```bash
+docker compose run --rm web python -m claunote.auth   # affiche scrypt:…:…
+```
+
+- Mot de passe haché en **scrypt**, cookie de session **signé** (HMAC), `HttpOnly`, `SameSite=Lax`,
+  `Secure` dès que le site passe en HTTPS. Une connexion dure **30 jours**.
+- Changer le mot de passe **déconnecte tous les appareils**.
+- 5 essais ratés depuis une même adresse → blocage **5 minutes**.
+- Bouton **⏻** en haut à droite pour se déconnecter.
+
+## 10. Flashcards, Anki et appli mobile (phase 5)
+
+```
+Réviser ─► « Flashcards » ─► Claude tire ~20 cartes de tes cours ─► page Cartes
+                                                                   ├─► révision espacée sur le site
+                                                                   └─► export .apkg ─► Anki / AnkiDroid
+```
+
+- **Créer** : page **Réviser**, choisis la matière (et un sujet), coche **Flashcards**.
+- **Réviser** : page **Cartes** (le badge donne le nombre de cartes du jour). Tu retournes la carte
+  (espace), puis tu notes **À revoir / Difficile / Bien / Facile** (touches 1 à 4). Algorithme SM-2,
+  comme Anki : une carte sue revient de plus en plus tard, une carte ratée revient tout de suite.
+- **Anki** : bouton **Anki** sur un paquet, ou **Tout exporter**. Le fichier `.apkg` s'ouvre dans Anki
+  (ordinateur) ou AnkiDroid. Réimporter **met à jour** les cartes sans doublons. Les paquets sont rangés
+  sous `Claunote::<sujet>`. La progression Anki et celle du site sont séparées.
+
+**Appli sur le téléphone (PWA)** : Claunote peut s'installer comme une appli (icône papillon, plein
+écran, pages déjà ouvertes lisibles hors ligne).
+
+- ⚠️ Les navigateurs n'autorisent l'installation qu'en **HTTPS**. En `http://IP-VPN:8000`, tu peux
+  seulement « Ajouter à l'écran d'accueil » (raccourci, sans hors ligne).
+- Pour la vraie appli : mets un reverse proxy HTTPS devant le site (Caddy, Nginx Proxy Manager,
+  Traefik…) avec un certificat (par ex. Let's Encrypt en DNS-01 sur un sous-domaine qui pointe vers
+  l'IP VPN). Le proxy doit envoyer `X-Forwarded-Proto: https` pour que le cookie soit `Secure`.
+- Puis sur Android (Chrome) : menu **⋮ → Installer l'application** ; sur iPhone (Safari) :
+  **Partager → Sur l'écran d'accueil**.

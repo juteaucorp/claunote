@@ -12,13 +12,13 @@ from urllib.parse import urlencode
 
 import markdown
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import db, pronote, rangement, revision
+from claunote import anki, auth, db, pronote, rangement, revision
 from claunote.agent import NIVEAUX, TYPES
 from claunote.kdrive import KDrive
 
@@ -30,13 +30,34 @@ ETUDES_ID = int(os.environ.get("KDRIVE_ETUDES_ID", "0"))
 @asynccontextmanager
 async def lifespan(app):
     db.init()
+    secret = os.environ.get("CLAUNOTE_SECRET") or db.secret_session()
+    app.state.compte = auth.Compte.from_env(secret.encode())
+    if app.state.compte.par_defaut:
+        print("ATTENTION : mot de passe par défaut (admin / claunote), "
+              "change CLAUNOTE_MOT_DE_PASSE dans le .env", flush=True)
     yield
 
 
 app = FastAPI(title="Claunote", lifespan=lifespan)
+PUBLIC = ("/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne")
+
+
+@app.middleware("http")
+async def exiger_connexion(request: Request, call_next):
+    chemin = request.url.path
+    if chemin.startswith(PUBLIC) or request.app.state.compte.session_valide(request.cookies.get(auth.COOKIE)):
+        return await call_next(request)
+    if request.headers.get("HX-Request"):
+        return Response(status_code=401, headers={"HX-Redirect": "/connexion"})
+    if request.method != "GET":
+        return Response("connexion requise", status_code=401)
+    suite = chemin + (f"?{request.url.query}" if request.url.query else "")
+    return RedirectResponse(f"/connexion?{urlencode({'suite': suite})}", status_code=303)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
+templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
+templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
 templates.env.filters["note"] = pronote.libelle_note
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".webp"}
@@ -64,6 +85,46 @@ def avec_sources(rendu: str, reperes: dict) -> Markup:
         return f'<a href="/doc/{doc_id}">[{m.group(1)}]</a>' if doc_id else m.group(0)
     return Markup(re.sub(r"\[(D\d+)\]", lien, rendu))
 
+
+# --- Connexion --------------------------------------------------------------
+
+def _suite_sure(suite: str) -> str:
+    # Uniquement un chemin du site : pas de redirection vers un autre domaine
+    return suite if suite.startswith("/") and not suite.startswith("//") and "\\" not in suite else "/"
+
+
+@app.get("/connexion", response_class=HTMLResponse)
+def page_connexion(request: Request, suite: str = "/"):
+    return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "sans_nav": True})
+
+
+@app.post("/connexion", response_class=HTMLResponse)
+def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str = Form(...), suite: str = Form("/")):
+    compte = request.app.state.compte
+    ip = request.client.host if request.client else "?"
+    attente = compte.bloque(ip)
+    if attente or not compte.verifier(ip, utilisateur.strip(), mot_de_passe):
+        attente = attente or compte.bloque(ip)
+        erreur = (f"Trop d'essais : réessaie dans {attente // 60 + 1} min." if attente
+                  else "Identifiant ou mot de passe incorrect.")
+        return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "erreur": erreur,
+                                                                       "sans_nav": True},
+                                          status_code=401)
+    r = RedirectResponse(_suite_sure(suite), status_code=303)
+    https = request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
+    r.set_cookie(auth.COOKIE, compte.creer_session(), max_age=auth.DUREE, httponly=True, samesite="lax",
+                 secure=https)
+    return r
+
+
+@app.post("/deconnexion")
+def deconnexion():
+    r = RedirectResponse("/connexion", status_code=303)
+    r.delete_cookie(auth.COOKIE)
+    return r
+
+
+# --- Bibliothèque ----------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 def bibliotheque(request: Request):
@@ -224,15 +285,85 @@ def voir_revision(request: Request, rev_id: int):
     if rev is None:
         raise HTTPException(404)
     reperes = rev["reperes"] or {}
-    contenu, questions = None, []
+    contenu, questions, cartes = None, [], []
     if rev["statut"] == "pret":
         if rev["genre"] == "quiz":
             questions = json.loads(rev["contenu"])
+        elif rev["genre"] == "cartes":
+            cartes = db.cartes(rev_id)
         else:
             contenu = avec_sources(rendu_markdown(rev["contenu"]), reperes)
     return templates.TemplateResponse(request, "revision.html", {
-        "rev": rev, "genres": revision.GENRES, "contenu": contenu, "questions": questions,
+        "rev": rev, "genres": revision.GENRES, "contenu": contenu, "questions": questions, "cartes": cartes,
         "reperes": reperes, "sources": db.documents(list(reperes.values()))})
+
+
+# --- Flashcards --------------------------------------------------------------
+
+@app.get("/cartes", response_class=HTMLResponse)
+def page_cartes(request: Request):
+    return templates.TemplateResponse(request, "cartes.html", {"paquets": db.paquets()})
+
+
+@app.get("/cartes/session", response_class=HTMLResponse)
+def session_cartes(request: Request, paquet: int | None = None):
+    """Une carte à la fois : recto, on retourne, on note de « À revoir » à « Facile »."""
+    carte = db.prochaine_carte(paquet)
+    reperes = (carte["reperes"] or {}) if carte else {}
+    return templates.TemplateResponse(request, "session_cartes.html", {
+        "carte": carte, "paquet": paquet, "notes": revision.NOTES, "reperes": reperes,
+        "reste": db.nb_cartes_a_revoir(paquet),
+        # Dans combien de jours la carte reviendra, pour chaque bouton
+        "apercu": {n: revision.repetition(carte["facilite"], carte["intervalle"], carte["repetitions"], n)[1]
+                   for n in revision.NOTES} if carte else {}})
+
+
+@app.post("/cartes/{carte_id}/noter")
+def noter_carte(carte_id: int, note: int = Form(...), paquet: int | None = Form(None)):
+    carte = db.carte(carte_id)
+    if carte is None or note not in revision.NOTES:
+        raise HTTPException(400, "carte ou note invalide")
+    db.maj_carte(carte_id, *revision.repetition(carte["facilite"], carte["intervalle"], carte["repetitions"], note))
+    return RedirectResponse("/cartes/session" + (f"?paquet={paquet}" if paquet else ""), status_code=303)
+
+
+@app.get("/cartes/anki")
+def export_anki(paquet: int | None = None):
+    """Paquet .apkg à ouvrir dans Anki / AnkiDroid ; sans `paquet`, toutes les flashcards."""
+    par_rev = defaultdict(list)
+    for k in db.cartes(paquet):
+        par_rev[(k["revision_id"], k["sujet"])].append(k)
+    if not par_rev:
+        raise HTTPException(404, "aucune flashcard")
+    reperes = {rev_id: ks[0]["reperes"] or {} for (rev_id, _), ks in par_rev.items()}
+    titres = {d["id"]: d["titre"] or d["nom"]
+              for d in db.documents(sorted({i for r in reperes.values() for i in r.values()}))}
+    decks = [anki.paquet(rev_id, sujet, ks, {r: titres.get(i, "") for r, i in reperes[rev_id].items()})
+             for (rev_id, sujet), ks in par_rev.items()]
+    nom = (f"claunote-{rangement.slug(next(iter(par_rev))[1])[:40]}" if paquet else "claunote") + ".apkg"
+    return Response(anki.exporter(decks), media_type="application/apkg",
+                    headers={"Content-Disposition": f'attachment; filename="{nom}"'})
+
+
+# --- PWA (appli installable) -------------------------------------------------
+
+STATIC = Path(__file__).parent / "static"
+
+
+@app.get("/manifest.webmanifest")
+def manifeste():
+    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    # Servi à la racine pour contrôler tout le site
+    return FileResponse(STATIC / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/hors-ligne", response_class=HTMLResponse)
+def hors_ligne(request: Request):
+    return templates.TemplateResponse(request, "hors_ligne.html", {"sans_nav": True})
 
 
 # --- Agenda (Pronote) -------------------------------------------------------

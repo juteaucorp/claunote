@@ -1,6 +1,7 @@
 """Génération de supports de révision à partir des transcriptions.
 
-Trois genres : fiche de révision, quiz (QCM) et plan de révision jusqu'à une évaluation.
+Quatre genres : fiche de révision, quiz (QCM), flashcards et plan de révision jusqu'à une
+évaluation. Les flashcards se révisent ensuite en répétition espacée (SM-2) ou dans Anki.
 Les documents sont numérotés [D1], [D2]… dans le prompt ; Claude doit citer ces
 repères pour que le site puisse renvoyer vers le cours d'origine.
 """
@@ -12,7 +13,7 @@ from pathlib import Path
 from claunote.agent import ErreurAgent, appeler_claude
 from claunote.rangement import slug
 
-GENRES = {"fiche": "Fiche de révision", "quiz": "Quiz", "plan": "Plan de révision"}
+GENRES = {"fiche": "Fiche de révision", "quiz": "Quiz", "cartes": "Flashcards", "plan": "Plan de révision"}
 BUDGET = 120_000  # caractères de cours envoyés au maximum
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
@@ -41,6 +42,13 @@ Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {{"questions": [{{"question": "...", "choix": ["...", "...", "...", "..."], "reponse": 0,
   "explication": "...", "source": "D1"}}]}}
 `reponse` est l'indice (à partir de 0) de la bonne réponse dans `choix`.
+""",
+    "cartes": COMMUN + """
+Fais {nb_cartes} flashcards sur « {sujet} » : une notion par carte (définition, commande,
+formule, date, schéma à expliquer…). Recto : une question courte et précise. Verso : la réponse
+en 1 à 3 lignes, sans recopier la question.
+Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
+{{"cartes": [{{"recto": "...", "verso": "...", "source": "D1"}}]}}
 """,
     "plan": COMMUN + """
 L'évaluation sur « {sujet} » a lieu le {date_eval}. Aujourd'hui nous sommes le {aujourdhui}.
@@ -77,16 +85,20 @@ def prompt(genre: str, sujet: str, date_eval: dt.date | None = None, aujourdhui:
     if genre == "plan" and date_eval is None:
         raise ValueError("un plan de révision demande une date d'évaluation")
     aujourdhui = aujourdhui or dt.date.today()
-    return PROMPTS[genre].format(sujet=sujet, nb=10, aujourdhui=date_fr(aujourdhui),
+    return PROMPTS[genre].format(sujet=sujet, nb=10, nb_cartes=20, aujourdhui=date_fr(aujourdhui),
                                  date_eval=date_fr(date_eval) if date_eval else "")
 
 
-def parse_quiz(texte: str) -> list[dict]:
+def _liste_json(texte: str, cle: str, quoi: str) -> list:
     debut, fin = texte.find("{"), texte.rfind("}")
     try:
-        questions = json.loads(texte[debut:fin + 1])["questions"]
+        return list(json.loads(texte[debut:fin + 1])[cle])
     except (ValueError, KeyError, TypeError) as e:
-        raise ErreurAgent(f"quiz illisible : {texte[:200]!r}") from e
+        raise ErreurAgent(f"{quoi} illisible : {texte[:200]!r}") from e
+
+
+def parse_quiz(texte: str) -> list[dict]:
+    questions = _liste_json(texte, "questions", "quiz")
     propres = []
     for q in questions:
         choix = [str(c) for c in q.get("choix") or []]
@@ -103,8 +115,19 @@ def parse_quiz(texte: str) -> list[dict]:
     return propres
 
 
+def parse_cartes(texte: str) -> list[dict]:
+    propres = []
+    for k in _liste_json(texte, "cartes", "flashcards"):
+        if isinstance(k, dict) and str(k.get("recto") or "").strip() and str(k.get("verso") or "").strip():
+            propres.append({"recto": str(k["recto"]).strip(), "verso": str(k["verso"]).strip(),
+                            "source": str(k.get("source") or "")})
+    if not propres:
+        raise ErreurAgent("aucune flashcard valide")
+    return propres
+
+
 def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None = None) -> tuple[str, dict]:
-    """Renvoie (contenu, repères). Contenu : Markdown, ou JSON pour un quiz."""
+    """Renvoie (contenu, repères). Contenu : Markdown, ou JSON pour un quiz et des flashcards."""
     if not docs:
         raise ErreurAgent("aucun document à utiliser")
     texte_cours, reperes = contexte(docs)
@@ -112,6 +135,8 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
         texte = appeler_claude(prompt(genre, sujet, date_eval), Path(vide), entree=texte_cours, timeout=900)
     if genre == "quiz":
         return json.dumps(parse_quiz(texte), ensure_ascii=False), reperes
+    if genre == "cartes":
+        return json.dumps(parse_cartes(texte), ensure_ascii=False), reperes
     return texte.strip(), reperes
 
 
@@ -127,3 +152,32 @@ def quiz_en_markdown(questions: list[dict]) -> str:
         lignes += [f"- {chr(65 + j)}. {c}" for j, c in enumerate(q["choix"])]
         lignes.append(f"\n**Réponse : {chr(65 + q['reponse'])}.** {q['explication']}\n")
     return "\n".join(lignes)
+
+
+def cartes_en_markdown(cartes: list[dict]) -> str:
+    return "\n".join(f"### {i}. {k['recto']}\n\n{k['verso']}\n" for i, k in enumerate(cartes, start=1))
+
+
+# --- Répétition espacée (SM-2, comme Anki) -----------------------------------
+
+NOTES = {0: "À revoir", 3: "Difficile", 4: "Bien", 5: "Facile"}
+
+
+def repetition(facilite: float, intervalle: int, repetitions: int, note: int,
+               aujourdhui: dt.date | None = None) -> tuple[float, int, int, dt.date]:
+    """Nouvel état d'une carte après une réponse notée 0 (raté) à 5 (facile).
+
+    Renvoie (facilité, intervalle en jours, répétitions réussies, prochaine date).
+    """
+    if note not in NOTES:
+        raise ValueError(f"note inconnue : {note}")
+    aujourdhui = aujourdhui or dt.date.today()
+    if note < 3:
+        repetitions, intervalle = 0, 0  # ratée : on la revoit aujourd'hui même
+    else:
+        intervalle = 1 if repetitions == 0 else 3 if repetitions == 1 else round(intervalle * facilite)
+        if note == 5:
+            intervalle = round(intervalle * 1.3) + 1
+        repetitions += 1
+    facilite = max(1.3, facilite + 0.1 - (5 - note) * (0.08 + (5 - note) * 0.02))
+    return round(facilite, 2), intervalle, repetitions, aujourdhui + dt.timedelta(days=intervalle)

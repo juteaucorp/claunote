@@ -13,9 +13,15 @@ DOC = {"id": 1, "kdrive_id": 77, "nom": "2025-03-12_vlan.pdf", "statut": "classe
 
 
 @pytest.fixture
-def client(monkeypatch):
+def anonyme(monkeypatch):
+    """Site sans session : seule la page de connexion répond."""
     appels = []
+    monkeypatch.delenv("CLAUNOTE_UTILISATEUR", raising=False)
+    monkeypatch.delenv("CLAUNOTE_MOT_DE_PASSE", raising=False)
+    monkeypatch.delenv("CLAUNOTE_SECRET", raising=False)
     monkeypatch.setattr(db, "init", lambda: None)
+    monkeypatch.setattr(db, "secret_session", lambda: "secret-de-test")
+    monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: 0)
     monkeypatch.setattr(db, "bibliotheque", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "type": "TP", "n": 3}])
     monkeypatch.setattr(db, "a_verifier", lambda: [{**DOC, "id": 2, "statut": "a_verifier", "confiance": 0.4,
                                                     "note": "Le dossier « BTS1 » indique BTS1", "origine": "BTS1"}])
@@ -35,6 +41,13 @@ def client(monkeypatch):
     with TestClient(main.app) as c:
         c.appels = appels
         yield c
+
+
+@pytest.fixture
+def client(anonyme):
+    r = anonyme.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}, follow_redirects=False)
+    assert r.status_code == 303
+    return anonyme
 
 
 def test_bibliotheque(client):
@@ -287,3 +300,125 @@ def test_deconnexion(agenda):
     FauxPronote.etat_ = {"connecte": True, "nom": "X"}
     agenda.post("/agenda/deconnexion")
     assert ("deconnexion",) in FauxPronote.appels
+
+
+# --- Connexion ----------------------------------------------------------------
+
+def test_pages_protegees(anonyme):
+    r = anonyme.get("/revision/5?x=1", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/connexion?suite=%2Frevision%2F5%3Fx%3D1"
+    assert anonyme.post("/scan").status_code == 401
+    assert anonyme.post("/scan", headers={"HX-Request": "true"}).headers["HX-Redirect"] == "/connexion"
+    assert anonyme.get("/cartes/anki", follow_redirects=False).status_code == 303
+    for public in ("/connexion", "/static/logo.svg", "/manifest.webmanifest", "/sw.js", "/hors-ligne"):
+        assert anonyme.get(public).status_code == 200, public
+    assert "Bibliothèque" not in anonyme.get("/connexion").text  # pas de menu avant connexion
+
+
+def test_connexion_et_deconnexion(anonyme):
+    r = anonyme.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "faux", "suite": "/cartes"})
+    assert r.status_code == 401 and "incorrect" in r.text
+    r = anonyme.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote", "suite": "/cartes"},
+                     follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/cartes"
+    cookie = r.headers["set-cookie"]
+    assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Max-Age=2592000" in cookie
+    assert "Mot de passe par défaut" in anonyme.get("/", follow_redirects=False).text
+    anonyme.post("/deconnexion")
+    assert anonyme.get("/", follow_redirects=False).status_code == 303
+
+
+def test_connexion_pas_de_redirection_externe(anonyme):
+    for suite in ("https://mechant.example", "//mechant.example", "/\\mechant.example"):
+        r = anonyme.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote", "suite": suite},
+                         follow_redirects=False)
+        assert r.headers["location"] == "/"
+
+
+def test_identifiants_du_env(monkeypatch, anonyme):
+    from claunote import auth
+    monkeypatch.setenv("CLAUNOTE_UTILISATEUR", "anto")
+    monkeypatch.setenv("CLAUNOTE_MOT_DE_PASSE", auth.hacher("s3cret"))
+    with TestClient(main.app) as c:
+        assert c.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}).status_code == 401
+        r = c.post("/connexion", data={"utilisateur": "anto", "mot_de_passe": "s3cret"}, follow_redirects=False)
+        assert r.status_code == 303
+        assert "Mot de passe par défaut" not in c.get("/").text
+
+
+def test_blocage_apres_5_echecs(anonyme):
+    for _ in range(5):
+        anonyme.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "faux"})
+    r = anonyme.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}, follow_redirects=False)
+    assert r.status_code == 401 and "Trop d&#39;essais" in r.text
+
+
+# --- Flashcards, Anki, PWA ----------------------------------------------------
+
+CARTE = {"id": 31, "revision_id": 8, "recto": "Qu'est-ce qu'un VLAN ?", "verso": "Un réseau virtuel\n<b>isolé</b>",
+         "source": "D1", "facilite": 2.5, "intervalle": 0, "repetitions": 0, "prochaine": date(2026, 10, 23),
+         "vue_le": None, "sujet": "VLAN", "reperes": {"D1": 1}}
+
+
+@pytest.fixture
+def cartes(client, monkeypatch):
+    monkeypatch.setattr(db, "paquets", lambda: [{"id": 8, "sujet": "VLAN", "cree_le": date(2026, 10, 23),
+                                                 "total": 1, "a_revoir": 1, "nouvelles": 1}])
+    monkeypatch.setattr(db, "prochaine_carte", lambda paquet=None: CARTE if paquet in (None, 8) else None)
+    monkeypatch.setattr(db, "cartes", lambda rev_id=None: [CARTE] if rev_id in (None, 8) else [])
+    monkeypatch.setattr(db, "carte", lambda i: CARTE if i == 31 else None)
+    monkeypatch.setattr(db, "maj_carte", lambda *a: client.appels.append(("carte",) + a))
+    return client
+
+
+def test_page_cartes(cartes):
+    r = cartes.get("/cartes")
+    assert "1 carte à revoir" in r.text and "/cartes/session?paquet=8" in r.text and "/cartes/anki?paquet=8" in r.text
+
+
+def test_session_et_notation(cartes):
+    r = cartes.get("/cartes/session?paquet=8")
+    assert "Qu'est-ce qu'un VLAN ?" in r.text.replace("&#39;", "'")
+    assert "Un réseau virtuel<br>&lt;b&gt;isolé&lt;/b&gt;" in r.text and 'href="/doc/1"' in r.text
+    assert "maintenant" in r.text and "demain" in r.text
+    assert "plus rien à revoir" in cartes.get("/cartes/session?paquet=9").text
+    r = cartes.post("/cartes/31/noter", data={"note": "4", "paquet": "8"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/cartes/session?paquet=8"
+    _, cid, facilite, intervalle, reps, prochaine = cartes.appels[-1]
+    assert (cid, intervalle, reps) == (31, 1, 1)
+    assert cartes.post("/cartes/31/noter", data={"note": "2"}).status_code == 400
+    assert cartes.post("/cartes/99/noter", data={"note": "4"}).status_code == 400
+
+
+def test_export_anki(cartes):
+    import sqlite3
+    import tempfile
+    import zipfile
+    from pathlib import Path
+    r = cartes.get("/cartes/anki?paquet=8")
+    assert r.status_code == 200 and 'filename="claunote-vlan.apkg"' in r.headers["content-disposition"]
+    with tempfile.TemporaryDirectory() as tmp:
+        apkg = Path(tmp) / "x.apkg"
+        apkg.write_bytes(r.content)
+        zipfile.ZipFile(apkg).extract("collection.anki2", tmp)
+        champs = sqlite3.connect(Path(tmp) / "collection.anki2").execute("SELECT flds FROM notes").fetchone()[0]
+    recto, verso, source = champs.split("\x1f")
+    assert recto == "Qu&#x27;est-ce qu&#x27;un VLAN ?" and verso == "Un réseau virtuel<br>&lt;b&gt;isolé&lt;/b&gt;"
+    assert source == "Les VLAN"
+    assert cartes.get("/cartes/anki?paquet=9").status_code == 404
+
+
+def test_revision_flashcards(cartes, monkeypatch):
+    monkeypatch.setattr(db, "revision", lambda i: {"id": 8, "genre": "cartes", "sujet": "VLAN", "statut": "pret",
+                                                   "contenu": "[]", "reperes": {"D1": 1}, "date_eval": None})
+    r = cartes.get("/revision/8")
+    assert "1 flashcard" in r.text and "/cartes/session?paquet=8" in r.text
+    assert 'value="cartes"' in cartes.get("/reviser").text
+
+
+def test_pwa(anonyme):
+    m = anonyme.get("/manifest.webmanifest")
+    assert m.headers["content-type"].startswith("application/manifest+json")
+    assert m.json()["start_url"] == "/" and len(m.json()["icons"]) == 3
+    assert "serviceWorker" in anonyme.get("/connexion").text and 'rel="manifest"' in anonyme.get("/connexion").text
+    assert anonyme.get("/static/icone-512.png").status_code == 200

@@ -24,6 +24,19 @@
   </li>
   {% endfor %}
 </ol>
+{% elif rev.genre == 'cartes' %}
+<div class="carte accent actions">
+  <strong>{{ cartes|length }} flashcard{{ 's' if cartes|length > 1 }}</strong>
+  <a class="bouton principal" href="/cartes/session?paquet={{ rev.id }}">Réviser</a>
+  <a class="bouton" href="/cartes/anki?paquet={{ rev.id }}" download>Exporter vers Anki</a>
+</div>
+{% for k in cartes %}
+<details class="carte">
+  <summary>{{ k.recto }}</summary>
+  <p>{{ k.verso|e|replace('\n', '<br>'|safe) }}
+  {% if k.source in reperes %}<a href="/doc/{{ reperes[k.source] }}">[{{ k.source }}]</a>{% endif %}</p>
+</details>
+{% endfor %}
 {% else %}
 <div class="carte transcription">{{ contenu }}</div>
 {% endif %}

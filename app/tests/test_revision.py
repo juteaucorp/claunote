@@ -57,3 +57,30 @@ def test_nom_fichier_et_quiz_markdown():
     assert revision.nom_fichier("quiz", "Les réseaux : VLAN", dt.date(2026, 10, 23)) == "2026-10-23_quiz_les-reseaux-vlan.md"
     md = revision.quiz_en_markdown([{"question": "Q", "choix": ["a", "b"], "reponse": 1, "explication": "car"}])
     assert "### 1. Q" in md and "- B. b" in md and "**Réponse : B.** car" in md
+
+
+def test_parse_cartes():
+    texte = json.dumps({"cartes": [{"recto": "VLAN ?", "verso": "Réseau virtuel", "source": "D1"},
+                                   {"recto": "", "verso": "x"}, "pas une carte"]})
+    assert revision.parse_cartes("Voici :\n" + texte) == [{"recto": "VLAN ?", "verso": "Réseau virtuel", "source": "D1"}]
+    with pytest.raises(ErreurAgent):
+        revision.parse_cartes('{"cartes": []}')
+    assert "### 1. VLAN ?\n\nRéseau virtuel" in revision.cartes_en_markdown([{"recto": "VLAN ?", "verso": "Réseau virtuel"}])
+    assert "flashcards" in revision.prompt("cartes", "VLAN") and "20 flashcards" in revision.prompt("cartes", "VLAN")
+
+
+def test_repetition_espacee():
+    j = dt.date(2026, 10, 23)
+    f, i, n, le = revision.repetition(2.5, 0, 0, 4, j)
+    assert (i, n, le) == (1, 1, j + dt.timedelta(days=1))
+    f, i, n, le = revision.repetition(f, i, n, 4, j)
+    assert (i, n) == (3, 2)
+    f2, i2, n2, _ = revision.repetition(f, i, n, 4, j)
+    assert i2 == round(3 * f) and n2 == 3
+    # Ratée : on recommence, aujourd'hui même, et elle devient plus difficile
+    f3, i3, n3, le3 = revision.repetition(f2, i2, n2, 0, j)
+    assert (i3, n3, le3) == (0, 0, j) and f3 < f2
+    assert revision.repetition(1.3, 0, 0, 0, j)[0] == 1.3
+    assert revision.repetition(2.5, 0, 0, 5, j)[1] > revision.repetition(2.5, 0, 0, 4, j)[1]
+    with pytest.raises(ValueError):
+        revision.repetition(2.5, 0, 0, 2, j)

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block titre %}Hors ligne{% endblock %}
+{% block contenu %}
+<div class="connexion">
+  <img src="/static/logo.svg" alt="">
+  <h1>Pas de connexion</h1>
+  <p class="doux">Claunote n'est joignable que par ton VPN. Vérifie qu'il est allumé, puis réessaie.</p>
+  <p><button class="principal" onclick="location.reload()">Réessayer</button></p>
+</div>
+{% endblock %}

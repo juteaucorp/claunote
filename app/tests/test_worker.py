@@ -83,3 +83,24 @@ def test_analyser_transmet_le_dossier(monkeypatch, tmp_path):
     monkeypatch.setattr(agent, "appeler_claude", faux)
     agent.analyser(tmp_path / "a.pdf", ["BTS1", "Réseaux"])
     assert "« BTS1/Réseaux »" in vu["prompt"]
+
+
+def test_flashcards_enregistrees(worker, monkeypatch):
+    from claunote import db
+    vu = {}
+    cartes = [{"recto": "VLAN ?", "verso": "Réseau virtuel", "source": "D1"}]
+    monkeypatch.setattr(worker.revision, "generer", lambda *a: (__import__("json").dumps(cartes), {"D1": 3}))
+    monkeypatch.setattr(db, "documents", lambda ids: [])
+    monkeypatch.setattr(db, "creer_cartes", lambda rev_id, k: vu.update(cartes=(rev_id, k)))
+    monkeypatch.setattr(db, "maj_revision", lambda rev_id, statut, **k: vu.update(statut=statut))
+
+    class FauxKD:
+        def ensure_path(self, parent, parts):
+            return 9
+
+        def upload(self, dossier, nom, contenu):
+            vu["md"] = contenu.decode()
+            return {"id": 5}
+
+    worker.traiter_revision(FauxKD(), {"id": 4, "genre": "cartes", "sujet": "VLAN", "doc_ids": [3], "date_eval": None})
+    assert vu["cartes"] == (4, cartes) and vu["statut"] == "pret" and "### 1. VLAN ?" in vu["md"]
