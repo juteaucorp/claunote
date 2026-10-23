@@ -1,0 +1,175 @@
+import datetime as dt
+import json
+
+import httpx
+import pytest
+
+from claunote import db, pronote
+
+MATIERES = ["Anglais", "CEJM", "Développement", "Mathématiques", "Réseaux", "Systèmes"]
+
+
+@pytest.mark.parametrize("nom, attendu", [
+    ("CULTURE ECONOMIQUE, JURIDIQUE ET MANAGERIALE", "CEJM"),
+    ("MATHEMATIQUES POUR L'INFORMATIQUE", "Mathématiques"),
+    ("SISR - RESEAUX", "Réseaux"),
+    ("ANGLAIS LV1", "Anglais"),
+    ("Mathématiques", "Mathématiques"),
+    ("CONCEPTION ET DEVELOPPEMENT D'APPLICATIONS", "Développement"),
+    ("EDUCATION PHYSIQUE ET SPORTIVE", None),
+])
+def test_trouver_matiere(nom, attendu):
+    assert pronote.trouver_matiere(nom, MATIERES) == attendu
+
+
+def test_trouver_matiere_sans_cours():
+    assert pronote.trouver_matiere("MATHEMATIQUES", []) is None
+
+
+def test_texte_et_annonce():
+    t = pronote.texte("<p>Réviser&nbsp;les <b>suites</b></p><p>pour le DS</p>")
+    assert t == "Réviser les suites\npour le DS"
+    assert pronote.annonce_evaluation("Contrôle sur les VLAN")
+    assert pronote.annonce_evaluation("préparer l'interrogation")
+    assert pronote.annonce_evaluation(t)
+    assert not pronote.annonce_evaluation("Écrire les tests unitaires du TP")
+    assert not pronote.annonce_evaluation("Lire le chapitre 3")
+
+
+def test_niveau_actuel():
+    nm = [{"niveau": "Terminale", "matiere": "Mathématiques"}, {"niveau": "BTS1", "matiere": "Mathématiques"},
+          {"niveau": "BTS1", "matiere": "CEJM"}]
+    from claunote.agent import NIVEAUX
+    assert pronote.niveau_actuel(nm, "Mathématiques", NIVEAUX) == "BTS1"
+    assert pronote.niveau_actuel(nm, "Réseaux", NIVEAUX) is None
+
+
+def test_libelle_note():
+    assert pronote.libelle_note({"genre": 0, "points": 15.5}, {"genre": 0, "points": 20}) == "15,5/20"
+    assert pronote.libelle_note({"genre": 0, "points": 12}) == "12"
+    assert pronote.libelle_note({"genre": 1, "points": 0}) == "Abs"
+    assert pronote.libelle_note(None) == "–"
+
+
+SYNCHRO = {
+    "du": "2026-10-22T22:00:00.000Z", "au": "2026-11-19T23:00:00.000Z", "erreurs": [],
+    "controles": [{"id": "c1", "matiere": "SISR - RESEAUX", "debut": "2026-10-28T08:00:00.000Z",
+                   "fin": "2026-10-28T10:00:00.000Z", "profs": [], "salles": [], "notes": ""}],
+    "devoirs": [
+        {"id": "d1", "matiere": "MATHEMATIQUES", "description": "<p>DS sur les suites</p>",
+         "pour_le": "2026-10-27T07:00:00.000Z", "fait": False, "themes": ["Suites"]},
+        {"id": "d2", "matiere": "CEJM", "description": "<p>Lire le dossier 4</p>",
+         "pour_le": "2026-10-26T07:00:00.000Z", "fait": True, "themes": []}],
+    "notes": {"periode": "Semestre 1", "moyenne": None, "notes": [
+        {"id": "g1", "matiere": "MATHEMATIQUES", "date": "2026-10-10T00:00:00.000Z",
+         "valeur": {"genre": 0, "points": 15}, "sur": {"genre": 0, "points": 20},
+         "moyenne_classe": None, "coefficient": 1, "commentaire": "DS"}]},
+}
+
+
+def test_evenements():
+    evs = {e["id"]: e for e in pronote.evenements(SYNCHRO)}
+    assert evs["cours:c1"]["genre"] == "evaluation"
+    assert evs["cours:c1"]["le"].hour == 9  # 8h UTC = 9h à Paris en hiver
+    assert evs["devoir:d1"]["genre"] == "evaluation" and evs["devoir:d1"]["titre"] == "Suites"
+    assert evs["devoir:d2"]["genre"] == "devoir" and evs["devoir:d2"]["titre"] == "Lire le dossier 4"
+    assert evs["devoir:d2"]["fait"] is True
+
+
+def faux_service(reponses: dict):
+    appels = []
+
+    def gerer(req: httpx.Request):
+        corps = json.loads(req.content) if req.content else None
+        appels.append((req.method, req.url.path, corps))
+        statut, donnees = reponses[(req.method, req.url.path)]
+        return httpx.Response(statut, json=donnees)
+    client = pronote.Client("http://pronote", transport=httpx.MockTransport(gerer))
+    client.appels = appels
+    return client
+
+
+def test_client_erreur_du_service():
+    c = faux_service({("POST", "/connexion/qr"): (502, {"erreur": "Pronote a refusé la connexion"})})
+    with pytest.raises(pronote.ErreurPronote, match="refusé"):
+        c.connexion_qr("{}", "1234")
+    assert c.appels == [("POST", "/connexion/qr", {"qr": "{}", "pin": "1234"})]
+
+
+def test_client_service_injoignable():
+    def panne(req):
+        raise httpx.ConnectError("refused")
+    c = pronote.Client("http://pronote", transport=httpx.MockTransport(panne))
+    with pytest.raises(pronote.ErreurPronote, match="ne répond pas"):
+        c.etat()
+
+
+@pytest.fixture
+def fausse_base(monkeypatch):
+    base = {"enregistre": None, "etat": {}, "revisions": [], "liens": []}
+    monkeypatch.setattr(db, "enregistrer_pronote",
+                        lambda evs, debut, sources, notes, periode: base.update(enregistre=(evs, debut, sources, notes, periode)))
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: base["etat"].update({k: v}))
+    monkeypatch.setattr(db, "niveaux_matieres", lambda: [{"niveau": "BTS1", "matiere": "Réseaux"},
+                                                          {"niveau": "BTS2", "matiere": "Réseaux"},
+                                                          {"niveau": "BTS2", "matiere": "Mathématiques"}])
+    monkeypatch.setattr(db, "choisir_documents", lambda n, m, q="": [7, 8] if (n, m) == ("BTS2", "Réseaux") and not q
+                        else [3] if (n, m, q) == ("BTS2", "Mathématiques", "Suites") else [])
+    monkeypatch.setattr(db, "creer_revision",
+                        lambda *a: base["revisions"].append(a) or len(base["revisions"]))
+    monkeypatch.setattr(db, "lier_revision", lambda ev, rev: base["liens"].append((ev, rev)))
+    monkeypatch.setattr(db, "demander_scan", lambda: None)
+    return base
+
+
+def test_synchroniser(fausse_base, monkeypatch):
+    monkeypatch.setattr(pronote, "PREPARATION_AUTO", False)
+    c = faux_service({("GET", "/etat"): (200, {"connecte": True}), ("POST", "/synchro"): (200, SYNCHRO)})
+    r = pronote.synchroniser(c)
+    assert r == {"connecte": True, "evenements": 3, "preparees": [], "erreurs": []}
+    evs, debut, sources, notes, periode = fausse_base["enregistre"]
+    assert sources == ["cours:", "devoir:"] and periode == "Semestre 1" and notes[0]["id"] == "g1"
+    assert debut.isoformat() == "2026-10-23T00:00:00+02:00"
+    assert ("POST", "/synchro", {"jours": 28}) in c.appels
+
+
+def test_synchroniser_section_en_erreur(fausse_base, monkeypatch):
+    monkeypatch.setattr(pronote, "PREPARATION_AUTO", False)
+    donnees = {**SYNCHRO, "controles": None, "notes": None, "erreurs": ["emploi du temps : boum"]}
+    c = faux_service({("GET", "/etat"): (200, {"connecte": True}), ("POST", "/synchro"): (200, donnees)})
+    pronote.synchroniser(c)
+    _, _, sources, notes, _ = fausse_base["enregistre"]
+    assert sources == ["devoir:"] and notes is None  # les contrôles déjà connus ne sont pas effacés
+    assert fausse_base["etat"]["pronote_erreurs"] == "emploi du temps : boum"
+
+
+def test_synchroniser_pas_connecte(fausse_base):
+    c = faux_service({("GET", "/etat"): (200, {"connecte": False})})
+    assert pronote.synchroniser(c) == {"connecte": False}
+    assert fausse_base["enregistre"] is None
+
+
+def ev(id_, matiere, titre, jour):
+    return {"id": id_, "matiere": matiere, "titre": titre, "revision_id": None,
+            "le": dt.datetime(2026, 10, jour, 8, tzinfo=pronote.PARIS)}
+
+
+def test_preparer_plan_ou_fiche(fausse_base):
+    aujourd_hui = dt.date(2026, 10, 23)
+    # Contrôle de l'emploi du temps dans 5 jours : plan sur toute la matière, niveau le plus récent
+    assert pronote.preparer(ev("cours:c1", "SISR - RESEAUX", "Évaluation", 28), aujourd_hui) == 1
+    assert fausse_base["revisions"][0] == ("plan", "Réseaux : évaluation du 28/10", [7, 8], dt.date(2026, 10, 28))
+    # Devoir annonçant un DS dans 2 jours : fiche ciblée sur le thème
+    assert pronote.preparer(ev("devoir:d1", "MATHEMATIQUES", "Suites", 25), aujourd_hui) == 2
+    assert fausse_base["revisions"][1][:3] == ("fiche", "Mathématiques : Suites", [3])
+    assert fausse_base["liens"] == [("cours:c1", 1), ("devoir:d1", 2)]
+    # Pas de cours pour l'anglais
+    assert pronote.preparer(ev("cours:c9", "ANGLAIS", "Évaluation", 28), aujourd_hui) is None
+
+
+def test_preparer_a_venir_une_seule_par_jour(fausse_base, monkeypatch):
+    evs = [ev("cours:c1", "SISR - RESEAUX", "Évaluation", 28), ev("devoir:d5", "SISR - RESEAUX", "VLAN", 28),
+           {**ev("cours:c2", "MATHEMATIQUES", "Évaluation", 27), "revision_id": 9}]
+    monkeypatch.setattr(db, "evenements_a_venir", lambda genre, jours: evs)
+    assert pronote.preparer_a_venir(dt.date(2026, 10, 23)) == [1]
+    assert len(fausse_base["revisions"]) == 1

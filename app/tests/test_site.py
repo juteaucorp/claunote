@@ -20,6 +20,7 @@ def client(monkeypatch):
     monkeypatch.setattr(db, "a_verifier", lambda: [{**DOC, "id": 2, "statut": "a_verifier", "confiance": 0.4,
                                                     "note": "Le dossier « BTS1 » indique BTS1", "origine": "BTS1"}])
     monkeypatch.setattr(db, "nb_a_verifier", lambda: 1)
+    monkeypatch.setattr(db, "nb_evaluations_proches", lambda: 0)
     monkeypatch.setattr(db, "document", lambda i: DOC if i == 1 else None)
     monkeypatch.setattr(db, "liste", lambda *a: [DOC])
     monkeypatch.setattr(db, "matieres", lambda: ["Réseaux"])
@@ -168,3 +169,106 @@ def test_deposer_avec_niveau(client, monkeypatch):
     client.post("/deposer", files=[("fichiers", ("a.pdf", b"1", "application/pdf"))], data={"niveau": "BTS2"})
     assert faits == [["BTS2"]]
     assert client.post("/deposer", files=[("fichiers", ("a.pdf", b"1"))], data={"niveau": "Master"}).status_code == 400
+
+
+class FauxPronote:
+    etat_ = {"connecte": False}
+    appels = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def etat(self):
+        return self.etat_
+
+    def connexion_qr(self, qr, pin):
+        FauxPronote.appels.append(("qr", qr, pin))
+        if pin == "0000":
+            from claunote.pronote import ErreurPronote
+            raise ErreurPronote("Pronote a refusé la connexion : code PIN incorrect.")
+        FauxPronote.etat_ = {"connecte": True, "nom": "JUTEAU Anto", "classe": "BTS SIO 2"}
+
+    def deconnexion(self):
+        FauxPronote.appels.append(("deconnexion",))
+        FauxPronote.etat_ = {"connecte": False}
+
+
+@pytest.fixture
+def agenda(client, monkeypatch):
+    from datetime import datetime, timedelta
+    from claunote import pronote
+    FauxPronote.etat_, FauxPronote.appels = {"connecte": False}, []
+    monkeypatch.setattr(pronote, "Client", FauxPronote)
+    monkeypatch.setattr(pronote, "synchroniser", lambda: {"connecte": True, "evenements": 2, "preparees": [], "erreurs": []})
+    bientot = datetime.now(pronote.PARIS).replace(hour=8, minute=0) + timedelta(days=5)
+    evs = {"cours:c1": {"id": "cours:c1", "genre": "evaluation", "matiere": "SISR - RESEAUX", "titre": "Évaluation de Sisr",
+                        "description": "", "le": bientot, "fait": False, "revision_id": None, "revision_statut": None},
+           "devoir:d1": {"id": "devoir:d1", "genre": "evaluation", "matiere": "ANGLAIS", "titre": "Unit 4",
+                         "description": "Test <b>unit 4</b>", "le": bientot, "fait": False, "revision_id": None,
+                         "revision_statut": None},
+           "devoir:d2": {"id": "devoir:d2", "genre": "devoir", "matiere": "CEJM", "titre": "Lire",
+                         "description": "Lire le dossier 4", "le": bientot, "fait": True, "revision_id": None}}
+    monkeypatch.setattr(db, "evenements_a_venir", lambda genre, jours: [e for e in evs.values() if e["genre"] == genre])
+    monkeypatch.setattr(db, "evenement", lambda i: evs.get(i))
+    monkeypatch.setattr(db, "notes_recentes", lambda limite=20: [
+        {"le": bientot, "matiere": "MATHEMATIQUES", "commentaire": "DS suites", "coefficient": 2.0,
+         "valeur": {"genre": 0, "points": 15.5}, "sur": {"genre": 0, "points": 20},
+         "moyenne_classe": {"genre": 0, "points": 11}}])
+    monkeypatch.setattr(db, "etat_valeur", lambda k: "2026-10-23T14:00" if k == "pronote_synchro" else None)
+    monkeypatch.setattr(pronote, "preparer", lambda e: 42 if e["matiere"] == "SISR - RESEAUX" else None)
+    client.evs = evs
+    return client
+
+
+def test_agenda_connexion_qr(agenda):
+    r = agenda.get("/agenda")
+    assert r.status_code == 200 and "Connecter Pronote" in r.text and "/static/jsQR.js" in r.text
+    r = agenda.post("/agenda/connexion-qr", data={"qr": '{"jeton":"j"}', "pin": "0000"})
+    assert "code PIN incorrect" in r.text and "Connecter Pronote" in r.text
+    r = agenda.post("/agenda/connexion-qr", data={"qr": ' {"jeton":"j"} ', "pin": "1234"})
+    assert ("qr", '{"jeton":"j"}', "1234") in FauxPronote.appels
+    assert "Connecté à Pronote : 2 évaluation(s)" in r.text and "JUTEAU Anto" in r.text
+
+
+def test_agenda_connecte(agenda):
+    FauxPronote.etat_ = {"connecte": True, "nom": "JUTEAU Anto", "classe": "BTS SIO 2"}
+    r = agenda.get("/agenda")
+    assert "Évaluations à venir" in r.text and "tes cours : Réseaux" in r.text
+    assert "pas de cours classés pour cette matière" in r.text  # anglais
+    assert "Test &lt;b&gt;unit 4&lt;/b&gt;" in r.text
+    assert "15,5/20" in r.text and "coef 2" in r.text and "2026-10-23 à 14:00" in r.text
+    assert 'class="carte evenement fait"' in r.text
+
+
+def test_agenda_service_absent(agenda, monkeypatch):
+    from claunote import pronote
+
+    class Panne(FauxPronote):
+        def etat(self):
+            raise pronote.ErreurPronote("Le service Pronote ne répond pas (ConnectError).")
+    monkeypatch.setattr(pronote, "Client", Panne)
+    r = agenda.get("/agenda")
+    assert "ne répond pas" in r.text and "docker compose up" in r.text
+
+
+def test_agenda_preparer(agenda):
+    r = agenda.post("/agenda/preparer", data={"ev_id": "cours:c1"}, follow_redirects=False)
+    assert r.headers["location"] == "/revision/42"
+    # Pas de cours : formulaire de révision prérempli
+    r = agenda.post("/agenda/preparer", data={"ev_id": "devoir:d1"}, follow_redirects=False)
+    assert r.headers["location"].startswith("/reviser?sujet=Unit+4&genre=plan&date_eval=")
+    agenda.evs["cours:c1"]["revision_id"] = 7
+    assert agenda.post("/agenda/preparer", data={"ev_id": "cours:c1"}, follow_redirects=False).headers["location"] == "/revision/7"
+    assert agenda.post("/agenda/preparer", data={"ev_id": "x"}).status_code == 404
+
+
+def test_reviser_prerempli(client):
+    r = client.get("/reviser", params={"sujet": "VLAN", "matiere": "Réseaux", "genre": "plan", "date_eval": "2030-01-02"})
+    assert 'value="VLAN"' in r.text and "selected" in r.text and 'value="2030-01-02"' in r.text
+    assert 'value="plan" checked' in r.text
+
+
+def test_deconnexion(agenda):
+    FauxPronote.etat_ = {"connecte": True, "nom": "X"}
+    agenda.post("/agenda/deconnexion")
+    assert ("deconnexion",) in FauxPronote.appels

@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block titre %}Agenda{% endblock %}
+{% block tete %}<script src="/static/jsQR.js"></script>{# jsQR 1.4.0, licence Apache-2.0 #}{% endblock %}
+{% block contenu %}
+{% set JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."] %}
+{% set MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."] %}
+<h1>Agenda</h1>
+{% if erreur %}<div class="carte accent"><strong>Oups.</strong> {{ erreur }}</div>{% endif %}
+{% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
+
+{% if not etat.connecte %}
+  {% if etat.injoignable %}
+  <div class="carte">Le service <code>pronote</code> ne tourne pas. Sur la VM : <code>docker compose up -d --build</code>.</div>
+  {% else %}
+  <p class="doux">Relie ton compte Pronote : Claunote récupère tes évaluations, devoirs et notes toutes les 3 heures
+    et prépare tes révisions. {% if etat.expire %}<span class="alerte">La connexion a expiré : refais-la.</span>{% endif %}</p>
+
+  <form method="post" action="/agenda/connexion-qr" class="carte" id="form-qr">
+    <h2 style="margin-top:0">Avec le QR code (recommandé, marche aussi via l'ENT)</h2>
+    <ol class="doux">
+      <li>Sur Pronote (ordinateur), clique sur l'icône <strong>QR code</strong> en haut (« Connexion à l'application mobile »).</li>
+      <li>Choisis un <strong>code à 4 chiffres</strong> et valide : le QR code s'affiche (valable 10 minutes).</li>
+      <li>Fais une <strong>capture d'écran</strong> du QR code et colle-la ici (Ctrl+V) ou choisis l'image. Sur téléphone, prends-le en photo.</li>
+    </ol>
+    <p><label>Image du QR code<br><input type="file" accept="image/*" id="image-qr"></label></p>
+    <p id="statut-qr" class="doux">Aucun QR code lu pour l'instant.</p>
+    <details><summary>Ou colle le contenu du QR code</summary>
+      <p><textarea name="qr" id="qr" rows="3" style="width:100%" placeholder='{"jeton": "…", "login": "…", "url": "…"}'></textarea></p>
+    </details>
+    <p><label>Code à 4 chiffres choisi sur Pronote<br>
+      <input name="pin" inputmode="numeric" pattern="\d{4}" maxlength="4" required size="6"></label></p>
+    <button class="principal">Connecter Pronote</button>
+  </form>
+
+  <details class="carte">
+    <summary>Sans ENT : identifiant et mot de passe Pronote</summary>
+    <form method="post" action="/agenda/connexion">
+      <p><label>Adresse Pronote<br><input name="url" size="50" required placeholder="https://0123456a.index-education.net/pronote/"></label></p>
+      <p><label>Identifiant<br><input name="identifiant" required autocomplete="username"></label></p>
+      <p><label>Mot de passe<br><input name="mot_de_passe" type="password" required autocomplete="current-password"></label></p>
+      <button>Connecter</button>
+      <p class="doux">Le mot de passe sert une seule fois : seul le jeton de reconnexion de Pronote est gardé sur la VM.</p>
+    </form>
+  </details>
+  {% endif %}
+
+{% else %}
+  <div class="carte">
+    <strong>{{ etat.nom }}</strong>{% if etat.classe %} · {{ etat.classe }}{% endif %}
+    {% if etat.etablissement %}<span class="doux"> · {{ etat.etablissement }}</span>{% endif %}
+    <div class="doux">Dernière synchronisation : {{ synchro.replace('T', ' à ') if synchro else 'jamais' }}
+      {% if erreurs_synchro %} · <span class="alerte">{{ erreurs_synchro }}</span>{% endif %}</div>
+    <div class="outils" style="margin-top:10px">
+      <form method="post" action="/agenda/synchroniser"><button class="principal">Synchroniser</button></form>
+      <form method="post" action="/agenda/deconnexion" onsubmit="return confirm('Déconnecter Pronote ?')"><button>Déconnecter</button></form>
+    </div>
+  </div>
+
+  <h2>Évaluations à venir</h2>
+  {% for e in evaluations %}
+  {% set le = e.le.astimezone(paris) %}
+  <div class="carte evenement">
+    <div class="jour">{{ JOURS[le.weekday()] }}<strong>{{ le.day }}</strong>{{ MOIS[le.month - 1] }}</div>
+    <div class="corps">
+      <strong>{{ e.titre }}</strong>
+      <div class="doux">{{ e.matiere }}{% if e.id.startswith('cours:') %} · {{ le.strftime('%Hh%M') }}{% endif %}
+        {% if e.cours %} · tes cours : {{ e.cours }}{% else %} · <span class="alerte">pas de cours classés pour cette matière</span>{% endif %}</div>
+      {% if e.description %}<div class="doux" style="white-space:pre-line">{{ e.description }}</div>{% endif %}
+    </div>
+    {% if e.revision_id %}
+      <a href="/revision/{{ e.revision_id }}">{{ 'En préparation…' if e.revision_statut == 'en_attente' else 'Voir la révision' }}</a>
+    {% else %}
+      <form method="post" action="/agenda/preparer"><input type="hidden" name="ev_id" value="{{ e.id }}">
+        <button class="principal" title="Fiche ou plan de révision à partir de tes cours">Préparer</button></form>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="doux">Aucune évaluation annoncée sur Pronote pour les 4 prochaines semaines.</p>
+  {% endfor %}
+
+  <h2>Devoirs (2 semaines)</h2>
+  {% for d in devoirs %}
+  {% set le = d.le.astimezone(paris) %}
+  <div class="carte evenement {{ 'fait' if d.fait }}">
+    <div class="jour">{{ JOURS[le.weekday()] }}<strong>{{ le.day }}</strong>{{ MOIS[le.month - 1] }}</div>
+    <div class="corps"><strong>{{ d.matiere }}</strong>
+      <div style="white-space:pre-line">{{ d.description }}</div></div>
+  </div>
+  {% else %}
+  <p class="doux">Rien à faire pour les 2 prochaines semaines.</p>
+  {% endfor %}
+
+  <h2>Dernières notes</h2>
+  {% if notes %}
+  <div class="carte" style="overflow-x:auto"><table class="notes">
+    <tr><th>Date</th><th>Matière</th><th>Devoir</th><th class="n">Note</th><th class="n large">Classe</th></tr>
+    {% for n in notes %}
+    <tr><td>{{ n.le.astimezone(paris).strftime('%d/%m') if n.le }}</td><td>{{ n.matiere }}</td>
+      <td class="doux">{{ n.commentaire }}{% if n.coefficient and n.coefficient != 1 %} (coef {{ n.coefficient|round(2)|replace('.0', '') }}){% endif %}</td>
+      <td class="n"><strong>{{ n.valeur|note(n.sur) }}</strong></td><td class="n doux large">{{ n.moyenne_classe|note }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <p class="doux">Pas encore de notes sur cette période.</p>
+  {% endif %}
+{% endif %}
+
+{% if not etat.connecte and not etat.injoignable %}
+<script>
+  // Lecture du QR code dans le navigateur : l'image ne quitte pas ton ordinateur.
+  const champ = document.getElementById("qr"), statut = document.getElementById("statut-qr");
+  function lire(fichier) {
+    if (!fichier || !fichier.type.startsWith("image/")) return;
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      const echelle = Math.min(1, 1600 / Math.max(img.width, img.height));
+      c.width = img.width * echelle; c.height = img.height * echelle;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const code = jsQR(ctx.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+      if (code && code.data.includes("jeton")) {
+        champ.value = code.data;
+        statut.textContent = "QR code Pronote lu ✓ Entre maintenant ton code à 4 chiffres.";
+        statut.className = "";
+        document.querySelector("[name=pin]").focus();
+      } else {
+        statut.textContent = "Pas de QR code Pronote trouvé dans cette image : recadre la capture sur le QR code.";
+        statut.className = "alerte";
+      }
+      URL.revokeObjectURL(img.src);
+    };
+    img.src = URL.createObjectURL(fichier);
+  }
+  document.getElementById("image-qr").addEventListener("change", (e) => lire(e.target.files[0]));
+  document.addEventListener("paste", (e) => {
+    for (const item of e.clipboardData.items) if (item.type.startsWith("image/")) lire(item.getAsFile());
+  });
+</script>
+{% endif %}
+{% endblock %}

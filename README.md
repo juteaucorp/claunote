@@ -28,7 +28,7 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Phase 2 : site MVP (bibliothèque, recherche, « à vérifier »)
 - [x] Phase 3 : agent de révision (fiches, quiz, plans, sources citées)
 - [x] Avant Pronote : dossiers par année, dépôt depuis le site, confirmation des doutes, nouveau look
-- [ ] Phase 4 : Pronote
+- [x] Phase 4 : Pronote (agenda des évaluations, devoirs, notes, préparation en 1 clic)
 - [ ] Phase 5 : flashcards, Anki, PWA
 
 ## Installation et utilisation
