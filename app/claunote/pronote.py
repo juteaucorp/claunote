@@ -70,7 +70,8 @@ class Client:
         return donnees
 
     def etat(self) -> dict:
-        return self._appel("GET", "/etat")
+        # Affiché sur la page Agenda : ne doit jamais la faire attendre
+        return self._appel("GET", "/etat", timeout=5)
 
     def connexion_qr(self, qr: str, pin: str) -> dict:
         return self._appel("POST", "/connexion/qr", {"qr": qr, "pin": pin})

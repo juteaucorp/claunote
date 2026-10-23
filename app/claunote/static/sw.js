@@ -1,7 +1,7 @@
 // Claunote hors ligne : les pages déjà ouvertes (fiches, cours, quiz) restent lisibles sans réseau.
-const VERSION = "claunote-v3";
+const VERSION = "claunote-v4";
 const PAGES = "claunote-pages";
-const BASE = ["/hors-ligne", "/static/logo.svg", "/static/icone-192.png", "https://unpkg.com/htmx.org@2.0.4"];
+const BASE = ["/hors-ligne", "/static/logo.svg", "/static/icone-192.png", "/static/htmx.min.js"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(BASE)).then(() => self.skipWaiting()));
@@ -13,6 +13,15 @@ self.addEventListener("activate", (e) => {
     .then(() => self.clients.claim()));
 });
 
+// Préchargement : la page enverra l'adresse dès que le doigt touche un onglet (~150 ms avant le clic)
+const precharges = new Map();
+self.addEventListener("message", (e) => {
+  const url = e.data && e.data.precharger;
+  if (typeof url !== "string" || precharges.has(url) || new URL(url).origin !== location.origin) return;
+  precharges.set(url, fetch(url, { credentials: "same-origin" }).catch(() => null));
+  setTimeout(() => precharges.delete(url), 8000);  // pas plus vieux que quelques secondes
+});
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   const url = new URL(req.url);
@@ -21,14 +30,19 @@ self.addEventListener("fetch", (e) => {
     return;
   }
   if (req.method !== "GET") return;
-  if (url.pathname.startsWith("/static/") || url.origin === "https://unpkg.com") {
+  if (url.pathname.startsWith("/static/")) {
     // Fichiers fixes : le cache d'abord
     e.respondWith(caches.match(req).then((r) => r || fetch(req)));
     return;
   }
   if (req.mode === "navigate" && url.origin === location.origin) {
-    // Pages : le réseau d'abord, la dernière version vue si le VPN est coupé
-    e.respondWith(fetch(req).then((r) => {
+    // Pages : le réseau d'abord (ou la page déjà demandée au toucher du lien), la dernière version vue si le VPN est coupé
+    const avance = precharges.get(req.url);
+    precharges.delete(req.url);
+    const reseau = avance
+      ? avance.then((r) => (r && r.ok && !r.redirected ? r : fetch(req)))
+      : fetch(req);
+    e.respondWith(reseau.then((r) => {
       if (r.ok && !r.redirected && !url.pathname.startsWith("/connexion")) {
         const copie = r.clone();
         caches.open(PAGES).then((c) => c.put(req, copie));
