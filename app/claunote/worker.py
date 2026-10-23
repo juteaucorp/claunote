@@ -1,8 +1,11 @@
-"""Surveille l'inbox kDrive, analyse chaque nouveau scan et le range.
+"""Surveille l'inbox kDrive, trie puis analyse chaque nouveau fichier et le range.
 
-Pour chaque fichier de l'inbox (sous-dossiers compris) pas encore traité :
-téléchargement → analyse Claude Code → base de données → déplacement dans
-archives/<niveau>/<matière>/<type> (ou a-verifier/) + transcription .md à côté.
+Un dossier copié en entier dans l'inbox forme un « lot ». Une fois le lot complet (plus de
+nouveau fichier pendant 90 s), il est trié sans IA (importation.py) : fichiers inutiles proposés
+à la suppression sur le site, doublons PDF/Word, pages de scans à fusionner ; puis une seule
+passe IA lit les noms de dossiers pour comprendre l'ancienne organisation.
+Chaque document gardé : téléchargement → analyse Claude Code → base de données → déplacement
+dans archives/<niveau>/<matière>/<type> (ou a-verifier/) + transcription .md à côté.
 Un sous-dossier nommé avec l'année d'étude (« BTS1 », « Terminale »…) fixe le niveau.
 """
 import datetime as dt
@@ -13,7 +16,7 @@ import threading
 import time
 from pathlib import Path, PurePosixPath
 
-from claunote import agent, db, notifications, pdf, pronote, rangement, revision
+from claunote import agent, db, importation, notifications, pdf, pronote, rangement, revision
 from claunote.agent import ErreurAgent, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive
 
@@ -48,14 +51,27 @@ def appliquer_dossier(a, dossiers: list[str]) -> str | None:
     return None
 
 
+def indice(dossiers: list[str], nom: str) -> str:
+    """Ce que l'ancienne organisation des dossiers laisse deviner, pour le prompt d'analyse."""
+    lot = db.import_lot(dossiers[0] if dossiers else "")
+    compris = (lot["compris"] or {}).get("/".join(dossiers)) if lot else None
+    return importation.texte_indices(dossiers, nom, compris)
+
+
 def traiter(kd: KDrive, item: dict):
     dossiers = item.get("dossiers", [])
     doc_id = db.creer(item["id"], item["name"])
     dossier_local = CACHE_DIR / str(item["id"])
     chemin = kd.download(item["id"], dossier_local / item["name"])
     try:
-        a = analyser(chemin, dossiers)
+        a = analyser(chemin, dossiers, indice(dossiers, item["name"]))
     except ErreurAgent as e:
+        variantes = db.variantes_de(item["id"])
+        if variantes:  # le même document existe dans un autre format : on essaie celui-là
+            db.import_basculer(item["id"], variantes[0]["kdrive_id"])
+            db.supprimer(doc_id)
+            log(f"{item['name']} illisible ({e}), analyse de « {variantes[0]['nom']} » à la place")
+            return
         db.maj(doc_id, statut="erreur", erreur=str(e))
         log(f"erreur d'analyse : {item['name']} : {e}")
         return
@@ -85,7 +101,26 @@ def traiter(kd: KDrive, item: dict):
            mots_cles=a.mots_cles, resume=a.resume, transcription=a.transcription,
            confiance=a.confiance, erreur=None, kdrive_md_id=md.get("id"),
            origine="/".join(dossiers) or None, note=note)
+    ranger_variantes(kd, item["id"], doc_id, dest_id, nom)
+    db.import_marquer([item["id"]], "fait")
     log(f"{statut.replace('_', ' ')} : {item['name']} → {'/'.join(parts)}/{nom}")
+
+
+def ranger_variantes(kd: KDrive, kdrive_id: int, doc_id: int, dest_id: int, nom: str):
+    """L'autre format du document (PDF ↔ Word) suit le document analysé, sous le même nom."""
+    for i, v in enumerate(db.variantes_de(kdrive_id)):
+        nom_v = PurePosixPath(nom).stem + PurePosixPath(v["nom"]).suffix.lower()
+        try:
+            kd.move(v["kdrive_id"], dest_id)
+            try:
+                kd.rename(v["kdrive_id"], nom_v)
+            except Exception:
+                nom_v = v["nom"]
+            if i == 0:
+                db.maj(doc_id, variante_kdrive_id=v["kdrive_id"], variante_nom=nom_v)
+            db.import_marquer([v["kdrive_id"]], "fait")
+        except Exception as e:
+            log(f"autre format non rangé : {v['nom']} : {e}")
 
 
 def statut_et_note(a, note: str | None) -> tuple[str, str | None]:
@@ -124,8 +159,9 @@ def ranger_en_attente(kd: KDrive):
             if parts not in dossiers:
                 dossiers[parts] = kd.ensure_path(ETUDES_ID, list(parts))
             kd.move(doc["kdrive_id"], dossiers[parts])
-            if doc["kdrive_md_id"]:
-                kd.move(doc["kdrive_md_id"], dossiers[parts])
+            for lie in (doc["kdrive_md_id"], doc.get("variante_kdrive_id")):
+                if lie:
+                    kd.move(lie, dossiers[parts])
         except Exception as e:
             log(f"déplacement kDrive impossible : {doc['nom']} : {e}")
         db.marquer_a_ranger([doc["id"]], False)
@@ -198,22 +234,158 @@ def traiter_campagne(campagne: dict):
 
 
 def parcourir(kd: KDrive, dossier_id: int, dossiers: list[str], profondeur: int = 0):
-    """Fichiers d'un dossier et de ses sous-dossiers, avec le chemin des dossiers traversés."""
+    """Fichiers d'un dossier et de ses sous-dossiers, avec le chemin des dossiers traversés.
+
+    Un dossier d'outil (.vscode, node_modules…) n'est pas parcouru : il est rendu tel quel,
+    pour être proposé à la suppression en un bloc.
+    """
     for item in kd.list_dir(dossier_id):
-        if item["type"] == "dir" and profondeur < 4:
+        if item["type"] == "dir" and item["name"].lower() in importation.DOSSIERS_INUTILES:
+            yield {**item, "dossiers": dossiers}
+        elif item["type"] == "dir" and profondeur < 12:
             yield from parcourir(kd, item["id"], dossiers + [item["name"]], profondeur + 1)
         elif item["type"] == "file":
             yield {**item, "dossiers": dossiers}
 
 
-def a_traiter(kd: KDrive) -> list[dict]:
-    """Fichiers de l'inbox jamais vus, ou restés 'nouveau' (ex. limite atteinte)."""
-    items = []
-    for item in parcourir(kd, INBOX_ID, []):
+def a_traiter(kd: KDrive, items: list[dict] | None = None) -> list[dict]:
+    """Fichiers de l'inbox à analyser : gardés par le tri, ou restés 'nouveau' (ex. limite atteinte)."""
+    if items is None:
+        items = list(parcourir(kd, INBOX_ID, []))
+    decisions = db.import_connus([i["id"] for i in items])
+    retenus = []
+    for item in items:
         doc = db.par_kdrive(item["id"])
-        if doc is None or doc["statut"] == "nouveau":
-            items.append(item)
-    return items
+        if doc is not None:
+            if doc["statut"] == "nouveau":
+                retenus.append(item)
+        elif decisions.get(item["id"]) == "analyser" and item["type"] == "file":
+            retenus.append(item)
+    return retenus
+
+
+# --- Tri des dossiers importés --------------------------------------------------------
+
+STABLE = 90          # secondes sans nouveau fichier avant de trier un lot (copie terminée)
+_vus: dict[str, tuple[int, float]] = {}  # lot → (nombre de fichiers nouveaux, depuis quand)
+
+
+def lot_de(item: dict) -> str:
+    return item["dossiers"][0] if item["dossiers"] else ""
+
+
+def trier_inbox(kd: KDrive, items: list[dict]) -> int:
+    """Trie les lots complets de fichiers jamais vus. Renvoie le nombre de fichiers triés."""
+    connus = db.import_connus([i["id"] for i in items])
+    nouveaux: dict[str, list[dict]] = {}
+    for item in items:
+        if item["id"] not in connus and db.par_kdrive(item["id"]) is None:
+            nouveaux.setdefault(lot_de(item), []).append(item)
+    maintenant, tries = time.monotonic(), 0
+    for lot in list(_vus):
+        if lot not in nouveaux:
+            del _vus[lot]
+    for lot, lot_items in nouveaux.items():
+        n, depuis = _vus.get(lot, (None, maintenant))
+        if n != len(lot_items):
+            _vus[lot] = (len(lot_items), maintenant)  # nouveau ou encore en cours de copie : on attend
+            continue
+        if maintenant - depuis < STABLE:
+            continue
+        fichiers = importation.trier([importation.Fichier(
+            i["id"], i["name"], i["dossiers"], int(i.get("size") or 0), dossier=i["type"] == "dir") for i in lot_items])
+        comprendre_organisation(lot, fichiers)
+        db.import_enregistrer(lot, fichiers)
+        _vus.pop(lot, None)
+        tries += len(fichiers)
+        compte = {d: sum(f.decision == d for f in fichiers) for d in ("analyser", "inutile", "variante", "page")}
+        log(f"import « {lot or 'racine'} » trié : {compte['analyser']} à analyser, {compte['page']} pages de scans, "
+            f"{compte['variante']} autres formats, {compte['inutile']} inutiles à confirmer")
+        if compte["inutile"] or any(f.decision == "page" and not f.sur for f in fichiers):
+            try:
+                notifications.import_a_confirmer(lot, compte["inutile"])
+            except Exception as e:
+                log(f"notification impossible : {e}")
+    return tries
+
+
+def comprendre_organisation(lot: str, fichiers: list[importation.Fichier]):
+    """Une passe IA sur les seuls noms de dossiers, si les heuristiques ne suffisent pas."""
+    dossiers: dict[str, int] = {}
+    for f in fichiers:
+        if f.categorie == "document":
+            cle = "/".join(f.dossiers)
+            dossiers[cle] = dossiers.get(cle, 0) + 1
+    incomplets = [d for d in dossiers if not all(
+        importation.indices(d.split("/") if d else []).get(k) for k in ("niveau", "matiere"))]
+    if sum(dossiers.values()) < 5 or not incomplets or any("Pronote" in d.split("/") for d in dossiers):
+        return
+    try:
+        resume, compris = agent.interpreter_arborescence(dossiers, db.matieres())
+    except (ErreurAgent, LimiteAtteinte) as e:
+        log(f"organisation de « {lot} » non interprétée par l'IA ({e}) : indices des noms de dossiers seulement")
+        return
+    db.import_lot_maj(lot, resume, compris)
+    log(f"organisation de « {lot} » comprise : {resume}")
+
+
+def executer_choix(kd: KDrive) -> bool:
+    """Applique dans kDrive les choix faits sur la page Import, et fusionne les scans. Vrai si l'inbox a changé."""
+    change = False
+    for r in db.import_a_executer():
+        try:
+            if r["decision"] == "supprimer":
+                kd.delete(r["kdrive_id"])
+                db.import_oublier([r["kdrive_id"]])
+                log(f"supprimé (corbeille kDrive) : {r['chemin']}")
+            else:
+                dest = kd.ensure_path(ETUDES_ID, ["autres"] + r["chemin"].split("/")[:-1])
+                kd.move(r["kdrive_id"], dest)
+                db.import_marquer([r["kdrive_id"]], "fait")
+                log(f"gardé à part : {r['chemin']} → autres/")
+        except Exception as e:  # déjà supprimé ou déplacé à la main dans kDrive
+            log(f"{r['chemin']} : {e}")
+            db.import_oublier([r["kdrive_id"]])
+        change = True
+    for groupe in db.import_groupes(sur=True):
+        fusionner(kd, groupe)
+        change = True
+    return change
+
+
+def fusionner(kd: KDrive, groupe: str):
+    """Pages d'un même scan réunies en un PDF, déposé dans l'inbox pour être analysé.
+
+    Les pages d'origine sont gardées dans Etudes/import/pages-fusionnees/.
+    """
+    pages = db.import_groupe(groupe)
+    if not pages:
+        return
+    dossiers = pages[0]["chemin"].split("/")[:-1]
+    local = CACHE_DIR / f"fusion-{pages[0]['kdrive_id']}"
+    try:
+        chemins = [kd.download(p["kdrive_id"], local / f"{i:03d}{PurePosixPath(p['nom']).suffix.lower()}")
+                   for i, p in enumerate(pages)]
+        contenu = importation.fusionner_pdf(chemins)
+    except Exception as e:
+        log(f"fusion impossible de « {groupe} » ({e}) : pages analysées une par une")
+        db.import_marquer([p["kdrive_id"] for p in pages], "analyser")
+        return
+    finally:
+        shutil.rmtree(local, ignore_errors=True)
+    nom = importation.nom_fusion(groupe.split("#")[0], len(pages))
+    nouveau = kd.upload(kd.ensure_path(INBOX_ID, dossiers), nom, contenu, conflict="rename")
+    fichier = importation.Fichier(nouveau["id"], nouveau.get("name") or nom, dossiers, len(contenu),
+                                  raison=f"{len(pages)} pages fusionnées", groupe=groupe)
+    db.import_enregistrer(pages[0]["lot"], [fichier])
+    db.import_marquer([p["kdrive_id"] for p in pages], "fusionne")
+    originaux = kd.ensure_path(ETUDES_ID, ["import", "pages-fusionnees"] + dossiers)
+    for p in pages:
+        try:
+            kd.move(p["kdrive_id"], originaux)
+        except Exception as e:
+            log(f"page d'origine non déplacée : {p['chemin']} : {e}")
+    log(f"{len(pages)} pages fusionnées → {'/'.join(dossiers + [fichier.nom])}")
 
 
 DELAI_NETTOYAGE = 10 * 60  # un dossier modifié récemment est peut-être encore en cours d'envoi
@@ -285,7 +457,11 @@ def main():
             for doc in a_reclasser:
                 reclasser(doc, matieres)
             ranger_en_attente(kd)
-            items = a_traiter(kd)
+            inbox = list(parcourir(kd, INBOX_ID, []))
+            trier_inbox(kd, inbox)
+            if executer_choix(kd):
+                inbox = list(parcourir(kd, INBOX_ID, []))
+            items = a_traiter(kd, inbox)
             for item in items[:LOT]:
                 log(f"analyse : {'/'.join(item['dossiers'] + [item['name']])}")
                 traiter(kd, item)

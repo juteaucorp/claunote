@@ -9,6 +9,7 @@
 <p class="doux">
   {{ doc.chapitre or '' }}{% if doc.date_doc %} · {{ doc.date_doc.strftime('%d/%m/%Y') }}{% endif %}
   · <a href="/doc/{{ doc.id }}/fichier" target="_blank">scan original</a>
+  {% if doc.variante_kdrive_id %} · <a href="/doc/{{ doc.id }}/fichier?variante=1" target="_blank">version {{ (doc.variante_nom or '').rsplit('.', 1)[-1]|upper }}</a>{% endif %}
   {% if doc.statut == 'hors_cours' %} · <a href="/hors-cours">hors cours</a>
   {% elif doc.statut != 'classe' %} · <span class="alerte">{{ doc.statut|replace('_', ' ') }}</span>{% endif %}
 </p>

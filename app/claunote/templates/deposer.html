@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block titre %}Déposer{% endblock %}
 {% block contenu %}
-<h1>Déposer des scans</h1>
+<h1>Déposer des documents</h1>
 {% if envoyes %}
 <div class="carte accent">
   <strong>{{ envoyes|length }} fichier{{ 's' if envoyes|length > 1 }} envoyé{{ 's' if envoyes|length > 1 }} dans l'inbox.</strong>
@@ -11,15 +11,16 @@
 </div>
 {% endif %}
 {% if ignores %}
-<div class="carte"><span class="alerte">Ignorés (format non pris en charge) :</span> {{ ignores|join(', ') }}</div>
+<div class="carte"><span class="alerte">Ignorés (code, config ou format non lu) :</span> {{ ignores|join(', ') }}</div>
 {% endif %}
 
 <form id="depot" method="post" action="/deposer" enctype="multipart/form-data" class="carte">
   <label class="zone" id="zone">
     <img src="/static/logo.svg" alt="" width="56" height="56">
-    <strong>Glisse tes fichiers ou un dossier ici</strong>
-    <span class="doux">PDF ou photos (JPG, PNG, HEIC). Un document = un fichier.</span>
-    <input type="file" name="fichiers" id="fichiers" multiple accept=".pdf,.jpg,.jpeg,.png,.heic,.webp">
+    <strong>Glisse tes fichiers ou un dossier entier ici</strong>
+    <span class="doux">PDF, Word, Excel, PowerPoint, photos… Les sous-dossiers sont gardés ; le code et les fichiers
+      de configuration sont écartés avant l'envoi.</span>
+    <input type="file" name="fichiers" id="fichiers" multiple>
   </label>
   <p class="boutons">
     <button type="button" class="principal photo" onclick="document.getElementById('photo').click()">📷 Prendre en photo</button>
@@ -33,14 +34,23 @@
       <option value="">Laisser l'agent deviner ou lire le nom du dossier</option>
       {% for n in niveaux %}<option>{{ n }}</option>{% endfor %}
     </select></label></p>
-  <p id="selection" class="doux"></p>
+  <div id="selection" class="selection" hidden>
+    <p><strong id="nb-envoi"></strong> <span class="doux" id="taille"></span></p>
+    <p class="doux" id="apercu"></p>
+    <details id="ecartes" hidden><summary class="doux"></summary><ul class="doux"></ul></details>
+  </div>
+  <div id="progression" hidden>
+    <progress max="1" value="0"></progress>
+    <p class="doux" id="etat-envoi"></p>
+  </div>
   <button class="principal" id="envoyer">Envoyer</button>
 </form>
 
 <div class="carte">
-  <strong>Astuce : dépose un dossier entier par année.</strong>
-  <p class="doux">Un dossier nommé « BTS1 », « Terminale », « 3e »… fixe l'année d'étude de tout ce qu'il contient.
-  Si le contenu d'un fichier ne colle pas avec le nom du dossier, il part dans « À vérifier » pour que tu confirmes.</p>
+  <strong>Astuce : dépose un dossier entier, même mal rangé.</strong>
+  <p class="doux">Je lis les noms des dossiers (« BTS1 », « 2022-2023 », « Maths », « TP »…) pour comprendre ton ancienne
+  organisation. Un PDF et son Word ne sont analysés qu'une fois, les scans d'une page par fichier sont regroupés en un PDF.
+  Ce qui semble inutile ou incertain t'attend sur la page <a href="/import">Import</a> : rien n'est supprimé sans ton accord.</p>
 </div>
 
 <style>
@@ -50,6 +60,11 @@
   .zone input { display: none; }
   .boutons { display: flex; flex-wrap: wrap; gap: 8px; }
   .photo { display: none; }
+  .selection { border-top: 1px solid var(--bord); padding-top: 4px; margin-bottom: 12px; }
+  .selection p { margin: 6px 0; overflow-wrap: anywhere; }
+  .selection ul { max-height: 30vh; overflow-y: auto; margin: 6px 0; padding-left: 18px; overflow-wrap: anywhere; }
+  #progression { margin-bottom: 12px; }
+  progress { width: 100%; height: 10px; accent-color: var(--accent); }
   @media (max-width: 760px), (pointer: coarse) {
     .photo { display: block; width: 100%; }
     .zone { padding: 16px 12px; }
@@ -58,15 +73,39 @@
   }
 </style>
 <script>
-  // Garde le chemin relatif des fichiers d'un dossier (BTS1/Réseaux/tp1.pdf) pour le serveur
+  // Garde le chemin relatif des fichiers d'un dossier (BTS1/Réseaux/tp1.pdf) pour le serveur.
+  // Le code, la config et les fichiers système ne sont pas envoyés (ils restent sur ton ordinateur).
+  const EXTENSIONS = new Set({{ extensions|tojson }});
+  const DOSSIERS_INUTILES = new Set({{ dossiers_inutiles|tojson }});
+  const SYSTEME = /^(\.ds_store|thumbs\.db|desktop\.ini|~\$.*|\._.*|\.~lock.*)$/i;
+  const PAQUET_FICHIERS = 25, PAQUET_OCTETS = 40 * 1024 * 1024;
   const form = document.getElementById('depot'), zone = document.getElementById('zone');
   const choixFichiers = document.getElementById('fichiers'), choixDossier = document.getElementById('dossier');
   let selection = [];
 
+  function raisonEcart(chemin) {
+    const parts = chemin.split('/'), nom = parts[parts.length - 1];
+    if (parts.slice(0, -1).some(d => DOSSIERS_INUTILES.has(d.toLowerCase()))) return 'outil de développement';
+    if (SYSTEME.test(nom)) return 'fichier système';
+    const ext = (nom.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+    return EXTENSIONS.has(ext) ? null : 'code, config ou format non lu';
+  }
+  const mo = o => o < 1048576 ? Math.max(1, Math.round(o / 1024)) + ' Ko' : (o / 1048576).toFixed(o < 10485760 ? 1 : 0) + ' Mo';
+
   function montrer(liste) {
-    selection = liste;
-    document.getElementById('selection').textContent =
-      liste.length ? liste.length + ' fichier(s) prêt(s) : ' + liste.slice(0, 5).map(x => x.chemin).join(', ') + (liste.length > 5 ? '…' : '') : '';
+    const ecartes = [];
+    selection = liste.filter(s => { const r = raisonEcart(s.chemin); if (r) ecartes.push(s.chemin + ' · ' + r); return !r; });
+    const bloc = document.getElementById('selection');
+    bloc.hidden = !liste.length;
+    const n = selection.length, octets = selection.reduce((t, s) => t + s.fichier.size, 0);
+    document.getElementById('nb-envoi').textContent = n + ' fichier' + (n > 1 ? 's' : '') + ' à envoyer';
+    document.getElementById('taille').textContent = n ? '(' + mo(octets) + ')' : '';
+    document.getElementById('apercu').textContent = selection.slice(0, 4).map(x => x.chemin).join(', ') + (n > 4 ? '…' : '');
+    const d = document.getElementById('ecartes');
+    d.hidden = !ecartes.length;
+    d.querySelector('summary').textContent = ecartes.length + ' fichier' + (ecartes.length > 1 ? 's' : '') + ' écarté' + (ecartes.length > 1 ? 's' : '') + ' (non envoyés)';
+    d.querySelector('ul').innerHTML = '';
+    ecartes.slice(0, 200).forEach(t => { const li = document.createElement('li'); li.textContent = t; d.querySelector('ul').append(li); });
   }
   const depuisInput = input => montrer([...input.files].map(f => ({ fichier: f, chemin: f.webkitRelativePath || f.name })));
   choixFichiers.addEventListener('change', () => depuisInput(choixFichiers));
@@ -83,13 +122,14 @@
 
   async function lireEntree(entree, chemin, liste) {
     if (entree.isFile) {
-      const f = await new Promise(ok => entree.file(ok));
+      const f = await new Promise((ok, ko) => entree.file(ok, ko));
       liste.push({ fichier: f, chemin: chemin + f.name });
     } else if (entree.isDirectory) {
+      if (DOSSIERS_INUTILES.has(entree.name.toLowerCase())) return;  // node_modules… : inutile de tout lire
       const lecteur = entree.createReader();
       let lot;
       do {
-        lot = await new Promise(ok => lecteur.readEntries(ok));
+        lot = await new Promise((ok, ko) => lecteur.readEntries(ok, ko));
         for (const e of lot) await lireEntree(e, chemin + entree.name + '/', liste);
       } while (lot.length);
     }
@@ -98,24 +138,70 @@
   ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, () => zone.classList.remove('survol')));
   zone.addEventListener('drop', async e => {
     e.preventDefault();
+    const entrees = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
     const liste = [];
-    for (const item of [...e.dataTransfer.items]) {
-      const entree = item.webkitGetAsEntry && item.webkitGetAsEntry();
-      if (entree) await lireEntree(entree, '', liste);
-    }
+    document.getElementById('apercu').textContent = 'Lecture du dossier…';
+    for (const entree of entrees) await lireEntree(entree, '', liste);
     montrer(liste);
   });
 
+  function paquets(liste) {
+    const out = [];
+    let courant = [], octets = 0;
+    for (const s of liste) {
+      if (courant.length && (courant.length >= PAQUET_FICHIERS || octets + s.fichier.size > PAQUET_OCTETS)) {
+        out.push(courant); courant = []; octets = 0;
+      }
+      courant.push(s); octets += s.fichier.size;
+    }
+    if (courant.length) out.push(courant);
+    return out;
+  }
+
+  async function envoyerPaquet(paquet, niveau) {
+    const donnees = new FormData();
+    paquet.forEach(s => donnees.append('fichiers', s.fichier, s.chemin));
+    donnees.append('niveau', niveau);
+    for (let essai = 0; ; essai++) {
+      try {
+        const r = await fetch('/deposer?paquet=1', { method: 'POST', body: donnees });
+        if (r.ok) return await r.json();
+        if (r.status < 500 || essai >= 2) throw new Error('le serveur a répondu ' + r.status);
+      } catch (err) {
+        if (essai >= 2) throw err;
+      }
+      await new Promise(ok => setTimeout(ok, 2000 * (essai + 1)));
+    }
+  }
+
+  let reprise = 0;
   form.addEventListener('submit', async e => {
     if (!selection.length) return;  // sans sélection JS, envoi classique du formulaire
     e.preventDefault();
-    const donnees = new FormData();
-    selection.forEach(s => donnees.append('fichiers', s.fichier, s.chemin));
-    donnees.append('niveau', form.niveau.value);
-    const bouton = document.getElementById('envoyer');
+    const bouton = document.getElementById('envoyer'), barre = document.querySelector('progress');
+    const etat = document.getElementById('etat-envoi'), liste = paquets(selection);
+    const total = selection.length;
+    document.getElementById('progression').hidden = false;
     bouton.disabled = true; bouton.textContent = 'Envoi en cours…';
-    const reponse = await fetch('/deposer', { method: 'POST', body: donnees });
-    document.open(); document.write(await reponse.text()); document.close();
+    let faits = liste.slice(0, reprise).reduce((t, p) => t + p.length, 0);
+    for (let i = reprise; i < liste.length; i++) {
+      etat.textContent = `Envoi ${faits}/${total}… garde la page ouverte.`;
+      barre.value = faits / total;
+      try {
+        await envoyerPaquet(liste[i], form.niveau.value);
+      } catch (err) {
+        reprise = i;
+        etat.textContent = `Envoi interrompu à ${faits}/${total} (${err.message}). Les fichiers déjà envoyés sont dans l'inbox.`;
+        bouton.disabled = false; bouton.textContent = 'Reprendre l\'envoi';
+        return;
+      }
+      faits += liste[i].length;
+      reprise = i + 1;
+    }
+    barre.value = 1;
+    etat.innerHTML = `<strong>${total} fichier${total > 1 ? 's' : ''} envoyé${total > 1 ? 's' : ''} ✓</strong> Le tri démarre d'ici 2 minutes, `
+      + `puis l'analyse document par document. Ce qui demande ton avis sera sur la page <a href="/import">Import</a>.`;
+    bouton.textContent = 'Envoyé'; selection = []; reprise = 0;
   });
 </script>
 {% endblock %}

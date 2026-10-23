@@ -56,8 +56,11 @@ def test_parcourir_les_sous_dossiers(worker, monkeypatch):
                  20: [{"id": 21, "name": "Réseaux", "type": "dir"}, {"id": 2, "name": "b.pdf", "type": "file"}],
                  21: [{"id": 3, "name": "c.pdf", "type": "file"}]})
     monkeypatch.setattr(worker.db, "par_kdrive", lambda i: {"statut": "classe"} if i == 2 else None)
+    monkeypatch.setattr(worker.db, "import_connus", lambda ids: {1: "analyser", 3: "analyser"})
     items = worker.a_traiter(kd)
     assert [(i["name"], i["dossiers"]) for i in items] == [("a.pdf", []), ("c.pdf", ["BTS1", "Réseaux"])]
+    monkeypatch.setattr(worker.db, "import_connus", lambda ids: {1: "inutile", 3: "page"})
+    assert worker.a_traiter(kd) == []  # en attente de ton choix ou de la fusion
 
 
 def test_nettoyer_inbox_supprime_les_dossiers_vides_et_anciens(worker):
@@ -193,3 +196,128 @@ def test_reclasser_puis_ranger(worker, monkeypatch):
     worker.ranger_en_attente(KD())
     assert moves == [("path", ["archives", "BTS2", "Réseaux", "Cours"]), (30, 8), (31, 8), ("path", ["hors-cours"]), (40, 7)]
     assert ranges[-3:] == [([3], False), ([4], False), ([5], False)]
+
+
+class KDImport(FauxKD):
+    """Faux kDrive qui garde la trace des déplacements, envois et téléchargements."""
+
+    def __init__(self, arbre):
+        super().__init__(arbre)
+        self.deplaces, self.envois, self.chemins = [], [], []
+
+    def move(self, fid, dest):
+        self.deplaces.append((fid, dest))
+
+    def rename(self, fid, nom):
+        self.deplaces.append((fid, nom))
+
+    def ensure_path(self, parent, parts):
+        self.chemins.append((parent, parts))
+        return 500 + len(parts)
+
+    def download(self, fid, dest):
+        from PIL import Image
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.suffix == ".jpg":
+            Image.new("RGB", (100, 140), "white").save(dest)
+        else:
+            dest.write_bytes(b"x")
+        return dest
+
+    def upload(self, dir_id, nom, contenu, conflict="version"):
+        self.envois.append((dir_id, nom, contenu[:4]))
+        return {"id": 999, "name": nom}
+
+
+def test_trier_attend_la_fin_de_la_copie(worker, monkeypatch):
+    enregistres, notes = [], []
+    monkeypatch.setattr(worker, "STABLE", 0)
+    monkeypatch.setattr(worker.db, "import_connus", lambda ids: {})
+    monkeypatch.setattr(worker.db, "par_kdrive", lambda i: None)
+    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, f: enregistres.append((lot, f)))
+    monkeypatch.setattr(worker.notifications, "import_a_confirmer", lambda lot, n: notes.append((lot, n)))
+    monkeypatch.setattr(worker.agent, "interpreter_arborescence", lambda *a: pytest.fail("trop peu de documents"))
+    items = [{"id": 1, "name": "cours.docx", "type": "file", "size": 9000, "dossiers": ["Vieux", "BTS1", "Maths"]},
+             {"id": 2, "name": "cours.pdf", "type": "file", "size": 9000, "dossiers": ["Vieux", "BTS1", "Maths"]},
+             {"id": 3, "name": ".vscode", "type": "dir", "dossiers": ["Vieux", "Dev"]}]
+    assert worker.trier_inbox(None, items[:2]) == 0          # premier passage : on note le lot
+    assert worker.trier_inbox(None, items) == 0              # il grossit encore : on attend
+    assert worker.trier_inbox(None, items) == 3              # stable : trié
+    (lot, fichiers), = enregistres
+    assert lot == "Vieux" and [f.decision for f in fichiers] == ["analyser", "variante", "inutile"]
+    assert notes == [("Vieux", 1)]
+
+
+def test_comprendre_organisation_une_passe_ia(worker, monkeypatch):
+    sauves = []
+    monkeypatch.setattr(worker.db, "matieres", lambda: [])
+    monkeypatch.setattr(worker.db, "import_lot_maj", lambda lot, r, c: sauves.append((lot, r, c)))
+    monkeypatch.setattr(worker.agent, "interpreter_arborescence",
+                        lambda dossiers, m: ("Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}}))
+    fichiers = [importation_fichier(i, f"d{i}.pdf", ["V", "2023-2024"]) for i in range(6)]
+    worker.comprendre_organisation("V", fichiers)
+    assert sauves == [("V", "Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}})]
+
+
+def importation_fichier(i, nom, dossiers):
+    from claunote.importation import Fichier
+    return Fichier(i, nom, dossiers)
+
+
+def test_fusionner_les_pages(worker, monkeypatch, tmp_path):
+    monkeypatch.setattr(worker, "CACHE_DIR", tmp_path)
+    pages = [{"kdrive_id": 70 + i, "nom": f"suites {i + 1}.jpg", "chemin": f"V/Maths/suites {i + 1}.jpg", "lot": "V"}
+             for i in range(3)]
+    enregistres, marques = [], []
+    monkeypatch.setattr(worker.db, "import_groupe", lambda g: pages)
+    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, f: enregistres.append((lot, f)))
+    monkeypatch.setattr(worker.db, "import_marquer", lambda ids, d, **k: marques.append((ids, d)))
+    kd = KDImport({})
+    worker.fusionner(kd, "V/Maths/suites")
+    assert kd.envois == [(502, "suites-3p.pdf", b"%PDF")]
+    (lot, (f,)), = enregistres
+    assert lot == "V" and f.id == 999 and f.decision == "analyser" and f.dossiers == ["V", "Maths"]
+    assert marques == [([70, 71, 72], "fusionne")]
+    assert (1, ["import", "pages-fusionnees", "V", "Maths"]) in kd.chemins
+    assert {fid for fid, _ in kd.deplaces} == {70, 71, 72}
+
+
+def test_executer_les_choix(worker, monkeypatch):
+    oublies, marques = [], []
+    monkeypatch.setattr(worker.db, "import_a_executer", lambda: [
+        {"kdrive_id": 5, "decision": "supprimer", "chemin": "V/Dev/.vscode"},
+        {"kdrive_id": 6, "decision": "garder", "chemin": "V/Dev/archive.zip"}])
+    monkeypatch.setattr(worker.db, "import_groupes", lambda sur: [])
+    monkeypatch.setattr(worker.db, "import_oublier", lambda ids: oublies.extend(ids))
+    monkeypatch.setattr(worker.db, "import_marquer", lambda ids, d, **k: marques.append((ids, d)))
+    kd = KDImport({})
+    assert worker.executer_choix(kd)
+    assert kd.supprimes == [5] and oublies == [5]
+    assert (1, ["autres", "V", "Dev"]) in kd.chemins and (6, 503) in kd.deplaces and marques == [([6], "fait")]
+
+
+def test_la_variante_suit_le_document(worker, monkeypatch):
+    maj = []
+    monkeypatch.setattr(worker.db, "variantes_de", lambda kid: [{"kdrive_id": 8, "nom": "TP1.pdf"}])
+    monkeypatch.setattr(worker.db, "maj", lambda i, **k: maj.append(k))
+    monkeypatch.setattr(worker.db, "import_marquer", lambda ids, d, **k: None)
+    kd = KDImport({})
+    worker.ranger_variantes(kd, 7, 1, 42, "2025-01-10_vlan.docx")
+    assert kd.deplaces == [(8, 42), (8, "2025-01-10_vlan.pdf")]
+    assert maj == [{"variante_kdrive_id": 8, "variante_nom": "2025-01-10_vlan.pdf"}]
+
+
+def test_analyse_impossible_essaie_l_autre_format(worker, monkeypatch, tmp_path):
+    appels = []
+    monkeypatch.setattr(worker, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(worker.db, "creer", lambda kid, nom: 1)
+    monkeypatch.setattr(worker.db, "import_lot", lambda lot: None)
+    monkeypatch.setattr(worker.db, "variantes_de", lambda kid: [{"kdrive_id": 8, "nom": "TP1.pdf"}])
+    monkeypatch.setattr(worker.db, "import_basculer", lambda a, n: appels.append(("bascule", a, n)))
+    monkeypatch.setattr(worker.db, "supprimer", lambda i: appels.append(("oubli", i)))
+
+    def echec(*a):
+        raise worker.ErreurAgent("fichier .doc illisible")
+    monkeypatch.setattr(worker, "analyser", echec)
+    worker.traiter(KDImport({}), {"id": 7, "name": "TP1.doc", "dossiers": ["V"]})
+    assert appels == [("bascule", 7, 8), ("oubli", 1)]

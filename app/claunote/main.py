@@ -13,13 +13,13 @@ from urllib.parse import parse_qs, quote, urlencode
 
 import markdown
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import anki, auth, db, notifications, pdf, pronote, rangement, revision
+from claunote import anki, auth, db, importation, notifications, pdf, pronote, rangement, revision
 from claunote.agent import NIVEAUX, TYPES
 from claunote.kdrive import KDrive
 
@@ -56,13 +56,14 @@ async def exiger_connexion(request: Request, call_next):
     return RedirectResponse(f"/connexion?{urlencode({'suite': suite})}", status_code=303)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
+templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirmer()
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
 templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
 templates.env.filters["note"] = pronote.libelle_note
 templates.env.filters["paris"] = lambda d: d.astimezone(pronote.PARIS).strftime("%d/%m/%Y %H:%M") if d else ""
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
-EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".webp"}
+EXTENSIONS = importation.DOCUMENTS
 
 
 def surligner(extrait: str | None) -> Markup:
@@ -216,16 +217,22 @@ def document(request: Request, doc_id: int):
 
 
 @app.get("/doc/{doc_id}/fichier")
-def fichier(doc_id: int):
-    """Sert le scan original, récupéré à la volée depuis kDrive."""
+def fichier(doc_id: int, variante: int = 0):
+    """Sert le scan original (ou son autre format), récupéré à la volée depuis kDrive."""
     doc = db.document(doc_id)
-    if doc is None:
+    if doc is None or (variante and not doc.get("variante_kdrive_id")):
         raise HTTPException(404)
+    if variante:
+        return _servir(doc["variante_kdrive_id"], doc["variante_nom"])
+    return _servir(doc["kdrive_id"], doc["nom"])
+
+
+def _servir(kdrive_id: int, nom: str) -> FileResponse:
     tmp = Path(tempfile.mkdtemp())
-    chemin = KDrive.from_env().download(doc["kdrive_id"], tmp / doc["nom"])
-    media = mimetypes.guess_type(doc["nom"])[0] or "application/octet-stream"
+    chemin = KDrive.from_env().download(kdrive_id, tmp / PurePosixPath(nom).name)
+    media = mimetypes.guess_type(nom)[0] or "application/octet-stream"
     return FileResponse(chemin, media_type=media, content_disposition_type="inline",
-                        filename=doc["nom"], background=BackgroundTask(lambda: _nettoyer(tmp)))
+                        filename=PurePosixPath(nom).name, background=BackgroundTask(lambda: _nettoyer(tmp)))
 
 
 def _nettoyer(dossier: Path):
@@ -236,14 +243,16 @@ def _nettoyer(dossier: Path):
 
 @app.get("/deposer", response_class=HTMLResponse)
 def page_deposer(request: Request):
-    return templates.TemplateResponse(request, "deposer.html", {"niveaux": NIVEAUX})
+    return templates.TemplateResponse(request, "deposer.html", {"niveaux": NIVEAUX, **_filtres_depot()})
 
 
 @app.post("/deposer", response_class=HTMLResponse)
-def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: str = Form("")):
+def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: str = Form(""), paquet: int = 0):
     """Envoie les fichiers dans l'inbox kDrive, en gardant les dossiers d'un dossier déposé.
 
     Un niveau choisi devient un sous-dossier de l'inbox : le worker s'en sert comme année d'étude.
+    Un gros dossier arrive par paquets (`paquet=1`, réponse JSON) ; le worker attend la fin
+    de l'envoi avant de trier le lot.
     """
     if niveau and niveau not in NIVEAUX:
         raise HTTPException(400, "niveau inconnu")
@@ -255,7 +264,9 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
         if not parts:
             continue
         chemin = ([niveau] if niveau else []) + parts
-        if PurePosixPath(parts[-1]).suffix.lower() not in EXTENSIONS:
+        if (PurePosixPath(parts[-1]).suffix.lower() not in EXTENSIONS
+                or any(p.lower() in importation.DOSSIERS_INUTILES for p in parts[:-1])
+                or parts[-1].lower() in importation.SYSTEME_NOMS or parts[-1].startswith(("~$", "._"))):
             ignores.append("/".join(parts))
             continue
         dossiers = tuple(chemin[:-1])
@@ -265,8 +276,15 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
         envoyes.append("/".join(chemin))
     if envoyes:
         db.demander_scan()
+    if paquet:
+        return JSONResponse({"envoyes": envoyes, "ignores": ignores})
     return templates.TemplateResponse(request, "deposer.html", {
-        "niveaux": NIVEAUX, "envoyes": envoyes, "ignores": ignores})
+        "niveaux": NIVEAUX, "envoyes": envoyes, "ignores": ignores, **_filtres_depot()})
+
+
+def _filtres_depot() -> dict:
+    """Listes partagées avec la page Déposer, qui écarte le code et les fichiers système avant l'envoi."""
+    return {"extensions": sorted(EXTENSIONS), "dossiers_inutiles": sorted(importation.DOSSIERS_INUTILES)}
 
 
 @app.get("/recherche", response_class=HTMLResponse)
@@ -308,8 +326,9 @@ def _deplacer(doc, parts: list[str]):
     kd = KDrive.from_env()
     dest_id = kd.ensure_path(ETUDES_ID, parts)
     kd.move(doc["kdrive_id"], dest_id)
-    if doc["kdrive_md_id"]:
-        kd.move(doc["kdrive_md_id"], dest_id)
+    for lie in (doc["kdrive_md_id"], doc.get("variante_kdrive_id")):
+        if lie:
+            kd.move(lie, dest_id)
 
 
 @app.post("/doc/{doc_id}/classer")
@@ -433,7 +452,7 @@ def _supprimer(doc_id: int) -> bool:
     if doc is None:
         return False
     kd = KDrive.from_env()
-    for fid in (doc["kdrive_id"], doc["kdrive_md_id"]):
+    for fid in (doc["kdrive_id"], doc["kdrive_md_id"], doc.get("variante_kdrive_id")):
         if fid:
             try:
                 kd.delete(fid)
@@ -468,6 +487,95 @@ def reessayer_tout():
     if db.reessayer_erreurs():
         db.demander_scan()
     return RedirectResponse("/a-verifier", status_code=303)
+
+
+# --- Import de dossiers entiers : ce que le tri attend de toi -----------------------------
+
+@app.get("/import", response_class=HTMLResponse)
+def page_import(request: Request, message: str = ""):
+    lots = []
+    for b in db.import_bilan():
+        compris = b["compris"] or {}
+        arbre = []
+        for dossier, n in db.import_dossiers(b["lot"]).items():
+            i = importation.indices(dossier.split("/") if dossier else [])
+            i.update({k: v for k, v in (compris.get(dossier) or {}).items() if v})
+            arbre.append({"chemin": dossier, "nom": dossier.rsplit("/", 1)[-1] or "(racine)",
+                          "profondeur": dossier.count("/"), "n": n, **i})
+        lots.append({**b, "arbre": arbre[:300]})
+    par_lot = defaultdict(lambda: defaultdict(list))
+    for f in db.import_fichiers("inutile"):
+        par_lot[f["lot"]][f["categorie"]].append(f)
+    ordre = list(importation.LIBELLES)  # code d'abord, ce qui est le plus sûrement inutile
+    inutiles = {lot: {"n": sum(map(len, cats.values())),
+                      "categories": sorted(cats.items(), key=lambda c: ordre.index(c[0]) if c[0] in ordre else 99)}
+                for lot, cats in par_lot.items()}
+    groupes = [{"cle": g, "pages": db.import_groupe(g)} for g in db.import_groupes(sur=False)]
+    return templates.TemplateResponse(request, "import.html", {
+        "lots": lots, "inutiles": inutiles, "groupes": [g for g in groupes if g["pages"]],
+        "libelles": importation.LIBELLES, "message": message})
+
+
+@app.post("/import/choix")
+def choix_import(ids: list[int] = Form([]), action: str = Form(...)):
+    """Fichiers inutiles : supprimer (corbeille kDrive), garder à part, ou analyser quand même."""
+    decision = {"supprimer": "supprimer", "garder": "garder", "analyser": "analyser"}.get(action)
+    if decision is None:
+        raise HTTPException(400, "action inconnue")
+    fichiers = db.import_fichiers("inutile", ids)
+    if decision == "analyser":  # seuls les formats lisibles par l'agent
+        fichiers = [f for f in fichiers if not f["dossier"] and PurePosixPath(f["nom"]).suffix.lower() in EXTENSIONS]
+    n = db.import_marquer([f["kdrive_id"] for f in fichiers], decision)
+    if n:
+        db.demander_scan()
+    pluriel = "s" if n > 1 else ""
+    message = {"supprimer": f"{n} fichier{pluriel} part{'ent' if n > 1 else ''} à la corbeille kDrive (récupérable{pluriel} 30 jours).",
+               "garder": f"{n} fichier{pluriel} rangé{pluriel} à part dans Etudes/autres.",
+               "analyser": f"{n} fichier{pluriel} ajouté{pluriel} à l'analyse."}[decision]
+    if decision == "analyser" and n < len(ids):
+        message += f" {len(ids) - n} ignoré{'s' if len(ids) - n > 1 else ''} : format que l'agent ne sait pas lire."
+    return RedirectResponse(f"/import?{urlencode({'message': message})}", status_code=303)
+
+
+@app.post("/import/decouper")
+def decouper_import(groupe: str = Form(...), coupes: list[int] = Form([]), action: str = Form("decouper")):
+    """Scans au regroupement incertain : un document commence à chaque page cochée."""
+    pages = db.import_groupe(groupe)
+    if not pages:
+        return RedirectResponse("/import", status_code=303)
+    ordres = [p["ordre"] for p in pages]
+    morceaux = [[o] for o in ordres] if action == "separer" else importation.decouper(ordres, set(coupes))
+    par_ordre = {p["ordre"]: p["kdrive_id"] for p in pages}
+    for k, morceau in enumerate(morceaux):
+        ids = [par_ordre[o] for o in morceau]
+        if len(ids) == 1:
+            db.import_marquer(ids, "analyser", groupe=None)
+        else:
+            for ordre, i in enumerate(ids):
+                db.import_marquer([i], "page", groupe=f"{groupe}#{k + 1}", ordre=ordre, sur=True)
+    db.demander_scan()
+    docs = len(morceaux)
+    return RedirectResponse(f"/import?{urlencode({'message': f'{len(pages)} pages → {docs} document' + ('s' if docs > 1 else '') + '.'})}",
+                            status_code=303)
+
+
+@app.get("/import/fichier/{kdrive_id}")
+def fichier_import(kdrive_id: int):
+    """Aperçu d'un fichier en attente de tri (uniquement ceux du tri, pas tout kDrive)."""
+    f = db.import_connus([kdrive_id])
+    if kdrive_id not in f:
+        raise HTTPException(404)
+    lignes = db.import_fichiers(f[kdrive_id], [kdrive_id])
+    if not lignes:
+        raise HTTPException(404)
+    nom = lignes[0]["nom"]
+    if PurePosixPath(nom).suffix.lower() not in importation.IMAGES:
+        return _servir(kdrive_id, nom)
+    # Miniature légère : une page de scan pèse souvent plusieurs Mo
+    with tempfile.TemporaryDirectory() as tmp:
+        chemin = KDrive.from_env().download(kdrive_id, Path(tmp) / PurePosixPath(nom).name)
+        return Response(importation.miniature(chemin), media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=3600"})
 
 
 HISTORIQUE_PAR_PAGE = 20

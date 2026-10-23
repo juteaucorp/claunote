@@ -234,6 +234,14 @@ def apres_synchro_pronote(documents_deposes: int = 0):
                     "dans tes cours d'ici quelques minutes.", "/agenda")
 
 
+def import_a_confirmer(lot: str, inutiles: int):
+    """Un dossier importé attend ton feu vert : fichiers à supprimer ou scans à découper."""
+    if db.abonnements():
+        corps = (f"{inutiles} fichier{'s' if inutiles > 1 else ''} inutile{'s' if inutiles > 1 else ''} "
+                 "(code, config…) à supprimer ?" if inutiles else "Des scans à regrouper : dis-moi où couper.")
+        db.notifier(f"import:{lot}:{int(time.time())}", f"Import « {lot or 'inbox'} » trié", corps, "/import")
+
+
 def tour(maintenant: dt.datetime | None = None):
     maintenant = maintenant or dt.datetime.now(PARIS)
     if not db.abonnements():

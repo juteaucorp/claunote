@@ -40,6 +40,33 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS a_ranger BOOLEAN NOT NULL DEFAULT
 CREATE INDEX IF NOT EXISTS documents_cree_le ON documents (cree_le);
 CREATE INDEX IF NOT EXISTS documents_recherche ON documents USING GIN (recherche);
 CREATE TABLE IF NOT EXISTS etat (cle TEXT PRIMARY KEY, valeur TEXT);
+-- Même document dans un autre format (PDF + Word) : rangé à côté, pas analysé
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS variante_kdrive_id BIGINT;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS variante_nom TEXT;
+-- Tri d'un dossier importé, avant l'analyse (voir importation.py)
+CREATE TABLE IF NOT EXISTS import_fichiers (
+    kdrive_id  BIGINT PRIMARY KEY,
+    lot        TEXT NOT NULL,                        -- premier dossier dans l'inbox ('' : racine)
+    chemin     TEXT NOT NULL,                        -- dossiers/nom depuis l'inbox
+    nom        TEXT NOT NULL,
+    taille     BIGINT NOT NULL DEFAULT 0,
+    categorie  TEXT NOT NULL,                        -- document, code, systeme, autre, doublon, projet
+    decision   TEXT NOT NULL,                        -- analyser, inutile, variante, page, supprimer, garder, fusionne, fait
+    raison     TEXT,
+    principal  BIGINT,                               -- variante ou doublon : le fichier gardé
+    groupe     TEXT,                                 -- page : groupe de scans à fusionner
+    ordre      INT NOT NULL DEFAULT 0,
+    sur        BOOLEAN NOT NULL DEFAULT true,        -- page : fusion sûre, sinon découpage à confirmer
+    dossier    BOOLEAN NOT NULL DEFAULT false,
+    cree_le    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS import_fichiers_decision ON import_fichiers (decision);
+CREATE TABLE IF NOT EXISTS import_lots (
+    lot        TEXT PRIMARY KEY,
+    resume     TEXT,                                 -- comment l'ancienne organisation est rangée (IA)
+    compris    JSONB NOT NULL DEFAULT '{}',          -- {"chemin/dossier": {"niveau", "matiere", "type"}}
+    maj_le     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS revisions (
     id         SERIAL PRIMARY KEY,
     genre      TEXT NOT NULL,                        -- fiche, quiz, plan
@@ -148,7 +175,8 @@ CREATE TABLE IF NOT EXISTS notifications (
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
-          "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note"}
+          "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note",
+          "variante_kdrive_id", "variante_nom"}
 
 
 _pool: ConnectionPool | None = None
@@ -838,3 +866,136 @@ def evenements_entre(debut, fin):
     with connect() as c:
         return c.execute("SELECT genre, matiere, titre, le FROM pronote_evenements "
                          "WHERE le >= %s AND le < %s::date + 1 ORDER BY le", (debut, fin)).fetchall()
+
+
+# --- Import de dossiers entiers ------------------------------------------------
+
+def import_connus(ids: list[int]) -> dict[int, str]:
+    """Décision du tri pour chaque fichier déjà vu."""
+    with connect() as c:
+        rows = c.execute("SELECT kdrive_id, decision FROM import_fichiers WHERE kdrive_id = ANY(%s)", (ids,)).fetchall()
+    return {r["kdrive_id"]: r["decision"] for r in rows}
+
+
+def import_enregistrer(lot: str, fichiers):
+    """Enregistre le tri d'un lot (importation.Fichier)."""
+    with connect() as c, c.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO import_fichiers (kdrive_id, lot, chemin, nom, taille, categorie, decision, raison,
+                                            principal, groupe, ordre, sur, dossier)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (kdrive_id) DO NOTHING""",
+            [(f.id, lot, f.chemin, f.nom, f.taille, f.categorie, f.decision, f.raison, f.principal, f.groupe,
+              f.ordre, f.sur, f.dossier) for f in fichiers])
+
+
+def import_lot(lot: str):
+    with connect() as c:
+        return c.execute("SELECT * FROM import_lots WHERE lot = %s", (lot,)).fetchone()
+
+
+def import_lot_maj(lot: str, resume: str | None, compris: dict):
+    with connect() as c:
+        c.execute("""INSERT INTO import_lots (lot, resume, compris) VALUES (%s, %s, %s)
+                     ON CONFLICT (lot) DO UPDATE SET resume = coalesce(EXCLUDED.resume, import_lots.resume),
+                       compris = import_lots.compris || EXCLUDED.compris, maj_le = now()""",
+                  (lot, resume, Jsonb(compris)))
+
+
+def import_marquer(ids: list[int], decision: str, **champs):
+    sets = "".join(f", {k} = %s" for k in champs if k in {"groupe", "ordre", "sur", "principal"})
+    with connect() as c:
+        return c.execute(f"UPDATE import_fichiers SET decision = %s{sets} WHERE kdrive_id = ANY(%s)",
+                         (decision, *[v for k, v in champs.items() if k in {"groupe", "ordre", "sur", "principal"}],
+                          ids)).rowcount
+
+
+def import_oublier(ids: list[int]):
+    with connect() as c:
+        c.execute("DELETE FROM import_fichiers WHERE kdrive_id = ANY(%s)", (ids,))
+
+
+def import_fichiers(decision: str, ids: list[int] | None = None):
+    with connect() as c:
+        if ids is None:
+            return c.execute("SELECT * FROM import_fichiers WHERE decision = %s ORDER BY lot, groupe, ordre, chemin",
+                             (decision,)).fetchall()
+        return c.execute("SELECT * FROM import_fichiers WHERE decision = %s AND kdrive_id = ANY(%s) "
+                         "ORDER BY groupe, ordre", (decision, ids)).fetchall()
+
+
+def import_a_executer():
+    """Choix faits sur le site, que le worker applique dans kDrive."""
+    with connect() as c:
+        return c.execute("SELECT * FROM import_fichiers WHERE decision IN ('supprimer', 'garder') "
+                         "ORDER BY kdrive_id").fetchall()
+
+
+def import_groupe(groupe: str):
+    with connect() as c:
+        return c.execute("SELECT * FROM import_fichiers WHERE groupe = %s AND decision = 'page' ORDER BY ordre",
+                         (groupe,)).fetchall()
+
+
+def import_groupes(sur: bool) -> list[str]:
+    with connect() as c:
+        rows = c.execute("SELECT DISTINCT groupe FROM import_fichiers WHERE decision = 'page' AND sur = %s "
+                         "ORDER BY groupe", (sur,)).fetchall()
+    return [r["groupe"] for r in rows]
+
+
+def variantes_de(kdrive_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM import_fichiers WHERE decision = 'variante' AND principal = %s "
+                         "ORDER BY kdrive_id", (kdrive_id,)).fetchall()
+
+
+def import_basculer(ancien: int, nouveau: int):
+    """L'analyse du fichier principal a échoué : son autre format est analysé à sa place."""
+    with connect() as c:
+        c.execute("UPDATE import_fichiers SET decision = 'analyser', principal = NULL, raison = %s "
+                  "WHERE kdrive_id = %s", ("l'autre format n'a pas pu être lu", nouveau))
+        c.execute("UPDATE import_fichiers SET principal = %s WHERE decision = 'variante' AND principal = %s",
+                  (nouveau, ancien))
+        c.execute("UPDATE import_fichiers SET decision = 'variante', principal = %s WHERE kdrive_id = %s",
+                  (nouveau, ancien))
+
+
+def nb_import_a_confirmer() -> int:
+    """Fichiers inutiles proposés à la suppression + groupes de scans au découpage incertain."""
+    with connect() as c:
+        return c.execute(
+            """SELECT (SELECT count(*) FROM import_fichiers WHERE decision = 'inutile')
+                    + (SELECT count(DISTINCT groupe) FROM import_fichiers WHERE decision = 'page' AND NOT sur) AS n"""
+        ).fetchone()["n"]
+
+
+def import_bilan():
+    """Par lot : combien de fichiers dans chaque état (page Import)."""
+    with connect() as c:
+        rows = c.execute(
+            """SELECT f.lot, max(f.cree_le) AS le, count(*) AS total,
+                      count(*) FILTER (WHERE f.decision IN ('analyser', 'fait') AND f.categorie = 'document'
+                                         AND f.principal IS NULL) AS documents,
+                      count(*) FILTER (WHERE f.decision = 'analyser') AS en_attente,
+                      count(*) FILTER (WHERE f.decision = 'variante' OR (f.decision = 'fait' AND f.principal IS NOT NULL
+                                                                         AND f.categorie = 'document')) AS variantes,
+                      count(*) FILTER (WHERE f.decision = 'fusionne') AS pages_fusionnees,
+                      count(DISTINCT f.groupe) FILTER (WHERE f.decision = 'fusionne') AS fusions,
+                      count(*) FILTER (WHERE f.decision = 'inutile') AS inutiles,
+                      count(*) FILTER (WHERE f.categorie <> 'document' AND f.decision IN ('supprimer', 'garder', 'fait'))
+                        AS inutiles_traites,
+                      l.resume, l.compris
+               FROM import_fichiers f LEFT JOIN import_lots l ON l.lot = f.lot
+               GROUP BY f.lot, l.resume, l.compris ORDER BY max(f.cree_le) DESC LIMIT 12""").fetchall()
+    return rows
+
+
+def import_dossiers(lot: str) -> dict[str, int]:
+    """Dossiers d'un lot qui contiennent des documents gardés, avec leur nombre de documents."""
+    with connect() as c:
+        rows = c.execute(
+            """SELECT regexp_replace(chemin, '/?[^/]*$', '') AS dossier, count(*) AS n FROM import_fichiers
+               WHERE lot = %s AND categorie = 'document' AND decision IN ('analyser', 'fait', 'page')
+                 AND principal IS NULL
+               GROUP BY 1 ORDER BY 1""", (lot,)).fetchall()
+    return {r["dossier"]: r["n"] for r in rows}
