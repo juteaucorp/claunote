@@ -24,8 +24,47 @@ export class ErreurPronote extends Error {
   }
 }
 
-export const traduire = (e) =>
-  e instanceof ErreurPronote ? e : new ErreurPronote(MESSAGES[e?.name] ?? `Erreur Pronote : ${e?.message ?? e}`, 502);
+export const traduire = (e) => {
+  if (e instanceof ErreurPronote) return e;
+  const err = new ErreurPronote(MESSAGES[e?.name] ?? `Erreur Pronote : ${e?.message ?? e}`, 502);
+  err.cause = e; // gardé pour les logs du service
+  return err;
+};
+
+/**
+ * Contenu du QR code Pronote → { avecPageConnexion, jeton, login, url }.
+ * Tolère ce qu'ajoute un copier-coller : guillemets typographiques, espaces, texte autour.
+ */
+export function lireQr(qr) {
+  if (qr && typeof qr === "object") return verifierQr(qr);
+  let texte = String(qr ?? "")
+    .replace(/[\u200B-\u200D\uFEFF]/gu, "")
+    .replace(/[\u201C\u201D\u201E\u00AB\u00BB]/gu, '"')
+    .trim();
+  if (!texte.startsWith("{") && /%7B/iu.test(texte)) {
+    try {
+      texte = decodeURIComponent(texte);
+    } catch { /* on garde tel quel */ }
+  }
+  const debut = texte.indexOf("{"), fin = texte.lastIndexOf("}");
+  try {
+    return verifierQr(JSON.parse(texte.slice(debut, fin + 1)));
+  } catch (e) {
+    if (e instanceof ErreurPronote) throw e;
+    throw new ErreurPronote("Ce QR code n'est pas un QR code de connexion Pronote (contenu illisible).");
+  }
+}
+
+function verifierQr(donnees) {
+  const manquants = ["jeton", "login", "url"].filter((cle) => typeof donnees[cle] !== "string" || !donnees[cle].trim());
+  if (manquants.length) {
+    throw new ErreurPronote(`Ce QR code n'est pas un QR code de connexion Pronote (il manque : ${manquants.join(", ")}).`);
+  }
+  if (!/\/mobile\.(eleve|parent|professeur)\.html/u.test(donnees.url)) {
+    throw new ErreurPronote("Ce QR code ne pointe pas vers l'espace élève mobile de Pronote.");
+  }
+  return { ...donnees, jeton: donnees.jeton.trim(), login: donnees.login.trim(), url: donnees.url.trim() };
+}
 
 const iso = (d) => (d instanceof Date ? d.toISOString() : null);
 const note = (v) => (v ? { genre: v.kind, points: v.points } : null);
@@ -137,18 +176,9 @@ export function creerCompte({ pawnote, fichier }) {
     }),
 
     connexionQr: ({ qr, pin }) => enFile(async () => {
-      let donnees = qr;
-      if (typeof qr === "string") {
-        try {
-          donnees = JSON.parse(qr);
-        } catch {
-          throw new ErreurPronote("Ce QR code n'est pas un QR code de connexion Pronote.");
-        }
-      }
-      if (!donnees?.jeton || !donnees?.login || !donnees?.url) {
-        throw new ErreurPronote("Ce QR code n'est pas un QR code de connexion Pronote.");
-      }
-      if (!/^\d{4}$/.test(pin ?? "")) throw new ErreurPronote("Le code PIN fait 4 chiffres.");
+      const donnees = lireQr(qr);
+      pin = String(pin ?? "").trim();
+      if (!/^\d{4}$/.test(pin)) throw new ErreurPronote("Le code PIN fait 4 chiffres.");
       const deviceUUID = randomUUID();
       const session = pawnote.createSessionHandle();
       try {

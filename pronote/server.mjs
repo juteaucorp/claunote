@@ -34,7 +34,8 @@ export const serveur = createServer(async (req, res) => {
     repondre(200, (await route(await lireCorps(req))) ?? {});
   } catch (e) {
     const err = traduire(e);
-    console.error(`${req.method} ${req.url} : ${e instanceof ErreurPronote ? e.message : e?.stack ?? e}`);
+    const origine = err.cause ?? (e instanceof ErreurPronote ? null : e);
+    console.error(`${req.method} ${req.url} : ${err.message}${origine ? `\n${origine.stack ?? origine}` : ""}`);
     repondre(err.statut, { erreur: err.message });
   }
 });
