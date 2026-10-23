@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block titre %}Agenda{% endblock %}
 {% block tete %}<script src="/static/jsQR.js"></script>{# jsQR 1.4.0, licence Apache-2.0 #}{% endblock %}
+{% block vivant %}recharger{% endblock %}
 {% block contenu %}
 {% set JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."] %}
 {% set MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."] %}

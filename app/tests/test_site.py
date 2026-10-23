@@ -148,7 +148,7 @@ def test_voir_revision(client, monkeypatch):
     monkeypatch.setattr(db, "revision", lambda i: revs.get(i))
     r = client.get("/revision/5")
     assert '<a href="/doc/1">[D1]</a>' in r.text and "<b>x</b>" not in r.text and "Les VLAN" in r.text
-    assert 'http-equiv="refresh"' in client.get("/revision/6").text
+    assert 'data-vivant="recharger"' in client.get("/revision/6").text  # rechargée quand elle est prête
     r = client.get("/revision/7")
     assert "Voir la réponse" in r.text and "B. b" in r.text
     assert client.get("/revision/99").status_code == 404
@@ -157,7 +157,7 @@ def test_voir_revision(client, monkeypatch):
 def test_logo_et_page_deposer(client):
     assert client.get("/static/logo.svg").status_code == 200
     r = client.get("/deposer")
-    assert r.status_code == 200 and "webkitdirectory" in r.text and 'class="actif"' in r.text
+    assert r.status_code == 200 and "webkitdirectory" in r.text and 'class="maj actif"' in r.text
 
 
 def test_deposer_garde_les_dossiers(client, monkeypatch):
@@ -883,7 +883,7 @@ def test_page_campagne(client, monkeypatch):
     monkeypatch.setattr(db, "revisions_campagne", lambda i: revs)
     r = client.get("/campagne/9")
     assert "Courage !" in r.text and "1</strong>/2 tâches" in r.text and 'id="aujourdhui"' in r.text
-    assert 'href="/revision/5"' in r.text and "Génération en cours · 1/2" in r.text and 'http-equiv="refresh"' in r.text
+    assert 'href="/revision/5"' in r.text and "Génération en cours · 1/2" in r.text and 'data-vivant="recharger"' in r.text
     assert "/campagne/9/pdf" in r.text
     vu = []
     monkeypatch.setattr(db, "basculer_tache", lambda i, cle: vu.append(cle) or True)
@@ -926,7 +926,7 @@ def test_bandeau_et_page_etat(client, monkeypatch):
     assert "Le worker ne répond plus" in client.get("/bibliotheque").text
     client.etat["service"] = json.dumps({"vu": maintenant.isoformat(), "claude": {"etat": "ok"},
                                          "kdrive": {"etat": "ok"}})
-    assert "bandeau" not in client.get("/bibliotheque").text.split("<main>")[1]
+    assert 'class="carte bandeau"' not in client.get("/bibliotheque").text
 
 
 def test_kdrive_en_panne_page_claire(client, monkeypatch):
@@ -959,3 +959,22 @@ def test_powerpoint_jamais_dans_la_page(client, monkeypatch, tmp_path):
     assert r.headers["content-disposition"].startswith("attachment")  # téléchargé, pas ouvert dans la page
     r = client.get("/doc/1/fichier?variante=1")
     assert r.headers["content-disposition"].startswith("inline") and r.headers["content-type"] == "application/pdf"
+
+
+def test_rafraichissement_invisible(client, monkeypatch):
+    page = client.get("/").text
+    assert 'id="contenu" data-vivant="remplacer" data-empreinte="' in page and "X-Rafraichir" in page
+    assert 'id="maj-o-plus"' in page and 'id="maj-bandeau"' in page
+    empreinte = page.split('data-empreinte="')[1][:16]
+    assert client.get("/").text.split('data-empreinte="')[1][:16] == empreinte  # même contenu, même empreinte
+    page = client.get("/deposer").text
+    assert 'id="contenu">' in page and "data-vivant" not in page.split('id="contenu"')[1][:5]  # formulaire : jamais touché
+
+
+def test_bibliotheque_plus_recent_en_haut(client, monkeypatch):
+    monkeypatch.setattr(db, "bibliotheque", lambda: [
+        {"niveau": "3e", "matiere": "Maths", "type": "Cours", "n": 1},
+        {"niveau": "BTS2", "matiere": "CEJM", "type": "Cours", "n": 2},
+        {"niveau": "Terminale", "matiere": "Maths", "type": "Cours", "n": 3}])
+    page = client.get("/bibliotheque").text
+    assert page.index("<h2>BTS2</h2>") < page.index("<h2>Terminale</h2>") < page.index("<h2>3e</h2>")

@@ -9,6 +9,7 @@
   <button class="principal">{{ libelle }}</button>
 </form>
 {% endmacro %}
+{% block vivant %}remplacer{% endblock %}
 {% block contenu %}
 <h1>À vérifier</h1>
 <datalist id="matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>

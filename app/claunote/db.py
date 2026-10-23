@@ -261,7 +261,7 @@ def liste(niveau: str, matiere: str, type_: str):
         return c.execute(
             "SELECT id, titre, nom, chapitre, date_doc FROM documents "
             "WHERE statut = 'classe' AND niveau = %s AND matiere = %s AND type = %s "
-            "ORDER BY date_doc NULLS LAST, titre", (niveau, matiere, type_)).fetchall()
+            "ORDER BY date_doc DESC NULLS LAST, cree_le DESC", (niveau, matiere, type_)).fetchall()
 
 
 def recherche(q: str, limite: int = 30):

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_icones.html" import icone %}
 {% block titre %}{{ campagne.titre }}{% endblock %}
-{% block tete %}{% if en_attente %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
+{% block vivant %}{% if en_attente %}recharger{% endif %}{% endblock %}
 {% block contenu %}
 {% include "_reviser.html" %}
 {% set COURT = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."] %}
