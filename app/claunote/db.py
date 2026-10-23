@@ -71,6 +71,7 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS niveau TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS matiere TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS fait_le TIMESTAMPTZ;   -- « déjà fait » dans l'historique
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS score JSONB;           -- dernier quiz : {"bonnes": 7, "total": 10}
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS sources_web JSONB NOT NULL DEFAULT '[]';  -- [{"repere": "W1", "titre", "url"}]
 -- Révisions d'avant l'historique : matière du premier cours utilisé
 UPDATE revisions r SET niveau = d.niveau, matiere = d.matiere FROM documents d
  WHERE r.matiere IS NULL AND d.id = r.doc_ids[1] AND d.matiere IS NOT NULL;
@@ -481,10 +482,11 @@ def revisions_en_attente():
         return c.execute("SELECT * FROM revisions WHERE statut = 'en_attente' ORDER BY cree_le, id").fetchall()
 
 
-def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=None, kdrive_id=None):
+def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=None, kdrive_id=None, web=None):
     with connect() as c:
-        c.execute("UPDATE revisions SET statut = %s, contenu = %s, reperes = %s, erreur = %s, kdrive_id = %s "
-                  "WHERE id = %s", (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, rev_id))
+        c.execute("UPDATE revisions SET statut = %s, contenu = %s, reperes = %s, erreur = %s, kdrive_id = %s, "
+                  "sources_web = %s WHERE id = %s",
+                  (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, Jsonb(web or []), rev_id))
 
 
 def relancer_revision(rev_id: int):

@@ -28,7 +28,8 @@ def section(rev: dict, sources: dict[int, str], cartes: list[dict] | None = None
     """Ce qu'il faut pour afficher une révision dans le PDF (sujet, corrigé à part)."""
     s = {"rev": rev, "titre": rev["sujet"], "genre": revision.GENRES.get(rev["genre"], rev["genre"]),
          "corps": Markup(""), "corrige": Markup(""), "questions": [], "cartes": [],
-         "sources": [(r, sources[i]) for r, i in (rev.get("reperes") or {}).items() if i in sources]}
+         "sources": [(r, sources[i]) for r, i in (rev.get("reperes") or {}).items() if i in sources],
+         "web": rev.get("sources_web") or []}
     if rev["statut"] != "pret":
         s["corps"] = Markup("<p><em>Pas encore prêt.</em></p>")
     elif rev["genre"] == "quiz":

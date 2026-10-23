@@ -720,6 +720,16 @@ def test_epreuve_blanche_et_pdf(client, monkeypatch):
     assert client.get("/revision/5/pdf").status_code == 404
 
 
+def test_sources_web_affichees(client, monkeypatch):
+    web = [{"repere": "W1", "titre": "Légifrance", "url": "https://www.legifrance.gouv.fr/a?b=1&c=2"}]
+    monkeypatch.setattr(db, "revision", lambda i: {**REV, "genre": "fiche", "contenu": "Le contrat [D1] [W1] [W9]",
+                                                   "sources_web": web})
+    r = client.get("/revision/5")
+    assert 'href="https://www.legifrance.gouv.fr/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer">[W1]' in r.text
+    assert "[W9]" in r.text and "Complété avec le web · 1" in r.text and "www.legifrance.gouv.fr · web" in r.text
+    assert client.get("/revision/5/pdf").content.startswith(b"%PDF-")
+
+
 def test_quiz_pdf_et_score(client, monkeypatch):
     quiz = {**REV, "genre": "quiz", "contenu": '[{"question": "Q?", "choix": ["a", "b"], "reponse": 1, '
                                                 '"explication": "car", "source": "D1"}]'}

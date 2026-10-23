@@ -80,12 +80,18 @@ def rendu_markdown(texte: str | None) -> str:
     return markdown.markdown(texte, extensions=["tables", "fenced_code"])
 
 
-def avec_sources(rendu: str, reperes: dict) -> Markup:
-    """Transforme les repères [D1] du texte en liens vers le cours d'origine."""
+def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Markup:
+    """Transforme les repères [D1] du texte en liens vers le cours d'origine, et [W1] vers la page web."""
+    pages = {w["repere"]: w["url"] for w in web or []}
+
     def lien(m):
+        if m.group(1).startswith("W"):
+            url = pages.get(m.group(1))
+            return (f'<a class="web" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
+                    f'[{m.group(1)}]</a>') if url else m.group(0)
         doc_id = reperes.get(m.group(1))
         return f'<a href="/doc/{doc_id}">[{m.group(1)}]</a>' if doc_id else m.group(0)
-    return Markup(re.sub(r"\[(D\d+)\]", lien, rendu))
+    return Markup(re.sub(r"\[([DW]\d+)\]", lien, rendu))
 
 
 # --- Connexion --------------------------------------------------------------
@@ -557,6 +563,7 @@ def voir_revision(request: Request, rev_id: int):
     if rev is None:
         raise HTTPException(404)
     reperes = rev["reperes"] or {}
+    web = rev.get("sources_web") or []
     contenu, corrige, questions, cartes = None, None, [], []
     if rev["statut"] == "pret":
         if rev["genre"] == "quiz":
@@ -565,13 +572,14 @@ def voir_revision(request: Request, rev_id: int):
             cartes = db.cartes(rev_id)
         elif rev["genre"] == "examen":
             sujet, corr = revision.separer_corrige(rev["contenu"])
-            contenu = avec_sources(rendu_markdown(sujet), reperes)
-            corrige = avec_sources(rendu_markdown(corr), reperes) if corr else None
+            contenu = avec_sources(rendu_markdown(sujet), reperes, web)
+            corrige = avec_sources(rendu_markdown(corr), reperes, web) if corr else None
         else:
-            contenu = avec_sources(rendu_markdown(rev["contenu"]), reperes)
+            contenu = avec_sources(rendu_markdown(rev["contenu"]), reperes, web)
     return templates.TemplateResponse(request, "revision.html", {
         "rev": rev, "genres": revision.GENRES, "contenu": contenu, "corrige": corrige, "questions": questions,
-        "cartes": cartes, "reperes": reperes, "sources": db.documents(list(reperes.values()))})
+        "cartes": cartes, "reperes": reperes, "sources": db.documents(list(reperes.values())),
+        "web": {w["repere"]: w for w in web}})
 
 
 def _pdf(contenu: bytes, nom: str, telecharger: bool) -> Response:
