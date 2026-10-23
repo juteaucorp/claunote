@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS documents (
     id            SERIAL PRIMARY KEY,
     kdrive_id     BIGINT UNIQUE NOT NULL,
     nom           TEXT NOT NULL,
-    statut        TEXT NOT NULL DEFAULT 'nouveau',  -- nouveau, classe, a_verifier, erreur
+    statut        TEXT NOT NULL DEFAULT 'nouveau',  -- nouveau, classe, a_verifier, erreur, hors_cours, reclasser
     titre         TEXT,
     niveau        TEXT,
     matiere       TEXT,
@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS origine TEXT;  -- dossier de l'inbox d'où vient le scan
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS note TEXT;     -- pourquoi l'agent hésite
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS a_ranger BOOLEAN NOT NULL DEFAULT false;  -- à déplacer dans kDrive
+CREATE INDEX IF NOT EXISTS documents_cree_le ON documents (cree_le);
 CREATE INDEX IF NOT EXISTS documents_recherche ON documents USING GIN (recherche);
 CREATE TABLE IF NOT EXISTS etat (cle TEXT PRIMARY KEY, valeur TEXT);
 CREATE TABLE IF NOT EXISTS revisions (
@@ -177,6 +179,92 @@ def a_verifier():
 def nb_a_verifier() -> int:
     with connect() as c:
         return c.execute("SELECT count(*) AS n FROM documents WHERE statut IN ('a_verifier', 'erreur')").fetchone()["n"]
+
+
+# --- Organiser (actions de masse) ---------------------------------------------
+
+STATUTS = {"classe": "Classé", "a_verifier": "À vérifier", "hors_cours": "Hors cours", "reclasser": "Reclassement IA",
+           "erreur": "Erreur", "nouveau": "En analyse"}
+CHAMPS_MASSE = {"statut", "niveau", "matiere", "type"}
+SANS_ANNEE = "-"
+
+
+def organiser(du=None, au=None, niveau: str = "", matiere: str = "", type_: str = "", statut: str = "",
+              texte: str = "", limite: int = 500):
+    """Documents filtrés pour la page Organiser ; `du`/`au` portent sur la date d'ajout."""
+    conditions, params = [], []
+    for sql, valeur in (("cree_le >= %s", du), ("cree_le <= %s", au), ("matiere = %s", matiere or None),
+                        ("type = %s", type_ or None), ("statut = %s", statut or None)):
+        if valeur is not None:
+            conditions.append(sql)
+            params.append(valeur)
+    if niveau == SANS_ANNEE:
+        conditions.append("niveau IS NULL")
+    elif niveau:
+        conditions.append("niveau = %s")
+        params.append(niveau)
+    if texte.strip():
+        conditions.append("(nom ILIKE %s OR titre ILIKE %s OR origine ILIKE %s)")
+        params += [f"%{texte.strip()}%"] * 3
+    where = " AND ".join(conditions) or "true"
+    with connect() as c:
+        return c.execute(
+            f"""SELECT id, nom, titre, statut, niveau, matiere, type, origine, cree_le, a_ranger
+                FROM documents WHERE {where} ORDER BY cree_le DESC, id DESC LIMIT %s""",
+            (*params, limite)).fetchall()
+
+
+def maj_masse(ids: list[int], **champs) -> int:
+    """Change plusieurs documents d'un coup ; le worker les déplace ensuite dans kDrive."""
+    inconnus = set(champs) - CHAMPS_MASSE
+    if inconnus:
+        raise ValueError(f"champs inconnus : {inconnus}")
+    if not ids or not champs:
+        return 0
+    cols = ", ".join(f"{k} = %s" for k in champs)
+    with connect() as c:
+        # Un classement choisi à la main est sûr ; un document en erreur (sans analyse) n'est pas touché
+        return c.execute(
+            f"""UPDATE documents SET {cols}, a_ranger = true, maj_le = now(),
+                  confiance = CASE WHEN %s THEN 1.0 ELSE confiance END, note = NULL
+                WHERE id = ANY(%s) AND statut NOT IN ('erreur', 'nouveau')""",
+            (*champs.values(), champs.get("statut") != "reclasser", ids)).rowcount
+
+
+def completer_classement(ids: list[int]) -> int:
+    """Après un changement de masse : un document complet devient classé, sinon à vérifier."""
+    with connect() as c:
+        return c.execute(
+            """UPDATE documents SET statut = CASE WHEN niveau IS NOT NULL AND matiere IS NOT NULL
+                                                   AND type IS NOT NULL THEN 'classe' ELSE 'a_verifier' END
+               WHERE id = ANY(%s) AND statut IN ('classe', 'a_verifier')""", (ids,)).rowcount
+
+
+def a_reclasser(limite: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM documents WHERE statut = 'reclasser' ORDER BY maj_le LIMIT %s",
+                         (limite,)).fetchall()
+
+
+def a_ranger():
+    with connect() as c:
+        return c.execute("SELECT * FROM documents WHERE a_ranger AND statut <> 'reclasser' ORDER BY id").fetchall()
+
+
+def marquer_a_ranger(ids: list[int], valeur: bool = True):
+    with connect() as c:
+        c.execute("UPDATE documents SET a_ranger = %s WHERE id = ANY(%s)", (valeur, ids))
+
+
+def hors_cours():
+    with connect() as c:
+        return c.execute("SELECT id, nom, titre, resume, date_doc, cree_le, origine FROM documents "
+                         "WHERE statut = 'hors_cours' ORDER BY date_doc DESC NULLS LAST, cree_le DESC").fetchall()
+
+
+def nb_hors_cours() -> int:
+    with connect() as c:
+        return c.execute("SELECT count(*) AS n FROM documents WHERE statut = 'hors_cours'").fetchone()["n"]
 
 
 def matieres() -> list[str]:

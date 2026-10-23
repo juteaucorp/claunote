@@ -31,10 +31,10 @@ ETUDES_ID = int(os.environ.get("KDRIVE_ETUDES_ID", "0"))
 async def lifespan(app):
     db.init()
     secret = os.environ.get("CLAUNOTE_SECRET") or db.secret_session()
-    app.state.compte = auth.Compte.from_env(secret.encode())
+    app.state.compte = auth.Compte.from_env(secret.encode(), db.etat_valeur("mot_de_passe"))
     if app.state.compte.par_defaut:
         print("ATTENTION : mot de passe par défaut (admin / claunote), "
-              "change CLAUNOTE_MOT_DE_PASSE dans le .env", flush=True)
+              "change-le sur la page Compte du site", flush=True)
     yield
 
 
@@ -59,6 +59,7 @@ templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proc
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
 templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
 templates.env.filters["note"] = pronote.libelle_note
+templates.env.filters["paris"] = lambda d: d.astimezone(pronote.PARIS).strftime("%d/%m/%Y %H:%M") if d else ""
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".webp"}
 
@@ -111,9 +112,46 @@ def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str 
                                                                        "sans_nav": True},
                                           status_code=401)
     r = RedirectResponse(_suite_sure(suite), status_code=303)
+    _cookie_session(request, r, compte)
+    return r
+
+
+def _cookie_session(request: Request, reponse: Response, compte: auth.Compte):
     https = request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
-    r.set_cookie(auth.COOKIE, compte.creer_session(), max_age=auth.DUREE, httponly=True, samesite="lax",
-                 secure=https)
+    reponse.set_cookie(auth.COOKIE, compte.creer_session(), max_age=auth.DUREE, httponly=True, samesite="lax",
+                       secure=https)
+
+
+@app.get("/compte", response_class=HTMLResponse)
+def page_compte(request: Request):
+    return templates.TemplateResponse(request, "compte.html", {"utilisateur": request.app.state.compte.utilisateur})
+
+
+@app.post("/compte", response_class=HTMLResponse)
+def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str = Form(...),
+                         confirmation: str = Form(...)):
+    compte = request.app.state.compte
+    ip = request.client.host if request.client else "?"
+    erreur = None
+    if compte.bloque(ip) or not compte.verifier(ip, compte.utilisateur, actuel):
+        erreur = "Mot de passe actuel incorrect."
+    elif len(nouveau) < 8:
+        erreur = "Le nouveau mot de passe doit faire au moins 8 caractères."
+    elif nouveau != confirmation:
+        erreur = "Les deux nouveaux mots de passe sont différents."
+    elif nouveau == auth.DEFAUT_MOT_DE_PASSE:
+        erreur = "Choisis un autre mot de passe que celui par défaut."
+    if erreur:
+        return templates.TemplateResponse(request, "compte.html", {"utilisateur": compte.utilisateur, "erreur": erreur},
+                                          status_code=400)
+    hache = auth.hacher(nouveau)
+    db.etat_ecrire("mot_de_passe", hache)
+    # Nouveau compte = nouvelles signatures : les autres appareils sont déconnectés, pas celui-ci
+    request.app.state.compte = auth.Compte(compte.utilisateur, hache, compte.secret)
+    r = templates.TemplateResponse(request, "compte.html", {
+        "utilisateur": compte.utilisateur,
+        "message": "Mot de passe changé. Les autres appareils devront se reconnecter."})
+    _cookie_session(request, r, request.app.state.compte)
     return r
 
 
@@ -133,7 +171,7 @@ def bibliotheque(request: Request):
         arbre[r["niveau"]][r["matiere"]].append(r)
     niveaux = [n for n in NIVEAUX if n in arbre]
     return templates.TemplateResponse(request, "bibliotheque.html", {
-        "arbre": arbre, "niveaux": niveaux})
+        "arbre": arbre, "niveaux": niveaux, "nb_hors_cours": db.nb_hors_cours()})
 
 
 @app.get("/liste", response_class=HTMLResponse)
@@ -148,7 +186,8 @@ def document(request: Request, doc_id: int):
     if doc is None:
         raise HTTPException(404)
     return templates.TemplateResponse(request, "document.html", {
-        "doc": doc, "transcription": rendu_markdown(doc["transcription"])})
+        "doc": doc, "transcription": rendu_markdown(doc["transcription"]),
+        "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
 
 
 @app.get("/doc/{doc_id}/fichier")
@@ -217,20 +256,95 @@ def a_verifier(request: Request):
         "docs": db.a_verifier(), "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
 
 
+def _deplacer(doc, parts: list[str]):
+    kd = KDrive.from_env()
+    dest_id = kd.ensure_path(ETUDES_ID, parts)
+    kd.move(doc["kdrive_id"], dest_id)
+    if doc["kdrive_md_id"]:
+        kd.move(doc["kdrive_md_id"], dest_id)
+
+
 @app.post("/doc/{doc_id}/classer")
-def classer(doc_id: int, niveau: str = Form(...), matiere: str = Form(...), type: str = Form(...)):
+def classer(doc_id: int, niveau: str = Form(...), matiere: str = Form(...), type: str = Form(...),
+            retour: str = Form("/a-verifier")):
     """Classement manuel : déplace le scan et sa transcription dans le bon dossier."""
     doc = db.document(doc_id)
     if doc is None or niveau not in NIVEAUX or type not in TYPES or not matiere.strip():
         raise HTTPException(400, "classement invalide")
     matiere = matiere.strip()
-    kd = KDrive.from_env()
-    dest_id = kd.ensure_path(ETUDES_ID, rangement.dossier(niveau, matiere, type))
-    kd.move(doc["kdrive_id"], dest_id)
-    if doc["kdrive_md_id"]:
-        kd.move(doc["kdrive_md_id"], dest_id)
+    _deplacer(doc, rangement.dossier(niveau, matiere, type))
     db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere, type=type, confiance=1.0, note=None)
-    return RedirectResponse("/a-verifier", status_code=303)
+    return RedirectResponse(_suite_sure(retour), status_code=303)
+
+
+@app.post("/doc/{doc_id}/hors-cours")
+def mettre_hors_cours(doc_id: int, retour: str = Form("/hors-cours")):
+    """Document administratif ou sans intérêt pour réviser : rangé à part, hors de la bibliothèque."""
+    doc = db.document(doc_id)
+    if doc is None or doc["statut"] in ("erreur", "nouveau"):
+        raise HTTPException(400, "document pas encore analysé")
+    _deplacer(doc, rangement.HORS_COURS)
+    db.maj(doc_id, statut="hors_cours", note=None)
+    return RedirectResponse(_suite_sure(retour), status_code=303)
+
+
+@app.get("/hors-cours", response_class=HTMLResponse)
+def page_hors_cours(request: Request):
+    return templates.TemplateResponse(request, "hors_cours.html", {
+        "docs": db.hors_cours(), "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
+
+
+# --- Organiser : actions de masse -------------------------------------------
+
+def _date_heure(valeur: str):
+    """« 2026-10-23T14:00 » saisi sur le site, heure de Paris."""
+    try:
+        return dt.datetime.fromisoformat(valeur).replace(tzinfo=pronote.PARIS) if valeur else None
+    except ValueError:
+        raise HTTPException(400, f"date invalide : {valeur}")
+
+
+ACTIONS = {"niveau": "Changer l'année", "matiere": "Changer la matière", "type": "Changer le type",
+           "ia": "Ranger par l'IA (matière et type, garde l'année)", "hors_cours": "Mettre hors cours",
+           "cours": "Remettre dans les cours"}
+
+
+@app.get("/organiser", response_class=HTMLResponse)
+def organiser(request: Request, du: str = "", au: str = "", niveau: str = "", matiere: str = "", type: str = "",
+              statut: str = "", texte: str = "", message: str = ""):
+    filtres = {"du": du, "au": au, "niveau": niveau, "matiere": matiere, "type": type, "statut": statut, "texte": texte}
+    docs = db.organiser(_date_heure(du), _date_heure(au), niveau, matiere, type, statut, texte)
+    return templates.TemplateResponse(request, "organiser.html", {
+        "docs": docs, "f": filtres, "requete": urlencode(filtres), "message": message, "niveaux": NIVEAUX,
+        "types": TYPES, "matieres": db.matieres(), "statuts": db.STATUTS, "actions": ACTIONS,
+        "sans_annee": db.SANS_ANNEE})
+
+
+@app.post("/organiser")
+def action_de_masse(ids: list[int] = Form([]), action: str = Form(...), nouveau_niveau: str = Form(""),
+                    nouvelle_matiere: str = Form(""), nouveau_type: str = Form(""), requete: str = Form("")):
+    valeur = {"niveau": nouveau_niveau, "matiere": nouvelle_matiere, "type": nouveau_type}.get(action, "").strip()
+    if action not in ACTIONS:
+        raise HTTPException(400, "action inconnue")
+    if (action == "niveau" and valeur not in NIVEAUX) or (action == "type" and valeur not in TYPES) \
+            or (action == "matiere" and not valeur):
+        raise HTTPException(400, "choisis la nouvelle valeur")
+    if action in ("niveau", "matiere", "type"):
+        n = db.maj_masse(ids, **{action: valeur})
+        db.completer_classement(ids)
+    elif action == "ia":
+        n = db.maj_masse(ids, statut="reclasser")
+    else:
+        n = db.maj_masse(ids, statut="hors_cours" if action == "hors_cours" else "a_verifier")
+        db.completer_classement(ids)
+    if n:
+        db.demander_scan()  # réveille le worker : il déplace les fichiers dans kDrive
+    message = f"{n} document{'s' if n > 1 else ''} modifié{'s' if n > 1 else ''}."
+    if action == "ia" and n:
+        message += " L'IA les range dans les minutes qui viennent (recharge la page)."
+    elif n:
+        message += " Les fichiers sont déplacés dans kDrive en arrière-plan."
+    return RedirectResponse(f"/organiser?{requete}&{urlencode({'message': message})}", status_code=303)
 
 
 @app.post("/doc/{doc_id}/reessayer")

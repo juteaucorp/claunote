@@ -7,6 +7,7 @@ from claunote.agent import Analyse
 
 SEUIL_CONFIANCE = 0.7
 A_VERIFIER = ["a-verifier"]
+HORS_COURS = ["hors-cours"]
 
 
 def est_classe(a: Analyse) -> bool:
@@ -16,6 +17,15 @@ def est_classe(a: Analyse) -> bool:
 def dossier(niveau: str, matiere: str, type_: str) -> list[str]:
     """Chemin sous Etudes/ : archives/<niveau>/<matière>/<type>."""
     return ["archives", niveau, matiere, type_]
+
+
+def dossier_doc(doc: dict) -> list[str]:
+    """Dossier kDrive d'un document d'après son statut et son classement."""
+    if doc["statut"] == "hors_cours":
+        return HORS_COURS
+    if doc["statut"] == "classe" and doc["niveau"] and doc["matiere"] and doc["type"]:
+        return dossier(doc["niveau"], doc["matiere"], doc["type"])
+    return A_VERIFIER
 
 
 def slug(texte: str) -> str:

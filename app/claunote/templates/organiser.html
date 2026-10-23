@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block titre %}Organiser{% endblock %}
+{% block contenu %}
+<h1>Organiser</h1>
+<p class="doux">Retrouve des documents (par exemple ceux ajoutés entre 14 h et 16 h), coche-les et change leur
+  année, leur matière ou leur type d'un coup, ou laisse l'IA les ranger. Les fichiers suivent dans kDrive.</p>
+{% if message %}<p class="carte accent">{{ message }}</p>{% endif %}
+
+<form method="get" action="/organiser" class="carte filtres">
+  <label>Ajouté du<br><input type="datetime-local" name="du" value="{{ f.du }}"></label>
+  <label>au<br><input type="datetime-local" name="au" value="{{ f.au }}"></label>
+  <label>Année<br><select name="niveau">
+    <option value="">Toutes</option>
+    <option value="{{ sans_annee }}" {{ 'selected' if f.niveau == sans_annee }}>Sans année</option>
+    {% for n in niveaux %}<option {{ 'selected' if n == f.niveau }}>{{ n }}</option>{% endfor %}</select></label>
+  <label>Matière<br><select name="matiere"><option value="">Toutes</option>
+    {% for m in matieres %}<option {{ 'selected' if m == f.matiere }}>{{ m }}</option>{% endfor %}</select></label>
+  <label>Type<br><select name="type"><option value="">Tous</option>
+    {% for t in types %}<option {{ 'selected' if t == f.type }}>{{ t }}</option>{% endfor %}</select></label>
+  <label>État<br><select name="statut"><option value="">Tous</option>
+    {% for k, v in statuts.items() %}<option value="{{ k }}" {{ 'selected' if k == f.statut }}>{{ v }}</option>{% endfor %}</select></label>
+  <label>Nom ou dossier<br><input name="texte" value="{{ f.texte }}" placeholder="ex. BTS2, maths…"></label>
+  <div class="actions"><button class="principal">Filtrer</button> <a href="/organiser">Effacer</a></div>
+</form>
+
+<form method="post" action="/organiser" id="masse">
+  <input type="hidden" name="requete" value="{{ requete }}">
+  <div class="carte accent actions barre-masse">
+    <label><input type="checkbox" id="tout"> <strong><span id="nb">0</span> / {{ docs|length }}</strong> sélectionné(s)</label>
+    <select name="action" id="action" aria-label="Action">
+      {% for k, v in actions.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+    <select name="nouveau_niveau" data-pour="niveau" aria-label="Nouvelle année">{% for n in niveaux %}<option>{{ n }}</option>{% endfor %}</select>
+    <input name="nouvelle_matiere" data-pour="matiere" list="liste-matieres" placeholder="Matière" aria-label="Nouvelle matière">
+    <select name="nouveau_type" data-pour="type" aria-label="Nouveau type">{% for t in types %}<option>{{ t }}</option>{% endfor %}</select>
+    <button class="principal" id="appliquer" disabled>Appliquer</button>
+  </div>
+  <datalist id="liste-matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>
+  {% if docs|length >= 500 %}<p class="alerte">Seuls les 500 plus récents sont affichés : affine les filtres.</p>{% endif %}
+  <div class="tableau">
+  <table class="notes">
+    <thead><tr><th></th><th>Document</th><th>Année</th><th>Matière</th><th class="large">Type</th><th class="large">Ajouté le</th></tr></thead>
+    <tbody>
+    {% for d in docs %}
+    <tr>
+      <td><input type="checkbox" name="ids" value="{{ d.id }}" aria-label="Sélectionner"></td>
+      <td><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a>
+        {% if d.statut != 'classe' %}<span class="pastille-etat">{{ statuts.get(d.statut, d.statut) }}</span>{% endif %}
+        {% if d.a_ranger %}<span class="doux">· déplacement…</span>{% endif %}
+        {% if d.origine %}<div class="doux">{{ d.origine }}</div>{% endif %}</td>
+      <td>{{ d.niveau or '–' }}</td>
+      <td>{{ d.matiere or '–' }}</td>
+      <td class="large">{{ d.type or '–' }}</td>
+      <td class="large doux">{{ d.cree_le|paris }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">Aucun document pour ces filtres.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</form>
+<script>
+  const cases = [...document.querySelectorAll('input[name="ids"]')];
+  const action = document.getElementById("action");
+  function maj() {
+    const n = cases.filter((c) => c.checked).length;
+    document.getElementById("nb").textContent = n;
+    document.getElementById("appliquer").disabled = n === 0;
+    document.querySelectorAll("[data-pour]").forEach((el) => {
+      const actif = el.dataset.pour === action.value;
+      el.hidden = !actif; el.disabled = !actif; el.required = actif;
+    });
+  }
+  document.getElementById("tout").addEventListener("change", (e) => { cases.forEach((c) => c.checked = e.target.checked); maj(); });
+  cases.forEach((c) => c.addEventListener("change", maj));
+  action.addEventListener("change", maj);
+  maj();
+</script>
+{% endblock %}

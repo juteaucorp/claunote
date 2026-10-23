@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import zipfile
 from dataclasses import dataclass, field
 import datetime as dt
@@ -22,7 +23,8 @@ Lis-le en entier avec l'outil Read (s'il a plus de 10 pages, lis-le par tranches
 
 Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte autour :
 {{"transcription": "...", "titre": "...", "niveau": "...", "matiere": "...", "type": "...",
-  "chapitre": "...", "date": "AAAA-MM-JJ ou null", "mots_cles": ["..."], "resume": "...", "confiance": 0.0}}
+  "chapitre": "...", "date": "AAAA-MM-JJ ou null", "mots_cles": ["..."], "resume": "...",
+  "hors_cours": false, "confiance": 0.0}}
 
 Règles :
 - transcription : tout le texte, fidèlement, en Markdown. Formules en LaTeX ($...$), schémas
@@ -34,7 +36,11 @@ Règles :
 - type : exactement un parmi {types}.
 - date : la date écrite sur le document, sinon null.
 - resume : 2 ou 3 phrases sur ce que le document enseigne.
-- confiance : de 0 à 1, ta certitude sur niveau + matière + type. Mets moins de 0.7 si tu hésites.
+- hors_cours : true si le document ne sert pas à réviser : administratif (bulletin, relevé de notes,
+  convocation, certificat, inscription, autorisation, emploi du temps, circulaire, règlement,
+  attestation de stage…) ou sans contenu de cours (page blanche, brouillon vide, publicité…).
+- confiance : de 0 à 1, ta certitude sur niveau + matière + type (ou sur hors_cours).
+  Mets moins de 0.7 si tu hésites.
 """
 
 LIMITE = re.compile(r"usage limit|rate limit|limit reached|too many requests|\b429\b", re.I)
@@ -60,6 +66,7 @@ class Analyse:
     mots_cles: list[str] = field(default_factory=list)
     resume: str | None = None
     confiance: float = 0.0
+    hors_cours: bool = False
 
 
 def _choix(valeur, options):
@@ -92,7 +99,8 @@ def parse_reponse(texte: str) -> Analyse:
         confiance = min(max(float(d.get("confiance") or 0), 0.0), 1.0)
     except (TypeError, ValueError):
         confiance = 0.0
-    if niveau is None or type_ is None or not d.get("matiere"):
+    hors_cours = d.get("hors_cours") is True
+    if not hors_cours and (niveau is None or type_ is None or not d.get("matiere")):
         confiance = min(confiance, 0.5)  # classement incomplet : à vérifier
     return Analyse(
         transcription=str(d.get("transcription") or ""),
@@ -105,6 +113,7 @@ def parse_reponse(texte: str) -> Analyse:
         mots_cles=[str(m) for m in d.get("mots_cles") or []],
         resume=d.get("resume") or None,
         confiance=confiance,
+        hors_cours=hors_cours,
     )
 
 
@@ -193,3 +202,37 @@ def analyser(chemin: Path, dossiers: list[str] | None = None) -> Analyse:
         prompt += (f"\nIndice : l'élève a rangé ce fichier dans le dossier « {'/'.join(dossiers)} ». "
                    "Le nom du dossier indique souvent l'année d'étude, parfois la matière.\n")
     return parse_reponse(appeler_claude(prompt, chemin.parent, outils=["Read"]))
+
+
+PROMPT_RECLASSER = """Voici la transcription d'un document d'un élève (du collège au BTS SIO), sur l'entrée.
+Titre actuel : « {titre} ». {annee}
+Classe-le. Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte autour :
+{{"niveau": "...", "matiere": "...", "type": "...", "chapitre": "...", "titre": "...",
+  "hors_cours": false, "confiance": 0.0}}
+
+Règles :
+- niveau : exactement un parmi {niveaux}.
+- matiere : nom court en français. Reprends de préférence une matière déjà utilisée : {matieres}.
+- type : exactement un parmi {types}.
+- hors_cours : true si le document ne sert pas à réviser (administratif : bulletin, convocation,
+  certificat, inscription, emploi du temps, circulaire, attestation… ; ou sans contenu de cours).
+- confiance : de 0 à 1. Mets moins de 0.7 si tu hésites.
+"""
+
+
+def reclasser(doc: dict, matieres: list[str]) -> Analyse:
+    """Nouveau classement d'un document déjà transcrit (pas de relecture du scan).
+
+    Si le document a déjà une année d'étude, elle est imposée (choisie par l'élève).
+    """
+    if not (doc.get("transcription") or "").strip():
+        raise ErreurAgent("pas de transcription : réessaie d'abord l'analyse du scan")
+    annee = (f"L'élève a indiqué l'année d'étude : {doc['niveau']}. Garde-la." if doc.get("niveau") else "")
+    prompt = PROMPT_RECLASSER.format(titre=doc.get("titre") or doc["nom"], annee=annee, niveaux=", ".join(NIVEAUX),
+                                     types=", ".join(TYPES), matieres=", ".join(matieres) or "aucune")
+    with tempfile.TemporaryDirectory() as vide:
+        texte = appeler_claude(prompt, Path(vide), entree=doc["transcription"][:30_000], timeout=600)
+    a = parse_reponse(texte)  # sans transcription : celle du document ne change pas
+    if doc.get("niveau"):
+        a.niveau = doc["niveau"]
+    return a

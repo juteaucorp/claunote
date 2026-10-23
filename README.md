@@ -31,7 +31,8 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Phase 4 : Pronote (agenda des évaluations, devoirs, notes, préparation en 1 clic)
 - [x] Documents des profs Pronote (Contenu et ressources, pièces jointes du Travail à faire) → bibliothèque
 - [x] Phase 5 : flashcards (révision espacée), export Anki, appli installable (PWA)
-- [x] Connexion au site (identifiant + mot de passe)
+- [x] Connexion au site (identifiant + mot de passe, changeable sur le site)
+- [x] Organiser : reclassement, actions de masse par date d'ajout, rangement IA, espace « Hors cours »
 
 ## Installation et utilisation
 
