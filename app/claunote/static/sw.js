@@ -1,5 +1,5 @@
 // Claunote hors ligne : les pages déjà ouvertes (fiches, cours, quiz) restent lisibles sans réseau.
-const VERSION = "claunote-v1";
+const VERSION = "claunote-v2";
 const PAGES = "claunote-pages";
 const BASE = ["/hors-ligne", "/static/logo.svg", "/static/icone-192.png", "https://unpkg.com/htmx.org@2.0.4"];
 

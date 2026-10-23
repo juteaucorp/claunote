@@ -282,3 +282,24 @@ Organiser ─► filtres (ajouté du … au …, année, matière, type, état, 
   **Hors cours** (lien depuis la Bibliothèque) et ne servent jamais aux fiches, quiz ni flashcards.
   Bouton **Remettre dans les cours** si l'IA s'est trompée.
 - Les documents en erreur ou encore en analyse ne sont pas modifiés par les actions de masse.
+
+## 12. Sur le téléphone
+
+```
+┌───────────────────────────┐
+│ Claunote          🔍  📷  │  recherche · photo d'un cours
+│                           │
+│  Aujourd'hui              │  évals (J-2…), devoirs, flashcards du jour,
+│  …                        │  nouveaux documents des profs
+├───────────────────────────┤
+│ Aujourd'hui Cours Réviser Agenda Plus │  onglets en bas
+└───────────────────────────┘
+```
+
+- La page d'accueil **Aujourd'hui** rassemble tout ce qui compte pour la journée ; la Bibliothèque
+  est dans l'onglet **Cours**.
+- **Déposer** → **Prendre en photo** : chaque photo devient un document (une page = une photo, ou
+  un PDF pour un cours de plusieurs pages).
+- Flashcards : toucher la carte pour la retourner, les boutons de note restent sous le pouce.
+- Le mode sombre suit celui du téléphone. Installation en appli : voir la section 10 (HTTPS requis).
+- Les notifications push viendront plus tard.

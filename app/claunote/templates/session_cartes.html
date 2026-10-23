@@ -10,7 +10,7 @@
 <div class="carte flashcard">
   <div class="recto"><strong>{{ carte.recto }}</strong></div>
   <details id="reponse">
-    <summary>Voir la réponse <span class="doux">(espace)</span></summary>
+    <summary>Voir la réponse <span class="doux clavier">(espace)</span></summary>
     <div class="verso">{{ carte.verso|e|replace('\n', '<br>'|safe) }}
       {% if carte.source in reperes %}<p class="doux"><a href="/doc/{{ reperes[carte.source] }}">[{{ carte.source }}] voir le cours</a></p>{% endif %}
     </div>
@@ -26,8 +26,22 @@
   </form>
   {% endfor %}
 </div>
-<p class="doux">Raccourcis : espace pour retourner, 1 à 4 pour noter.</p>
+<p class="doux clavier">Raccourcis : espace pour retourner, 1 à 4 pour noter.</p>
+<style>
+  @media (pointer: coarse) {
+    .clavier { display: none; }
+    .flashcard { min-height: 46vh; cursor: pointer; }
+    .notes-carte { position: sticky; bottom: calc(76px + env(safe-area-inset-bottom)); }
+    .notes-carte button { padding: 14px 4px; font-size: .95rem; }
+  }
+</style>
 <script>
+  // Sur téléphone : toucher la carte la retourne
+  document.querySelector(".flashcard").addEventListener("click", (e) => {
+    if (e.target.closest("a, summary")) return;
+    const reponse = document.getElementById("reponse");
+    reponse.open = !reponse.open;
+  });
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea, select")) return;
     const reponse = document.getElementById("reponse");

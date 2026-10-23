@@ -1,5 +1,9 @@
 {% extends "base.html" %}
-{% block titre %}À vérifier{% endblock %}
+{% block titre %}À vérifier<style>
+  .classer { display: flex; flex-wrap: wrap; gap: 8px; }
+  @media (max-width: 760px) { .classer { display: grid; grid-template-columns: 1fr 1fr; } .classer input { grid-column: 1 / -1; } }
+</style>
+{% endblock %}
 {% block contenu %}
 <h1>À vérifier</h1>
 <p class="doux">L'agent te demande de confirmer ces documents : il n'était pas sûr de leur classement,
@@ -15,15 +19,23 @@ ou l'analyse a échoué. Ton choix range le fichier dans kDrive.</p>
     {% if d.note %}<p class="alerte">{{ d.note }}</p>{% endif %}
     <p class="doux">Proposition : {{ d.niveau or '?' }} · {{ d.matiere or '?' }} · {{ d.type or '?' }}
       (confiance {{ '%.0f'|format((d.confiance or 0) * 100) }} %){% if d.origine %} · déposé dans « {{ d.origine }} »{% endif %}</p>
-    <form method="post" action="/doc/{{ d.id }}/classer">
+    <form method="post" action="/doc/{{ d.id }}/classer" class="classer">
       <select name="niveau" aria-label="Niveau">{% for n in niveaux %}<option {{ 'selected' if n == d.niveau }}>{{ n }}</option>{% endfor %}</select>
       <input name="matiere" list="matieres" value="{{ d.matiere or '' }}" placeholder="Matière" required aria-label="Matière">
       <select name="type" aria-label="Type">{% for t in types %}<option {{ 'selected' if t == d.type }}>{{ t }}</option>{% endfor %}</select>
       <button class="principal">Classer</button>
+    </form>
+    <form method="post" action="/doc/{{ d.id }}/hors-cours" style="margin-top: 8px">
+      <input type="hidden" name="retour" value="/a-verifier">
+      <button>Hors cours</button> <span class="doux">administratif, sans intérêt pour réviser</span>
     </form>
   {% endif %}
 </div>
 {% else %}
 <p>Rien à vérifier.</p>
 {% endfor %}
+<style>
+  .classer { display: flex; flex-wrap: wrap; gap: 8px; }
+  @media (max-width: 760px) { .classer { display: grid; grid-template-columns: 1fr 1fr; } .classer input { grid-column: 1 / -1; } }
+</style>
 {% endblock %}

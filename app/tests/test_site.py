@@ -25,6 +25,9 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "etat_valeur", lambda k: etat.get(k))
     monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
     monkeypatch.setattr(db, "nb_hors_cours", lambda: 2)
+    monkeypatch.setattr(db, "nb_documents", lambda: 8)
+    monkeypatch.setattr(db, "evenements_a_venir", lambda genre=None, jours=60: [])
+    monkeypatch.setattr(db, "documents_pronote", lambda limite=30: [])
     monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: 0)
     monkeypatch.setattr(db, "bibliotheque", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "type": "TP", "n": 3}])
     monkeypatch.setattr(db, "a_verifier", lambda: [{**DOC, "id": 2, "statut": "a_verifier", "confiance": 0.4,
@@ -38,7 +41,7 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "demander_scan", lambda: appels.append("scan"))
     monkeypatch.setattr(db, "maj", lambda i, **k: appels.append(("maj", i, k)))
     monkeypatch.setattr(db, "niveaux_matieres", lambda: [{"niveau": "BTS1", "matiere": "Réseaux"}])
-    monkeypatch.setattr(db, "revisions", lambda: [])
+    monkeypatch.setattr(db, "revisions", lambda limite=30: [])
     monkeypatch.setattr(db, "choisir_documents", lambda n, m, q="": [1] if q == "" or q == "vlan" else [])
     monkeypatch.setattr(db, "creer_revision", lambda *a: appels.append(("rev",) + a) or 5)
     monkeypatch.setattr(db, "documents", lambda ids: [DOC] if 1 in ids else [])
@@ -56,7 +59,7 @@ def client(anonyme):
 
 
 def test_bibliotheque(client):
-    r = client.get("/")
+    r = client.get("/bibliotheque")
     assert r.status_code == 200
     assert "BTS1" in r.text and "TP · 3" in r.text and "1 document à confirmer" in r.text and '<span class="badge">1</span>' in r.text
 
@@ -496,7 +499,7 @@ def test_page_hors_cours(client, monkeypatch):
                                                     "origine": None}])
     r = client.get("/hors-cours")
     assert "Bulletin T1" in r.text and "23/10/2026 14:00" in r.text and "Remettre dans les cours" in r.text
-    assert "2 documents" in client.get("/").text
+    assert "2 documents" in client.get("/bibliotheque").text
 
 
 @pytest.fixture
@@ -542,3 +545,26 @@ def test_actions_de_masse(organiser):
     assert organiser.post("/organiser", data={"ids": ["1"], "action": "niveau", "nouveau_niveau": "Master"}).status_code == 400
     assert organiser.post("/organiser", data={"ids": ["1"], "action": "matiere"}).status_code == 400
     assert organiser.post("/organiser", data={"ids": ["1"], "action": "supprimer"}).status_code == 400
+
+
+def test_accueil_aujourd_hui(client, monkeypatch):
+    import datetime as dt
+    maintenant = dt.datetime.now(dt.timezone.utc)
+    evs = {"evaluation": [{"id": "cours:1", "genre": "evaluation", "matiere": "SISR - RESEAUX", "titre": "DS VLAN",
+                           "description": "", "le": maintenant + dt.timedelta(days=2), "fait": False,
+                           "revision_id": None, "revision_statut": None}],
+           "devoir": [{"id": "devoir:1", "genre": "devoir", "matiere": "ANGLAIS", "titre": "", "description": "Oral",
+                       "le": maintenant + dt.timedelta(days=1), "fait": False},
+                      {"id": "devoir:2", "genre": "devoir", "matiere": "MATHS", "titre": "", "description": "Déjà fait",
+                       "le": maintenant + dt.timedelta(days=1), "fait": True}]}
+    monkeypatch.setattr(db, "evenements_a_venir", lambda genre=None, jours=60: evs[genre])
+    monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: 4)
+    r = client.get("/")
+    assert "Relie Pronote" in r.text and "4</strong> flashcards" in r.text and "/cartes/session" in r.text
+    client.etat["pronote_synchro"] = "2026-10-23T15:00"
+    r = client.get("/")
+    assert "DS VLAN" in r.text and "J-2" in r.text and "Réseaux" in r.text and 'value="cours:1"' in r.text
+    assert "Oral" in r.text and "Déjà fait" not in r.text and "8 documents" in r.text
+    assert "1 document à confirmer" in r.text
+    # Navigation mobile : onglets en bas et menu Plus
+    assert 'class="onglets"' in r.text and 'id="plus"' in r.text and "Scanner l'inbox" in r.text

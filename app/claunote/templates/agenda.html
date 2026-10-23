@@ -50,7 +50,7 @@
     {% if etat.etablissement %}<span class="doux"> · {{ etat.etablissement }}</span>{% endif %}
     <div class="doux">Dernière synchronisation : {{ synchro.replace('T', ' à ') if synchro else 'jamais' }}
       {% if erreurs_synchro %} · <span class="alerte">{{ erreurs_synchro }}</span>{% endif %}</div>
-    <div class="outils" style="margin-top:10px">
+    <div class="actions" style="margin-top:10px">
       <form method="post" action="/agenda/synchroniser"><button class="principal">Synchroniser</button></form>
       <form method="post" action="/agenda/deconnexion" onsubmit="return confirm('Déconnecter Pronote ?')"><button>Déconnecter</button></form>
     </div>
@@ -92,33 +92,37 @@
 
   <h2>Documents des profs</h2>
   {% if documents %}
-  <div class="carte" style="overflow-x:auto"><table class="notes">
-    <tr><th>Date</th><th>Matière</th><th>Document</th><th class="large">Statut</th></tr>
+  <ul class="carte lignes">
     {% for d in documents %}
-    <tr><td>{{ d.le.astimezone(paris).strftime('%d/%m') if d.le }}</td><td>{{ d.matiere }}</td>
-      <td>{% if d.doc_id %}<a href="/doc/{{ d.doc_id }}">{{ d.doc_titre or d.nom }}</a>
-          {% elif d.statut == 'lien' and (d.url or '').startswith(('https://', 'http://')) %}<a href="{{ d.url }}" rel="noopener noreferrer">{{ d.nom }} ↗</a>
-          {% else %}{{ d.nom }}{% endif %}
-        <div class="doux">{{ d.categorie }}{% if d.categorie and d.titre %} · {% endif %}{{ d.titre }}</div></td>
-      <td class="large doux">{% if d.statut == 'lien' %}lien{% elif d.statut == 'erreur' %}<span class="alerte" title="{{ d.erreur }}">échec</span>
-          {% elif d.doc_statut == 'classe' %}classé{% elif d.doc_statut == 'a_verifier' %}<a href="/a-verifier">à vérifier</a>
-          {% elif d.doc_statut == 'erreur' %}<span class="alerte">analyse en échec</span>{% else %}en analyse…{% endif %}</td></tr>
+    <li>
+      <div class="corps">
+        {% if d.doc_id %}<a href="/doc/{{ d.doc_id }}">{{ d.doc_titre or d.nom }}</a>
+        {% elif d.statut == 'lien' and (d.url or '').startswith(('https://', 'http://')) %}<a href="{{ d.url }}" rel="noopener noreferrer">{{ d.nom }} ↗</a>
+        {% else %}{{ d.nom }}{% endif %}
+        <div class="doux">{{ d.matiere }}{% if d.le %} · {{ d.le.astimezone(paris).strftime('%d/%m') }}{% endif %}{% if d.categorie %} · {{ d.categorie }}{% endif %}{% if d.titre %} · {{ d.titre }}{% endif %}</div>
+      </div>
+      <span class="fin doux">{% if d.statut == 'lien' %}lien{% elif d.statut == 'erreur' %}<span class="alerte" title="{{ d.erreur }}">échec</span>
+          {% elif d.doc_statut == 'classe' %}classé{% elif d.doc_statut == 'hors_cours' %}hors cours{% elif d.doc_statut == 'a_verifier' %}<a href="/a-verifier">à vérifier</a>
+          {% elif d.doc_statut == 'erreur' %}<span class="alerte">analyse en échec</span>{% else %}en analyse…{% endif %}</span>
+    </li>
     {% endfor %}
-  </table></div>
+  </ul>
   {% else %}
   <p class="doux">Aucun document récupéré pour l'instant (Contenu et ressources, pièces jointes du Travail à faire).</p>
   {% endif %}
 
   <h2>Dernières notes</h2>
   {% if notes %}
-  <div class="carte" style="overflow-x:auto"><table class="notes">
-    <tr><th>Date</th><th>Matière</th><th>Devoir</th><th class="n">Note</th><th class="n large">Classe</th></tr>
+  <ul class="carte lignes">
     {% for n in notes %}
-    <tr><td>{{ n.le.astimezone(paris).strftime('%d/%m') if n.le }}</td><td>{{ n.matiere }}</td>
-      <td class="doux">{{ n.commentaire }}{% if n.coefficient and n.coefficient != 1 %} (coef {{ n.coefficient|round(2)|replace('.0', '') }}){% endif %}</td>
-      <td class="n"><strong>{{ n.valeur|note(n.sur) }}</strong></td><td class="n doux large">{{ n.moyenne_classe|note }}</td></tr>
+    <li>
+      <div class="corps"><strong>{{ n.matiere }}</strong>
+        <div class="doux">{{ n.le.astimezone(paris).strftime('%d/%m') if n.le }}{% if n.commentaire %} · {{ n.commentaire }}{% endif %}{% if n.coefficient and n.coefficient != 1 %} · coef {{ n.coefficient|round(2)|replace('.0', '') }}{% endif %}</div></div>
+      <div class="fin"><strong class="note-valeur">{{ n.valeur|note(n.sur) }}</strong>
+        <div class="doux">classe {{ n.moyenne_classe|note }}</div></div>
+    </li>
     {% endfor %}
-  </table></div>
+  </ul>
   {% else %}
   <p class="doux">Pas encore de notes sur cette période.</p>
   {% endif %}

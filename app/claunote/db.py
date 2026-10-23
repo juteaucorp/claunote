@@ -176,6 +176,11 @@ def a_verifier():
             "SELECT * FROM documents WHERE statut IN ('a_verifier', 'erreur') ORDER BY cree_le").fetchall()
 
 
+def nb_documents() -> int:
+    with connect() as c:
+        return c.execute("SELECT count(*) AS n FROM documents WHERE statut = 'classe'").fetchone()["n"]
+
+
 def nb_a_verifier() -> int:
     with connect() as c:
         return c.execute("SELECT count(*) AS n FROM documents WHERE statut IN ('a_verifier', 'erreur')").fetchone()["n"]

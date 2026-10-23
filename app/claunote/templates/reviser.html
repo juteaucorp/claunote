@@ -2,16 +2,22 @@
 {% block titre %}Réviser{% endblock %}
 {% block contenu %}
 <h1>Réviser</h1>
+{% set dues = nb_cartes_a_revoir() %}
+<div class="carte {{ 'accent' if dues }} actions" style="justify-content: space-between">
+  <span>{% if dues %}<strong>{{ dues }} flashcard{{ 's' if dues > 1 }}</strong> à revoir aujourd'hui{% else %}Flashcards à jour ✓{% endif %}</span>
+  <span class="actions">{% if dues %}<a class="bouton principal" href="/cartes/session">Réviser</a>{% endif %}<a class="bouton" href="/cartes">Mes paquets</a></span>
+</div>
+<h2>Générer depuis tes cours</h2>
 {% if not choix %}
 <div class="carte">Il faut d'abord des documents classés : dépose des scans dans <code>Etudes/inbox</code>.</div>
 {% else %}
 <form method="post" action="/reviser" class="carte">
   <p><label>Matière<br>
-    <select name="niveau_matiere" required>
+    <select name="niveau_matiere" required style="width: 100%">
       {% for c in choix %}<option value="{{ c.niveau }}|{{ c.matiere }}" {{ 'selected' if c.matiere == pre.matiere }}>{{ c.niveau }} · {{ c.matiere }}</option>{% endfor %}
     </select></label></p>
   <p><label>Sujet ou chapitre (facultatif)<br>
-    <input name="sujet" size="40" placeholder="ex. VLAN et routage inter-VLAN" value="{{ pre.sujet }}"></label></p>
+    <input name="sujet" style="width: 100%" placeholder="ex. VLAN et routage inter-VLAN" value="{{ pre.sujet }}"></label></p>
   <div class="choix">
     {% for g, libelle in genres.items() %}
     <label><input type="radio" name="genre" value="{{ g }}" {{ 'checked' if g == pre.genre or (not pre.genre and loop.first) }}> {{ libelle }}</label>

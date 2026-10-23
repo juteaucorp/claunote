@@ -1,0 +1,23 @@
+{# Icônes au trait (24×24), couleur du texte #}
+{% macro icone(nom, taille=22) -%}
+<svg width="{{ taille }}" height="{{ taille }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{%- if nom == 'accueil' %}<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h5v-6h4v6h5V9.5"/>
+{%- elif nom == 'cours' %}<path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H20v15H5.5A1.5 1.5 0 0 0 4 19.5z"/><path d="M4 19.5A1.5 1.5 0 0 0 5.5 21H20"/><path d="M8 7h8M8 11h6"/>
+{%- elif nom == 'reviser' %}<rect x="3" y="6" width="13" height="15" rx="2"/><path d="M8 3h11a2 2 0 0 1 2 2v12"/><path d="M7 11h5M7 15h3"/>
+{%- elif nom == 'agenda' %}<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h3"/>
+{%- elif nom == 'plus' %}<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>
+{%- elif nom == 'recherche' %}<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>
+{%- elif nom == 'deposer' %}<path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/>
+{%- elif nom == 'cartes' %}<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12h6M12 9v6"/>
+{%- elif nom == 'organiser' %}<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>
+{%- elif nom == 'verifier' %}<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/>
+{%- elif nom == 'hors' %}<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>
+{%- elif nom == 'compte' %}<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>
+{%- elif nom == 'sortie' %}<path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/>
+{%- elif nom == 'scan' %}<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 21v-5h-5"/>
+{%- elif nom == 'devoir' %}<path d="M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1z"/><path d="M8 6H6a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-2"/><path d="m9 14 2 2 4-4"/>
+{%- elif nom == 'document' %}<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>
+{%- elif nom == 'fleche' %}<path d="m9 6 6 6-6 6"/>
+{%- endif %}
+</svg>
+{%- endmacro %}
