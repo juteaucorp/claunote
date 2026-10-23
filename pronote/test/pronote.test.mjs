@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { creerCompte } from "../pronote.mjs";
+import { creerCompte, lireQr } from "../pronote.mjs";
 
 const maths = { id: "s1", name: "MATHEMATIQUES", inGroups: false };
 const reseau = { id: "s2", name: "SISR - RESEAUX", inGroups: false };
@@ -169,4 +169,27 @@ test("déconnexion", async () => {
   assert.equal((await compte.etat()).connecte, true);
   await compte.deconnexion();
   assert.deepEqual(await compte.etat(), { connecte: false });
+});
+
+test("lireQr : format actuel de Pronote et copier-coller abîmé", () => {
+  const brut = '{"avecPageConnexion":false,"jeton":"A1B2","login":"C3D4","url":"https://0000000a.index-education.net/pronote/mobile.eleve.html"}';
+  const attendu = { avecPageConnexion: false, jeton: "A1B2", login: "C3D4", url: "https://0000000a.index-education.net/pronote/mobile.eleve.html" };
+  assert.deepEqual(lireQr(brut), attendu);
+  assert.deepEqual(lireQr(`  \uFEFF${brut}\n`), attendu);
+  assert.deepEqual(lireQr(brut.replaceAll('"', (m, i) => (i % 2 ? "\u201C" : "\u201D"))), attendu);
+  assert.deepEqual(lireQr(`QR : ${brut} fin`), attendu);
+  assert.deepEqual(lireQr(encodeURIComponent(brut)), attendu);
+  assert.deepEqual(lireQr(JSON.parse(brut)), attendu);
+  assert.throws(() => lireQr('{"avecPageConnexion":false,"jeton":"A1B2","url":"https://x/pronote/mobile.eleve.html"}'), /il manque : login/);
+  assert.throws(() => lireQr('{"jeton":"a","login":"b","url":"https://x/pronote/"}'), /espace élève mobile/);
+  assert.throws(() => lireQr("bonjour"), /illisible/);
+  assert.throws(() => lireQr(""), /illisible/);
+});
+
+test("connexion QR : PIN avec espaces accepté, QR passé à Pawnote nettoyé", async () => {
+  const { compte, pawnote } = await nouveau();
+  await compte.connexionQr({ qr: `\u201C${QR}`, pin: " 1234 " });
+  const [, info] = pawnote.appels.find((a) => a[0] === "qr");
+  assert.equal(info.pin, "1234");
+  assert.equal(info.qr.jeton, "abc");
 });
