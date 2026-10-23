@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block titre %}Réviser les cartes{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/cartes">Flashcards</a> › {{ carte.sujet if carte and paquet else 'Toutes' }}</p>
+{% if not carte %}
+<div class="carte accent"><strong>Bravo, plus rien à revoir aujourd'hui.</strong>
+  <p class="doux">Les cartes reviendront quand il faudra. <a href="/cartes">Retour aux paquets</a></p></div>
+{% else %}
+<p class="doux">{{ reste }} carte{{ 's' if reste > 1 }} à revoir{% if carte.repetitions == 0 and not carte.vue_le %} · nouvelle carte{% endif %}</p>
+<div class="carte flashcard">
+  <div class="recto"><strong>{{ carte.recto }}</strong></div>
+  <details id="reponse">
+    <summary>Voir la réponse <span class="doux">(espace)</span></summary>
+    <div class="verso">{{ carte.verso|e|replace('\n', '<br>'|safe) }}
+      {% if carte.source in reperes %}<p class="doux"><a href="/doc/{{ reperes[carte.source] }}">[{{ carte.source }}] voir le cours</a></p>{% endif %}
+    </div>
+  </details>
+</div>
+<div class="notes-carte">
+  {% for n, libelle in notes.items() %}
+  <form method="post" action="/cartes/{{ carte.id }}/noter">
+    <input type="hidden" name="note" value="{{ n }}">
+    {% if paquet %}<input type="hidden" name="paquet" value="{{ paquet }}">{% endif %}
+    <button class="n{{ n }}" data-touche="{{ loop.index }}">{{ libelle }}<br>
+      <span class="doux">{% if apercu[n] == 0 %}maintenant{% elif apercu[n] == 1 %}demain{% else %}{{ apercu[n] }} j{% endif %}</span></button>
+  </form>
+  {% endfor %}
+</div>
+<p class="doux">Raccourcis : espace pour retourner, 1 à 4 pour noter.</p>
+<script>
+  document.addEventListener("keydown", (e) => {
+    if (e.target.matches("input, textarea, select")) return;
+    const reponse = document.getElementById("reponse");
+    if (e.key === " ") { e.preventDefault(); reponse.open = !reponse.open; }
+    const bouton = document.querySelector(`button[data-touche="${e.key}"]`);
+    if (bouton && reponse.open) bouton.click();
+  });
+</script>
+{% endif %}
+{% endblock %}

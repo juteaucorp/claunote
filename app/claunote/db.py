@@ -1,5 +1,6 @@
 """Accès PostgreSQL : documents analysés + petit état partagé site/worker."""
 import os
+import secrets
 
 import psycopg
 from psycopg.rows import dict_row
@@ -74,6 +75,19 @@ CREATE TABLE IF NOT EXISTS pronote_documents (
     kdrive_id    BIGINT,
     vu_le        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS cartes (
+    id           SERIAL PRIMARY KEY,
+    revision_id  INT NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+    recto        TEXT NOT NULL,
+    verso        TEXT NOT NULL,
+    source       TEXT NOT NULL DEFAULT '',             -- repère D1… du cours d'origine
+    facilite     REAL NOT NULL DEFAULT 2.5,            -- répétition espacée (SM-2)
+    intervalle   INT NOT NULL DEFAULT 0,               -- jours
+    repetitions  INT NOT NULL DEFAULT 0,
+    prochaine    DATE NOT NULL DEFAULT current_date,
+    vue_le       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS cartes_prochaine ON cartes (prochaine);
 CREATE TABLE IF NOT EXISTS pronote_notes (
     id              TEXT PRIMARY KEY,
     matiere         TEXT NOT NULL,
@@ -171,6 +185,14 @@ def matieres() -> list[str]:
         return [r["matiere"] for r in rows]
 
 
+def secret_session() -> str:
+    """Clé de signature des cookies, créée une fois et gardée en base (survit aux redémarrages)."""
+    with connect() as c:
+        c.execute("INSERT INTO etat VALUES ('secret_session', %s) ON CONFLICT (cle) DO NOTHING",
+                  (secrets.token_hex(32),))
+        return c.execute("SELECT valeur FROM etat WHERE cle = 'secret_session'").fetchone()["valeur"]
+
+
 def demander_scan():
     with connect() as c:
         c.execute("INSERT INTO etat VALUES ('scan', 'oui') ON CONFLICT (cle) DO UPDATE SET valeur = 'oui'")
@@ -241,6 +263,61 @@ def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=No
     with connect() as c:
         c.execute("UPDATE revisions SET statut = %s, contenu = %s, reperes = %s, erreur = %s, kdrive_id = %s "
                   "WHERE id = %s", (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, rev_id))
+
+
+# --- Flashcards -------------------------------------------------------------
+
+def creer_cartes(rev_id: int, cartes: list[dict]):
+    with connect() as c, c.transaction():
+        c.execute("DELETE FROM cartes WHERE revision_id = %s", (rev_id,))
+        for k in cartes:
+            c.execute("INSERT INTO cartes (revision_id, recto, verso, source) VALUES (%s, %s, %s, %s)",
+                      (rev_id, k["recto"], k["verso"], k.get("source") or ""))
+
+
+def paquets():
+    """Paquets de cartes (une révision « cartes » prête = un paquet), avec les cartes à revoir."""
+    with connect() as c:
+        return c.execute(
+            """SELECT r.id, r.sujet, r.cree_le, count(k.id) AS total,
+                      count(k.id) FILTER (WHERE k.prochaine <= current_date) AS a_revoir,
+                      count(k.id) FILTER (WHERE k.repetitions = 0) AS nouvelles
+               FROM revisions r JOIN cartes k ON k.revision_id = r.id
+               GROUP BY r.id ORDER BY a_revoir DESC, r.cree_le DESC""").fetchall()
+
+
+def cartes(rev_id: int | None = None):
+    with connect() as c:
+        return c.execute(
+            """SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
+               WHERE %s::int IS NULL OR k.revision_id = %s ORDER BY r.id, k.id""", (rev_id, rev_id)).fetchall()
+
+
+def prochaine_carte(rev_id: int | None = None):
+    """Carte la plus en retard (les nouvelles après celles déjà vues)."""
+    with connect() as c:
+        return c.execute(
+            """SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
+               WHERE k.prochaine <= current_date AND (%s::int IS NULL OR k.revision_id = %s)
+               ORDER BY k.repetitions = 0, k.prochaine, k.vue_le NULLS FIRST, k.id LIMIT 1""",
+            (rev_id, rev_id)).fetchone()
+
+
+def carte(carte_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM cartes WHERE id = %s", (carte_id,)).fetchone()
+
+
+def maj_carte(carte_id: int, facilite: float, intervalle: int, repetitions: int, prochaine):
+    with connect() as c:
+        c.execute("UPDATE cartes SET facilite = %s, intervalle = %s, repetitions = %s, prochaine = %s, "
+                  "vue_le = now() WHERE id = %s", (facilite, intervalle, repetitions, prochaine, carte_id))
+
+
+def nb_cartes_a_revoir(rev_id: int | None = None) -> int:
+    with connect() as c:
+        return c.execute("SELECT count(*) AS n FROM cartes WHERE prochaine <= current_date "
+                         "AND (%s::int IS NULL OR revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
 
 
 # --- Pronote ----------------------------------------------------------------

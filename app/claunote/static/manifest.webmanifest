@@ -1,0 +1,20 @@
+{
+  "name": "Claunote",
+  "short_name": "Claunote",
+  "description": "Tes cours, fiches, quiz et flashcards",
+  "lang": "fr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#faf9f5",
+  "theme_color": "#d97757",
+  "icons": [
+    {"src": "/static/icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/static/icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/static/logo.svg", "sizes": "any", "type": "image/svg+xml"}
+  ],
+  "shortcuts": [
+    {"name": "Réviser les flashcards", "url": "/cartes/session", "icons": [{"src": "/static/icone-192.png", "sizes": "192x192"}]},
+    {"name": "Agenda", "url": "/agenda", "icons": [{"src": "/static/icone-192.png", "sizes": "192x192"}]}
+  ]
+}

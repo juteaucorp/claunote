@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block titre %}Flashcards{% endblock %}
+{% block contenu %}
+<h1>Flashcards</h1>
+{% if not paquets %}
+<div class="carte">Pas encore de flashcards. Va dans <a href="/reviser">Réviser</a>, choisis une matière et « Flashcards » :
+  l'agent en tire une vingtaine de tes cours.</div>
+{% else %}
+{% set total_dues = paquets|sum(attribute='a_revoir') %}
+<div class="carte accent actions">
+  <strong>{{ total_dues }} carte{{ 's' if total_dues > 1 }} à revoir aujourd'hui</strong>
+  {% if total_dues %}<a class="bouton principal" href="/cartes/session">Tout réviser</a>{% endif %}
+  <a class="bouton" href="/cartes/anki" download>Tout exporter vers Anki</a>
+</div>
+<p class="doux">Répétition espacée : une carte bien sue revient dans quelques jours, puis de plus en plus tard ;
+  une carte ratée revient tout de suite. L'export Anki (.apkg) s'ouvre dans Anki ou AnkiDroid ;
+  réimporter met à jour les cartes sans doublons.</p>
+<div class="grille">
+  {% for p in paquets %}
+  <div class="carte">
+    <a href="/revision/{{ p.id }}"><strong>{{ p.sujet }}</strong></a>
+    <div class="doux">{{ p.total }} carte{{ 's' if p.total > 1 }} · {{ p.nouvelles }} nouvelle{{ 's' if p.nouvelles > 1 }} · créé le {{ p.cree_le.strftime('%d/%m/%Y') }}</div>
+    <p class="actions">
+      {% if p.a_revoir %}<a class="bouton principal" href="/cartes/session?paquet={{ p.id }}">Réviser ({{ p.a_revoir }})</a>
+      {% else %}<span class="doux">À jour ✓</span>{% endif %}
+      <a class="bouton" href="/cartes/anki?paquet={{ p.id }}" download>Anki</a>
+    </p>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

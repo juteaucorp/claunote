@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block titre %}Claunote{% endblock %} · Claunote</title>
 <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#d97757">
+<link rel="apple-touch-icon" href="/static/icone-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Claunote">
 {% block tete %}{% endblock %}
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 <style>
@@ -76,11 +81,29 @@
   table.notes { width: 100%; border-collapse: collapse; }
   table.notes td, table.notes th { padding: 6px 8px; border-bottom: 1px solid var(--bord); text-align: left; }
   table.notes td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sortie { margin: 0; }
+  .connexion { max-width: 380px; margin: 8vh auto 0; text-align: center; }
+  .connexion img { width: 72px; height: 72px; border-radius: 18px; border: 1px solid var(--bord); background: #fff; }
+  .connexion form { text-align: left; }
+  .connexion input { width: 100%; }
+  .connexion button { width: 100%; margin-top: 6px; }
+  .flashcard { min-height: 200px; display: flex; flex-direction: column; justify-content: center; text-align: center; font-size: 1.2rem; }
+  .flashcard .verso { border-top: 1px dashed var(--bord); margin-top: 14px; padding-top: 14px; }
+  .notes-carte { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .flashcard:has(details:not([open])) + .notes-carte { display: none; }
+  .notes-carte form { margin: 0; }
+  .notes-carte button { width: 100%; padding: 12px 6px; }
+  .notes-carte .n0 { border-color: var(--alerte); color: var(--alerte); }
+  .notes-carte .n5 { border-color: var(--ok); color: var(--ok); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .actions a.bouton { display: inline-block; padding: 8px 12px; border: 1px solid var(--bord); border-radius: 10px; text-decoration: none; color: var(--texte); background: var(--carte); font-weight: 500; }
+  .actions a.bouton.principal { background: var(--accent); color: #fff; border-color: var(--accent); }
   @media (max-width: 640px) { .recherche-entete input { width: 140px; } h1 { font-size: 1.5rem; } table.notes .large { display: none; } table.notes td, table.notes th { padding: 6px 4px; } }
 </style>
 </head>
 <body>
 {% set chemin = request.url.path %}
+{% if not sans_nav %}
 <header>
   <div class="barre">
     <a class="marque" href="/"><img src="/static/logo.svg" alt="">Claunote</a>
@@ -88,6 +111,8 @@
       <a href="/" class="{{ 'actif' if chemin == '/' or chemin.startswith('/liste') }}">Bibliothèque</a>
       <a href="/deposer" class="{{ 'actif' if chemin.startswith('/deposer') }}">Déposer</a>
       <a href="/reviser" class="{{ 'actif' if chemin.startswith('/revis') }}">Réviser</a>
+      {% set cartes_dues = nb_cartes_a_revoir() %}
+      <a href="/cartes" class="{{ 'actif' if chemin.startswith('/cartes') }}">Cartes{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
       {% set evals = nb_evaluations_proches() %}
       <a href="/agenda" class="{{ 'actif' if chemin.startswith('/agenda') }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
       {% set attente = nb_a_verifier() %}
@@ -96,12 +121,21 @@
     <div class="outils">
       <form action="/recherche" class="recherche-entete"><input name="q" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
       <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" title="Vérifier l'inbox kDrive maintenant">Scanner</button>
+      <form method="post" action="/deconnexion" class="sortie"><button title="Se déconnecter" aria-label="Se déconnecter">⏻</button></form>
     </div>
   </div>
 </header>
+{% endif %}
 <main>
-  <p id="retour-scan" class="carte accent"></p>
+  {% if not sans_nav %}<p id="retour-scan" class="carte accent"></p>
+  {% if mdp_par_defaut() %}<p class="carte accent">⚠️ Mot de passe par défaut (<code>admin</code> / <code>claunote</code>) :
+    change <code>CLAUNOTE_MOT_DE_PASSE</code> dans le <code>.env</code>, puis <code>docker compose up -d</code>.</p>{% endif %}
+  {% endif %}
   {% block contenu %}{% endblock %}
 </main>
+<script>
+  // Appli installable (PWA) : le navigateur n'accepte le service worker qu'en HTTPS ou sur localhost
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+</script>
 </body>
 </html>

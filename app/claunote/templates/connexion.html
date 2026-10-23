@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block titre %}Connexion{% endblock %}
+{% block contenu %}
+<div class="connexion">
+  <img src="/static/logo.svg" alt="">
+  <h1>Claunote</h1>
+  <form method="post" action="/connexion" class="carte">
+    <input type="hidden" name="suite" value="{{ suite }}">
+    {% if erreur %}<p class="alerte">{{ erreur }}</p>{% endif %}
+    <p><label>Identifiant<br><input name="utilisateur" autocomplete="username" autocapitalize="none" required autofocus></label></p>
+    <p><label>Mot de passe<br><input type="password" name="mot_de_passe" autocomplete="current-password" required></label></p>
+    <button class="principal">Se connecter</button>
+  </form>
+</div>
+{% endblock %}

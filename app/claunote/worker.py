@@ -90,7 +90,7 @@ def traiter(kd: KDrive, item: dict):
 
 
 def traiter_revision(kd: KDrive, rev: dict):
-    """Génère une fiche, un quiz ou un plan, puis en dépose une copie dans Etudes/fiches/."""
+    """Génère une fiche, un quiz, des flashcards ou un plan, puis en dépose une copie dans Etudes/fiches/."""
     try:
         contenu, reperes = revision.generer(rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]),
                                             rev["date_eval"])
@@ -98,7 +98,12 @@ def traiter_revision(kd: KDrive, rev: dict):
         db.maj_revision(rev["id"], "erreur", erreur=str(e))
         log(f"erreur de révision {rev['id']} : {e}")
         return
-    texte = revision.quiz_en_markdown(json.loads(contenu)) if rev["genre"] == "quiz" else contenu
+    texte = contenu
+    if rev["genre"] == "quiz":
+        texte = revision.quiz_en_markdown(json.loads(contenu))
+    elif rev["genre"] == "cartes":
+        db.creer_cartes(rev["id"], json.loads(contenu))
+        texte = revision.cartes_en_markdown(json.loads(contenu))
     kdrive_id = None
     try:
         dossier = kd.ensure_path(ETUDES_ID, ["fiches"])
