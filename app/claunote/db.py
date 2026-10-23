@@ -1,9 +1,11 @@
 """Accès PostgreSQL : documents analysés + petit état partagé site/worker."""
 import os
 import secrets
+import threading
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 from psycopg.types.json import Jsonb
 
 SCHEMA = """
@@ -126,8 +128,20 @@ CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "da
           "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note"}
 
 
+_pool: ConnectionPool | None = None
+_verrou = threading.Lock()
+
+
 def connect():
-    return psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row, autocommit=True)
+    """Connexion prise dans un pool : en ouvrir une coûte ~10 ms (authentification), et une page en fait plusieurs."""
+    global _pool
+    if _pool is None:
+        with _verrou:
+            if _pool is None:
+                _pool = ConnectionPool(os.environ["DATABASE_URL"], min_size=1, max_size=8, open=True,
+                                       kwargs={"row_factory": dict_row, "autocommit": True},
+                                       check=ConnectionPool.check_connection)
+    return _pool.connection()
 
 
 def init():

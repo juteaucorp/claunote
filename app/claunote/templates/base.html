@@ -14,7 +14,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Claunote">
 {% block tete %}{% endblock %}
-<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script src="/static/htmx.min.js" defer></script>
 <style>
   :root {
     --fond: #ffffff; --fond-doux: #faf9f5; --carte: #ffffff; --texte: #1f1e1d; --doux: #6f6b63;
@@ -266,6 +266,15 @@
   });
   // Appli installable (PWA) : le navigateur n'accepte le service worker qu'en HTTPS ou sur localhost
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  // Onglets plus rapides : la page est demandée dès que le doigt touche le lien, pas au relâcher
+  const precharger = (e) => {
+    const a = e.target.closest && e.target.closest("nav a[href^='/'], .feuille a[href^='/'], header a[href^='/']");
+    const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!a || !sw || a.pathname === location.pathname) return;
+    sw.postMessage({ precharger: a.href });
+  };
+  document.addEventListener("touchstart", precharger, { passive: true });
+  document.addEventListener("mousedown", precharger);
   {% if not sans_nav %}
   // Pastille sur l'icône de l'appli (flashcards du jour + évaluations de la semaine)
   if (navigator.setAppBadge) {

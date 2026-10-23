@@ -2,7 +2,7 @@
 // évaluations à venir, devoirs, notes. Le mot de passe n'est jamais gardé :
 // seul le jeton de reconnexion de Pronote est stocké, et il change à chaque connexion.
 import { randomUUID } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const JOUR = 24 * 60 * 60 * 1000;
@@ -258,7 +258,11 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
       return null;
     }
   };
-  const ecrire = (etat) => writeFile(fichier, JSON.stringify(etat, null, 2), { mode: 0o600 });
+  // Écriture atomique : etat() lit le fichier sans attendre la file
+  const ecrire = async (etat) => {
+    await writeFile(`${fichier}.tmp`, JSON.stringify(etat, null, 2), { mode: 0o600 });
+    await rename(`${fichier}.tmp`, fichier);
+  };
 
   async function ouvrir() {
     const etat = await lire();
@@ -285,11 +289,12 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
   }
 
   return {
-    etat: () => enFile(async () => {
+    // Simple lecture du fichier : hors de la file, sinon la page Agenda attend la fin d'une synchro (minutes)
+    etat: async () => {
       const etat = await lire();
       if (!etat) return { connecte: false };
       return { connecte: !etat.expire, expire: !!etat.expire, url: etat.refresh.url, ...etat.profil, maj_le: etat.maj_le };
-    }),
+    },
 
     connexionQr: ({ qr, pin }) => enFile(async () => {
       const donnees = lireQr(qr);
