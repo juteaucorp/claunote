@@ -1,0 +1,20 @@
+# /etc/systemd/system/rclone-kdrive.service
+[Unit]
+Description=Montage kDrive (rclone WebDAV)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=claunote
+ExecStartPre=/bin/mkdir -p /mnt/kdrive
+ExecStart=/usr/bin/rclone mount kdrive: /mnt/kdrive \
+  --vfs-cache-mode full \
+  --vfs-cache-max-size 10G \
+  --dir-cache-time 1m \
+  --allow-other
+ExecStop=/bin/fusermount -u /mnt/kdrive
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

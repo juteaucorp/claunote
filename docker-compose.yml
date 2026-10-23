@@ -1,0 +1,35 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # disque local de la VM, jamais sur kDrive
+
+  web:
+    build: ./app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}
+      ETUDES_DIR: /etudes
+    volumes:
+      - ${KDRIVE_ETUDES}:/etudes
+    ports:
+      - "127.0.0.1:8000:8000"   # exposé uniquement via Tailscale / Caddy
+    depends_on: [db]
+
+  worker:
+    build: ./app
+    restart: unless-stopped
+    command: python -m claunote.worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}
+      ETUDES_DIR: /etudes
+    volumes:
+      - ${KDRIVE_ETUDES}:/etudes
+    depends_on: [db]
+
+volumes:
+  pgdata:
