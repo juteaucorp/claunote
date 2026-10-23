@@ -103,7 +103,7 @@ export $(grep CLAUDE_CODE_OAUTH_TOKEN .env) && claude -p "Réponds juste : ok"
 quand la limite d'usage est atteinte, puis reprend tout seul. La numérisation de tout ton
 stock prendra donc plusieurs jours en tâche de fond, sans rien te coûter de plus.
 
-## 6. Utilisation (phases 1 et 2)
+## 6. Utilisation (scan et classement)
 
 1. Dépose un ou plusieurs PDF dans `Etudes/inbox` sur kDrive (**un document = un PDF** : un cours,
    un TP, un contrôle).
@@ -112,6 +112,26 @@ stock prendra donc plusieurs jours en tâche de fond, sans rien te coûter de pl
 4. Le scan est déplacé dans `Etudes/archives/<niveau>/<matière>/<type>/`, renommé
    (`2025-03-12_les-vlan.pdf`), avec sa transcription `.md` à côté. S'il n'est pas sûr du
    classement, il part dans `Etudes/a-verifier/` et apparaît sur la page **À vérifier**.
+
+### Déposer un dossier complet
+
+Tu peux déposer **un dossier entier** dans `Etudes/inbox` (ou via la page **Déposer** du site), y
+compris avec des sous-dossiers. **Nomme-le avec ton année d'étude** : `Terminale`, `3e`,
+`BTS SIO 1`, `1ère année BTS`, `Seconde 2021`...
+
+- Le nom du dossier **impose le niveau** (le plus profond qui en contient un l'emporte).
+- Si le contenu ne colle pas avec le dossier (ex. dossier `BTS1` mais cours de Terminale), le
+  fichier part dans **À vérifier** avec l'explication ; tu confirmes en un clic.
+- Idem quand l'agent n'est pas sûr (confiance < 70 %) : le badge orange **À vérifier** du menu
+  compte les documents en attente.
+- Les sous-dossiers vides de l'inbox sont envoyés à la corbeille kDrive après 10 minutes.
+
+### Déposer depuis le site
+
+Page **Déposer** : glisse des fichiers ou un dossier complet (ou boutons « Choisir des fichiers »
+/ « Choisir un dossier »). Formats acceptés : PDF, JPG, PNG, HEIC, WEBP. Le menu « Année d'étude »
+est facultatif : il range le dépôt dans un dossier à ce nom. Les fichiers partent dans
+`Etudes/inbox` et un scan est lancé tout de suite.
 
 Après une mise à jour du code : `git pull && docker compose up -d --build`.
 

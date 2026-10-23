@@ -17,7 +17,9 @@ def client(monkeypatch):
     appels = []
     monkeypatch.setattr(db, "init", lambda: None)
     monkeypatch.setattr(db, "bibliotheque", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "type": "TP", "n": 3}])
-    monkeypatch.setattr(db, "a_verifier", lambda: [{**DOC, "id": 2, "statut": "a_verifier", "confiance": 0.4}])
+    monkeypatch.setattr(db, "a_verifier", lambda: [{**DOC, "id": 2, "statut": "a_verifier", "confiance": 0.4,
+                                                    "note": "Le dossier « BTS1 » indique BTS1", "origine": "BTS1"}])
+    monkeypatch.setattr(db, "nb_a_verifier", lambda: 1)
     monkeypatch.setattr(db, "document", lambda i: DOC if i == 1 else None)
     monkeypatch.setattr(db, "liste", lambda *a: [DOC])
     monkeypatch.setattr(db, "matieres", lambda: ["Réseaux"])
@@ -37,7 +39,7 @@ def client(monkeypatch):
 def test_bibliotheque(client):
     r = client.get("/")
     assert r.status_code == 200
-    assert "BTS1" in r.text and "TP · 3" in r.text and "1 document à vérifier" in r.text
+    assert "BTS1" in r.text and "TP · 3" in r.text and "1 document à confirmer" in r.text and '<span class="badge">1</span>' in r.text
 
 
 def test_document_neutralise_le_html(client):
@@ -56,7 +58,7 @@ def test_scan_et_a_verifier(client):
     assert "Scan demandé" in client.post("/scan").text
     assert client.appels == ["scan"]
     r = client.get("/a-verifier")
-    assert "confiance 40 %" in r.text
+    assert "confiance 40 %" in r.text and "indique BTS1" in r.text and "déposé dans « BTS1 »" in r.text
 
 
 def test_classer_deplace_dans_kdrive(client, monkeypatch):
@@ -76,7 +78,7 @@ def test_classer_deplace_dans_kdrive(client, monkeypatch):
     assert r.status_code == 303
     assert moves == [("path", ["archives", "BTS2", "Réseaux", "Cours"]), ("move", 77, 500), ("move", 78, 500)]
     assert client.appels[-1] == ("maj", 1, {"statut": "classe", "niveau": "BTS2", "matiere": "Réseaux",
-                                            "type": "Cours", "confiance": 1.0})
+                                            "type": "Cours", "confiance": 1.0, "note": None})
     assert client.post("/doc/1/classer", data={"niveau": "Master", "matiere": "x", "type": "TP"}).status_code == 400
 
 
@@ -116,3 +118,53 @@ def test_voir_revision(client, monkeypatch):
     r = client.get("/revision/7")
     assert "Voir la réponse" in r.text and "B. b" in r.text
     assert client.get("/revision/99").status_code == 404
+
+
+def test_logo_et_page_deposer(client):
+    assert client.get("/static/logo.svg").status_code == 200
+    r = client.get("/deposer")
+    assert r.status_code == 200 and "webkitdirectory" in r.text and 'class="actif"' in r.text
+
+
+def test_deposer_garde_les_dossiers(client, monkeypatch):
+    faits = []
+
+    class FauxKD:
+        def ensure_path(self, parent, parts):
+            faits.append(("path", parent, parts))
+            return 900 + len(parts)
+
+        def upload(self, dir_id, nom, contenu, conflict="version"):
+            faits.append(("upload", dir_id, nom, contenu, conflict))
+            return {"id": 1}
+
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: FauxKD()))
+    monkeypatch.setattr(main, "INBOX_ID", 10)
+    fichiers = [("fichiers", ("Terminale/Maths/suites.pdf", b"%PDF-1", "application/pdf")),
+                ("fichiers", ("Terminale/Maths/cours2.pdf", b"%PDF-2", "application/pdf")),
+                ("fichiers", ("notes.txt", b"x", "text/plain")),
+                ("fichiers", ("../../photo.JPG", b"img", "image/jpeg"))]
+    r = client.post("/deposer", files=fichiers, data={"niveau": ""})
+    assert r.status_code == 200 and "3 fichiers envoyés" in r.text and "notes.txt" in r.text
+    assert ("path", 10, ["Terminale", "Maths"]) in faits and ("path", 10, []) in faits
+    assert [f for f in faits if f[0] == "path"].count(("path", 10, ["Terminale", "Maths"])) == 1
+    assert ("upload", 902, "suites.pdf", b"%PDF-1", "rename") in faits
+    assert ("upload", 900, "photo.JPG", b"img", "rename") in faits
+    assert "scan" in client.appels
+
+
+def test_deposer_avec_niveau(client, monkeypatch):
+    faits = []
+
+    class FauxKD:
+        def ensure_path(self, parent, parts):
+            faits.append(parts)
+            return 5
+
+        def upload(self, *a, **k):
+            return {}
+
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: FauxKD()))
+    client.post("/deposer", files=[("fichiers", ("a.pdf", b"1", "application/pdf"))], data={"niveau": "BTS2"})
+    assert faits == [["BTS2"]]
+    assert client.post("/deposer", files=[("fichiers", ("a.pdf", b"1"))], data={"niveau": "Master"}).status_code == 400

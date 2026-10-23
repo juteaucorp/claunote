@@ -133,6 +133,9 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
     return texte
 
 
-def analyser(chemin: Path) -> Analyse:
+def analyser(chemin: Path, dossiers: list[str] | None = None) -> Analyse:
     prompt = PROMPT.format(nom=chemin.name, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
+    if dossiers:
+        prompt += (f"\nIndice : l'élève a rangé ce fichier dans le dossier « {'/'.join(dossiers)} ». "
+                   "Le nom du dossier indique souvent l'année d'étude, parfois la matière.\n")
     return parse_reponse(appeler_claude(prompt, chemin.parent, outils=["Read"]))

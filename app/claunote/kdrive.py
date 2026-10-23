@@ -76,6 +76,10 @@ class KDrive:
     def rename(self, file_id: int, name: str) -> None:
         self.http.post(self._url(f"/files/{file_id}/rename"), json={"name": name}).raise_for_status()
 
+    def delete(self, file_id: int) -> None:
+        """Envoie un fichier ou dossier dans la corbeille kDrive."""
+        self.http.delete(self._url(f"/files/{file_id}")).raise_for_status()
+
     def move(self, file_id: int, dest_dir_id: int) -> None:
         self.http.post(self._url(f"/files/{file_id}/move/{dest_dir_id}")).raise_for_status()
 

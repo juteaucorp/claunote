@@ -3,52 +3,93 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block titre %}Claunote{% endblock %}</title>
+<title>{% block titre %}Claunote{% endblock %} · Claunote</title>
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
 {% block tete %}{% endblock %}
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 <style>
-  :root { --fond: #fafaf8; --carte: #fff; --texte: #1d1d1b; --doux: #6b6b66; --bord: #e2e1dc; --accent: #2f6fde; --alerte: #b54708; }
+  :root {
+    --fond: #ffffff; --fond-doux: #faf9f5; --carte: #ffffff; --texte: #1f1e1d; --doux: #6f6b63;
+    --bord: #ebe7de; --accent: #d97757; --accent-fonce: #b5583a; --accent-pale: #fbeee8;
+    --alerte: #b5583a; --ok: #3f7d4e; --ombre: 0 1px 2px rgba(31, 30, 29, .06), 0 4px 14px rgba(31, 30, 29, .04);
+  }
   @media (prefers-color-scheme: dark) {
-    :root { --fond: #171716; --carte: #21211f; --texte: #ecebe6; --doux: #a3a29c; --bord: #353531; --accent: #7aa7ff; --alerte: #f5a35c; }
+    :root {
+      --fond: #1c1b1a; --fond-doux: #232220; --carte: #262523; --texte: #eeebe4; --doux: #a7a299;
+      --bord: #38362f; --accent: #e08a6d; --accent-fonce: #f0a487; --accent-pale: #3a2a23;
+      --alerte: #f0a487; --ok: #7cc28d; --ombre: none;
+    }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 16px/1.55 system-ui, sans-serif; background: var(--fond); color: var(--texte); }
-  header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--bord); background: var(--carte); }
-  header a { color: var(--texte); text-decoration: none; font-weight: 500; }
-  header .logo { font-weight: 700; margin-right: auto; }
-  header form { display: flex; gap: 6px; }
-  main { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
-  a { color: var(--accent); }
-  h1 { font-size: 1.5rem; margin: 0 0 16px; }
-  h2 { font-size: 1.15rem; margin: 28px 0 8px; }
-  .carte { background: var(--carte); border: 1px solid var(--bord); border-radius: 10px; padding: 14px 16px; margin: 10px 0; }
-  .doux { color: var(--doux); font-size: .9rem; }
+  body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--fond-doux); color: var(--texte); }
+  a { color: var(--accent-fonce); text-underline-offset: 3px; }
+  h1, h2, .marque { font-family: ui-serif, Georgia, "Times New Roman", serif; font-weight: 600; letter-spacing: -.01em; }
+  h1 { font-size: 1.9rem; margin: 4px 0 18px; }
+  h2 { font-size: 1.25rem; margin: 32px 0 10px; }
+
+  header { position: sticky; top: 0; z-index: 10; background: var(--fond); border-bottom: 1px solid var(--bord); }
+  .barre { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .marque { display: flex; align-items: center; gap: 10px; font-size: 1.35rem; color: var(--texte); text-decoration: none; margin-right: auto; }
+  .marque img { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--bord); background: #fff; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  nav a { color: var(--texte); text-decoration: none; padding: 6px 12px; border-radius: 999px; font-weight: 500; font-size: .95rem; }
+  nav a:hover { background: var(--fond-doux); }
+  nav a.actif { background: var(--accent-pale); color: var(--accent-fonce); }
+  .badge { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: .75rem; line-height: 20px; text-align: center; }
+  .outils { display: flex; gap: 8px; align-items: center; }
+
+  main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
+  .carte { background: var(--carte); border: 1px solid var(--bord); border-radius: 14px; padding: 16px 18px; margin: 12px 0; box-shadow: var(--ombre); }
+  .carte.accent { border-color: var(--accent); background: var(--accent-pale); }
+  .doux { color: var(--doux); font-size: .92rem; }
   .alerte { color: var(--alerte); }
-  input, select, button { font: inherit; padding: 6px 10px; border: 1px solid var(--bord); border-radius: 6px; background: var(--carte); color: var(--texte); }
-  button { cursor: pointer; }
+  .fil { color: var(--doux); font-size: .9rem; margin: 0 0 6px; }
+  .fil a { color: var(--doux); }
+
+  input, select, button { font: inherit; padding: 8px 12px; border: 1px solid var(--bord); border-radius: 10px; background: var(--carte); color: var(--texte); }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button { cursor: pointer; font-weight: 500; }
+  button:hover { border-color: var(--accent); }
   button.principal { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-  .pastilles a { display: inline-block; margin: 4px 6px 0 0; padding: 2px 10px; border: 1px solid var(--bord); border-radius: 999px; text-decoration: none; font-size: .9rem; }
+  button.principal:hover { background: var(--accent-fonce); border-color: var(--accent-fonce); }
+  .recherche-entete input { width: 190px; border-radius: 999px; padding: 6px 14px; }
+
+  .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .grille .carte { margin: 0; }
+  .pastilles a { display: inline-block; margin: 6px 6px 0 0; padding: 3px 12px; border-radius: 999px; background: var(--fond-doux); border: 1px solid var(--bord); text-decoration: none; font-size: .88rem; color: var(--texte); }
+  .pastilles a:hover { border-color: var(--accent); color: var(--accent-fonce); }
+  .choix label { display: block; margin: 6px 0; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--accent-fonce); font-weight: 500; }
+  ol.quiz > li { margin-bottom: 16px; }
   .transcription { overflow-wrap: anywhere; }
-  .transcription pre { overflow-x: auto; }
-  .choix label { display: block; margin: 4px 0; }
-  details { margin-top: 8px; }
-  ol.quiz > li { margin-bottom: 18px; }
-  iframe { width: 100%; height: 70vh; border: 1px solid var(--bord); border-radius: 8px; background: #fff; }
-  mark, b { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; }
+  .transcription pre { overflow-x: auto; background: var(--fond-doux); padding: 10px; border-radius: 8px; }
+  iframe { width: 100%; height: 72vh; border: 1px solid var(--bord); border-radius: 12px; background: #fff; }
+  b { background: var(--accent-pale); color: inherit; border-radius: 3px; padding: 0 2px; }
+  #retour-scan:empty { display: none; }
+  @media (max-width: 640px) { .recherche-entete input { width: 140px; } h1 { font-size: 1.5rem; } }
 </style>
 </head>
 <body>
+{% set chemin = request.url.path %}
 <header>
-  <a class="logo" href="/">Claunote</a>
-  <a href="/">Bibliothèque</a>
-  <a href="/reviser">Réviser</a>
-  <a href="/a-verifier">À vérifier</a>
-  <form action="/recherche"><input name="q" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
-  <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML">Scanner maintenant</button>
+  <div class="barre">
+    <a class="marque" href="/"><img src="/static/logo.svg" alt="">Claunote</a>
+    <nav>
+      <a href="/" class="{{ 'actif' if chemin == '/' or chemin.startswith('/liste') }}">Bibliothèque</a>
+      <a href="/deposer" class="{{ 'actif' if chemin.startswith('/deposer') }}">Déposer</a>
+      <a href="/reviser" class="{{ 'actif' if chemin.startswith('/revis') }}">Réviser</a>
+      {% set attente = nb_a_verifier() %}
+      <a href="/a-verifier" class="{{ 'actif' if chemin.startswith('/a-verifier') }}">À vérifier{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
+    </nav>
+    <div class="outils">
+      <form action="/recherche" class="recherche-entete"><input name="q" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
+      <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" title="Vérifier l'inbox kDrive maintenant">Scanner</button>
+    </div>
+  </div>
 </header>
 <main>
-  <p id="retour-scan" class="doux"></p>
+  <p id="retour-scan" class="carte accent"></p>
   {% block contenu %}{% endblock %}
 </main>
 </body>

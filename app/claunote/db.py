@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS documents (
         setweight(to_tsvector('french', coalesce(transcription, '')), 'C')
     ) STORED
 );
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS origine TEXT;  -- dossier de l'inbox d'où vient le scan
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS note TEXT;     -- pourquoi l'agent hésite
 CREATE INDEX IF NOT EXISTS documents_recherche ON documents USING GIN (recherche);
 CREATE TABLE IF NOT EXISTS etat (cle TEXT PRIMARY KEY, valeur TEXT);
 CREATE TABLE IF NOT EXISTS revisions (
@@ -49,7 +51,7 @@ CREATE TABLE IF NOT EXISTS revisions (
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
-          "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id"}
+          "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note"}
 
 
 def connect():
@@ -119,6 +121,11 @@ def a_verifier():
     with connect() as c:
         return c.execute(
             "SELECT * FROM documents WHERE statut IN ('a_verifier', 'erreur') ORDER BY cree_le").fetchall()
+
+
+def nb_a_verifier() -> int:
+    with connect() as c:
+        return c.execute("SELECT count(*) AS n FROM documents WHERE statut IN ('a_verifier', 'erreur')").fetchone()["n"]
 
 
 def matieres() -> list[str]:
