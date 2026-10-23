@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path, PurePosixPath
 
-from claunote import agent, db, notifications, pronote, rangement, revision
+from claunote import agent, db, notifications, pdf, pronote, rangement, revision
 from claunote.agent import ErreurAgent, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive
 
@@ -132,31 +132,67 @@ def ranger_en_attente(kd: KDrive):
 
 
 def traiter_revision(kd: KDrive, rev: dict):
-    """Génère une fiche, un quiz, des flashcards ou un plan, puis en dépose une copie dans Etudes/fiches/."""
+    """Génère une fiche, un quiz, des flashcards, une épreuve ou un plan, puis en dépose le PDF dans Etudes/fiches/."""
     try:
         contenu, reperes = revision.generer(rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]),
-                                            rev["date_eval"])
+                                            rev["date_eval"], rev.get("consigne") or "")
     except ErreurAgent as e:
         db.maj_revision(rev["id"], "erreur", erreur=str(e))
         log(f"erreur de révision {rev['id']} : {e}")
         return
-    texte = contenu
-    if rev["genre"] == "quiz":
-        texte = revision.quiz_en_markdown(json.loads(contenu))
-    elif rev["genre"] == "cartes":
+    if rev["genre"] == "cartes":
         db.creer_cartes(rev["id"], json.loads(contenu))
-        texte = revision.cartes_en_markdown(json.loads(contenu))
-    kdrive_id = None
-    try:
-        dossier = kd.ensure_path(ETUDES_ID, ["fiches"])
-        nom = revision.nom_fichier(rev["genre"], rev["sujet"], dt.date.today())
-        kdrive_id = kd.upload(dossier, nom, f"# {rev['sujet']}\n\n{texte}".encode()).get("id")
-    except Exception as e:
-        log(f"copie kDrive de la révision impossible : {e}")
-    db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, kdrive_id=kdrive_id)
+    db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes)
+    kdrive_id = copier_pdf(kd, db.revision(rev["id"]))
+    if kdrive_id:
+        db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, kdrive_id=kdrive_id)
     log(f"révision prête : {rev['genre']} « {rev['sujet']} »")
     try:
-        notifications.revision_prete(rev)
+        if not rev.get("campagne_id"):  # une campagne prévient une seule fois, quand tout est prêt
+            notifications.revision_prete(rev)
+        else:
+            notifications.campagne_prete(rev["campagne_id"])
+    except Exception as e:
+        log(f"notification impossible : {e}")
+
+
+def copier_pdf(kd: KDrive, rev: dict) -> int | None:
+    """PDF de la révision dans Etudes/fiches/<campagne ou matière>/, pour l'ouvrir ou le partager depuis kDrive."""
+    try:
+        sources = {d["id"]: d["titre"] or d["nom"] for d in db.documents(list((rev["reperes"] or {}).values()))}
+        dossier = kd.ensure_path(ETUDES_ID, ["fiches", rev.get("campagne_titre") or rev.get("matiere") or "divers"])
+        nom = revision.nom_fichier(rev["genre"], rev["sujet"], dt.date.today(), "pdf")
+        return kd.upload(dossier, nom, pdf.revision_pdf(rev, sources)).get("id")
+    except Exception as e:
+        log(f"copie kDrive de la révision impossible : {e}")
+        return None
+
+
+def traiter_campagne(campagne: dict):
+    """Programme jour par jour d'une campagne, à partir des matières et des supports demandés."""
+    revs = db.revisions_campagne(campagne["id"])
+    matieres = {}
+    for r in revs:
+        m = matieres.setdefault((r["niveau"], r["matiere"]), {
+            "niveau": r["niveau"] or "?", "matiere": r["matiere"] or "?", "sujet": "", "supports": [], "cours": []})
+        m["supports"].append(r["genre"])
+        m.setdefault("ids", set()).update(r["doc_ids"])
+        sujet = r["sujet"].split(" : ", 1)[-1]
+        if sujet != r["matiere"]:
+            m["sujet"] = sujet
+    for m in matieres.values():
+        m["cours"] = [d["titre"] or d["nom"] for d in db.documents(sorted(m.pop("ids")))]
+    try:
+        programme = revision.generer_programme(campagne, list(matieres.values()),
+                                               db.evenements_entre(campagne["debut"], campagne["fin"]))
+    except ErreurAgent as e:
+        db.maj_campagne(campagne["id"], "erreur", erreur=str(e))
+        log(f"erreur de programme pour la campagne {campagne['id']} : {e}")
+        return
+    db.maj_campagne(campagne["id"], "pret", programme)
+    log(f"programme prêt : « {campagne['titre']} »")
+    try:
+        notifications.campagne_prete(campagne["id"])
     except Exception as e:
         log(f"notification impossible : {e}")
 
@@ -236,7 +272,11 @@ def main():
         pause = INTERVALLE
         prochaine_synchro = synchro_pronote(prochaine_synchro)
         try:
-            # Les révisions passent avant les scans : tu attends le résultat sur le site
+            # Les révisions passent avant les scans : tu attends le résultat sur le site.
+            # Le programme d'une campagne d'abord : il est court et tu vois tout de suite ta semaine.
+            for campagne in db.campagnes_en_attente():
+                log(f"campagne : « {campagne['titre']} »")
+                traiter_campagne(campagne)
             for rev in db.revisions_en_attente():
                 log(f"révision : {rev['genre']} « {rev['sujet']} »")
                 traiter_revision(kd, rev)

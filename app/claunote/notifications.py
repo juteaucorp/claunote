@@ -23,7 +23,7 @@ from py_vapid.utils import b64urlencode
 from cryptography.hazmat.primitives import serialization
 from pywebpush import WebPushException, webpush
 
-from claunote import db, pronote
+from claunote import db, pronote, revision
 
 PARIS = pronote.PARIS
 CONTACT = os.environ.get("CLAUNOTE_PUSH_CONTACT") or "mailto:claunote@example.com"
@@ -31,7 +31,8 @@ DUREE_VIE = 12 * 3600   # Apple/Google gardent le message 12 h si le téléphone
 INTERVALLE = 30         # secondes entre deux tours de la boucle
 DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
           "rappel": True, "pronote": True, "revisions": True}
-PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt"}
+PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
+         "examen": "Épreuve blanche prête"}
 JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
 
 
@@ -154,6 +155,15 @@ def rappel_du_jour(aujourd_hui: dt.date) -> tuple[str, str, str] | None:
         suite = f" Et {_cartes(dues)}." if dues else ""
         return (f"Contrôle de {e['matiere']} {_quand(j)}",
                 f"Pas encore de fiche : touche pour que je la prépare avec tes cours.{suite}", "/")
+    campagne = db.campagne_du_jour(aujourd_hui)
+    if campagne:
+        jour = next((j for j in revision.jours_programme(campagne["programme"], campagne["faits"])
+                     if j["date"] == aujourd_hui), None)
+        reste = [t for t in jour["taches"] if not t["fait"]] if jour else []
+        if reste:
+            quoi = " · ".join(f"{t['matiere']} ({t['duree']} min)" for t in reste[:3])
+            suite = f" Et {_cartes(dues)}." if dues else ""
+            return f"{campagne['titre']} : programme du jour", quoi + "." + suite, f"/campagne/{campagne['id']}"
     proches = [(e, j) for e, j in evals if j <= 3 and e["revision_statut"] == "pret"]
     if dues:
         suite = f" · {proches[0][0]['matiere']} {_quand(proches[0][1])} : ta fiche est prête." if proches else ""
@@ -193,6 +203,19 @@ def revision_prete(rev: dict):
     if preferences()["revisions"] and db.abonnements():
         db.notifier(f"revision:{rev['id']}", PRETE.get(rev["genre"], "Révision prête"), rev["sujet"],
                     f"/revision/{rev['id']}")
+
+
+def campagne_prete(campagne_id: int):
+    """Une seule notification, quand le programme et tous les supports de la campagne sont générés."""
+    campagne = db.campagne(campagne_id)
+    revs = db.revisions_campagne(campagne_id)
+    if not campagne or campagne["statut"] == "en_attente" or any(r["statut"] == "en_attente" for r in revs):
+        return
+    if preferences()["revisions"] and db.abonnements():
+        erreurs = sum(r["statut"] == "erreur" for r in revs)
+        db.notifier(f"campagne:{campagne_id}", f"{campagne['titre']} est prête",
+                    f"{len(revs) - erreurs} supports et ton programme jour par jour"
+                    + (f" ({erreurs} en erreur, à relancer)" if erreurs else ""), f"/campagne/{campagne_id}")
 
 
 def apres_synchro_pronote(documents_deposes: int = 0):

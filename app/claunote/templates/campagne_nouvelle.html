@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Nouvelle campagne{% endblock %}
+{% block contenu %}
+{% include "_reviser.html" %}
+<p class="fil"><a href="/reviser">Réviser</a> › Nouvelle campagne</p>
+<h1>Nouvelle campagne</h1>
+<p class="intro">Choisis tes matières et ce qu'il te faut : l'agent prépare <strong>tous les supports d'un coup</strong>
+  et un <strong>programme jour par jour</strong>, à partir de tes cours.</p>
+
+<div class="modeles" aria-label="Exemples">
+  <button type="button" data-modele="blanc">{{ icone('examen', 18) }} Semaine de BTS blanc</button>
+  <button type="button" data-modele="vacances">{{ icone('plan', 18) }} Révisions de vacances</button>
+  <button type="button" data-modele="controles">{{ icone('fiche', 18) }} Contrôles de la semaine</button>
+</div>
+
+{% if not niveaux %}
+<div class="carte">Il faut d'abord des cours classés : dépose des scans depuis <a href="/deposer">Déposer</a>.</div>
+{% else %}
+<form method="post" action="/campagne" class="formulaire" id="campagne">
+  <section>
+    <h2><span class="num">1</span> Nom et période</h2>
+    <div class="carte">
+      <p><label>Nom<br><input name="titre" required maxlength="80" style="width: 100%" placeholder="ex. Semaine de BTS blanc"></label></p>
+      <div class="dates">
+        <label>Du<br><input type="date" name="debut" value="{{ debut.isoformat() }}" required></label>
+        <label>Au<br><input type="date" name="fin" value="{{ fin.isoformat() }}" required></label>
+      </div>
+      <p class="doux">Le programme couvre chaque jour de cette période.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">2</span> Matières <span class="doux" id="nb-matieres"></span></h2>
+    {% for n in niveaux %}
+    <details class="niveau" {{ 'open' if loop.first }}>
+      <summary>{{ n }} <span class="doux">· {{ par_niveau[n]|length }} matière{{ 's' if par_niveau[n]|length > 1 }}</span></summary>
+      <div class="matieres">
+        {% for c in par_niveau[n] %}
+        {% set cle = c.niveau ~ '|' ~ c.matiere %}
+        <div class="matiere">
+          <label class="tete"><input type="checkbox" name="matieres" value="{{ cle }}">
+            <span><strong>{{ c.matiere }}</strong> <span class="doux">{{ c.n }} cours</span></span></label>
+          <div class="options">
+            <input name="sujet:{{ cle }}" placeholder="Chapitres à cibler (facultatif)" aria-label="Chapitres en {{ c.matiere }}">
+            <details hx-get="/reviser/documents?{{ {'niveau_matiere': cle, 'nom': 'docs:' ~ cle}|urlencode }}" hx-target="find .cours" hx-trigger="toggle once">
+              <summary>Choisir les cours</summary><div class="cours"><p class="doux">Chargement…</p></div>
+            </details>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endfor %}
+  </section>
+
+  <section>
+    <h2><span class="num">3</span> Pour chaque matière</h2>
+    <div class="genres-campagne">
+      {% for g, libelle in genres.items() if g != 'plan' %}
+      <label class="genre g-{{ g }}"><input type="checkbox" name="genres" value="{{ g }}" {{ 'checked' if g in ('examen', 'fiche') }}>
+        <span class="pastille-genre">{{ icone(g, 20) }}</span><strong>{{ libelle }}</strong></label>
+      {% endfor %}
+    </div>
+    <p class="doux">+ un programme jour par jour, qui place chaque support au bon moment.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">4</span> Contexte pour l'IA</h2>
+    <div class="carte"><textarea name="consigne" rows="5" style="width: 100%" placeholder="ex. BTS blanc du 3 au 7 novembre : maths lundi 8 h (2 h), CEJM mardi (4 h), anglais jeudi. Je suis faible en probabilités. Pas de révision le mercredi après-midi."></textarea>
+      <p class="doux">Dates et durées des épreuves, points faibles, consignes des profs, disponibilités… Plus c'est précis, plus le programme colle.</p></div>
+  </section>
+
+  <div class="carte resume" id="resume">
+    <div><strong id="resume-titre">Choisis au moins une matière</strong><div class="doux" id="resume-detail"></div></div>
+    <button class="principal" id="lancer" disabled>{{ icone('campagne', 18) }} Lancer la campagne</button>
+  </div>
+</form>
+{% endif %}
+<style>
+  .intro { margin-top: -8px; }
+  .modeles { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+  .modeles::-webkit-scrollbar { display: none; }
+  .modeles button { flex: none; display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; background: var(--carte); }
+  .modeles button svg { color: var(--accent-fonce); }
+  .formulaire section h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 1.1rem; margin: 24px 0 10px; }
+  .num { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font: 600 .85rem system-ui, sans-serif; }
+  .dates { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .dates input { width: 100%; }
+  .niveau { margin: 0 0 10px; background: var(--carte); border: 1px solid var(--bord); border-radius: 16px; padding: 4px 16px; }
+  .niveau > summary { padding: 10px 0; color: var(--texte); font-weight: 600; }
+  .matieres { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; padding: 4px 0 14px; }
+  .matiere { border: 1.5px solid var(--bord); border-radius: 14px; padding: 10px 12px; transition: border-color .15s, background .15s; }
+  .matiere .tete { display: flex; gap: 10px; align-items: center; cursor: pointer; }
+  .matiere .tete input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+  .matiere .options { display: none; margin-top: 10px; }
+  .matiere:has(.tete input:checked) { border-color: var(--accent); background: var(--accent-pale); }
+  .matiere:has(.tete input:checked) .options { display: block; }
+  .matiere .options > input { width: 100%; }
+  .matiere details { margin-top: 8px; }
+  .liste-cours { display: grid; gap: 2px; max-height: 280px; overflow-y: auto; margin-top: 6px; }
+  .liste-cours label { display: flex; gap: 10px; align-items: flex-start; padding: 6px 8px; border-radius: 10px; cursor: pointer; }
+  .liste-cours label:has(input:checked) { background: var(--carte); }
+  .liste-cours input { margin-top: 5px; width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+  .liste-cours label > span { display: flex; flex-direction: column; line-height: 1.35; }
+  .genres-campagne { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .genre { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 14px 8px; border: 1.5px solid var(--bord); border-radius: 16px; background: var(--carte); cursor: pointer; line-height: 1.25; }
+  .genre input { position: absolute; opacity: 0; pointer-events: none; }
+  .genre:has(input:checked) { border-color: var(--g); background: color-mix(in srgb, var(--g) 8%, var(--carte)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--g) 18%, transparent); }
+  .genre:has(input:checked)::after { content: "✓"; position: absolute; top: 6px; right: 10px; color: var(--g); font-weight: 700; }
+  .genre:has(input:focus-visible) { outline: 2px solid var(--g); outline-offset: 2px; }
+  .resume { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
+  .resume button { display: inline-flex; align-items: center; gap: 8px; }
+  .resume button:disabled { opacity: .5; cursor: not-allowed; }
+  @media (max-width: 640px) {
+    .genres-campagne { grid-template-columns: 1fr 1fr; }
+    .niveau { padding: 2px 12px; }
+    .matieres { grid-template-columns: 1fr; }
+    .resume button { width: 100%; justify-content: center; }
+  }
+</style>
+<script>
+  (() => {
+    const form = document.getElementById("campagne");
+    if (!form) return;
+    const MAX = {{ max }};
+    const MODELES = {
+      blanc: { titre: "Semaine de BTS blanc", genres: ["examen", "fiche"],
+        consigne: "Épreuves blanches du … au … :\n- lundi : … (… h)\n- mardi : … (… h)\nJe veux m'entraîner en conditions réelles et relire les corrigés le soir." },
+      vacances: { titre: "Révisions de vacances", genres: ["fiche", "quiz", "cartes"],
+        consigne: "Vacances : 1 h à 1 h 30 par jour maximum, repos le dimanche. Revoir les chapitres du trimestre." },
+      controles: { titre: "Contrôles de la semaine", genres: ["fiche", "quiz"],
+        consigne: "Contrôles prévus : … le …, … le …. Priorité au plus proche." },
+    };
+    form.closest("main").querySelectorAll("[data-modele]").forEach((b) => b.addEventListener("click", () => {
+      const m = MODELES[b.dataset.modele];
+      form.titre.value = m.titre;
+      if (!form.consigne.value.trim()) form.consigne.value = m.consigne;
+      form.querySelectorAll("[name=genres]").forEach((c) => { c.checked = m.genres.includes(c.value); });
+      maj();
+      form.titre.scrollIntoView({ behavior: "smooth", block: "center" });
+    }));
+    const maj = () => {
+      const nm = form.querySelectorAll("[name=matieres]:checked").length;
+      const ng = form.querySelectorAll("[name=genres]:checked").length;
+      const n = nm * ng;
+      document.getElementById("nb-matieres").textContent = nm ? `· ${nm} choisie${nm > 1 ? "s" : ""}` : "";
+      const titre = document.getElementById("resume-titre"), detail = document.getElementById("resume-detail");
+      const bouton = document.getElementById("lancer");
+      if (!nm || !ng) {
+        titre.textContent = !nm ? "Choisis au moins une matière" : "Choisis au moins un support";
+        detail.textContent = ""; bouton.disabled = true; return;
+      }
+      titre.textContent = `${n} support${n > 1 ? "s" : ""} + le programme`;
+      detail.textContent = n > MAX ? `Maximum ${MAX} : retire une matière ou un support.`
+        : `Environ ${Math.max(5, Math.round(n * 2.5))} min de génération, l'un après l'autre. Une notification te prévient quand tout est prêt.`;
+      bouton.disabled = n > MAX;
+    };
+    form.addEventListener("change", maj);
+    maj();
+  })();
+</script>
+{% endblock %}

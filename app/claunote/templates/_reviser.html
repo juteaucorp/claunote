@@ -1,0 +1,67 @@
+{# Styles et petits scripts communs aux pages Réviser, Campagne et Révision #}
+<style>
+  :root { --g-fiche: #c4623f; --g-quiz: #3b6fb6; --g-cartes: #3f8a57; --g-examen: #8a4fb8; --g-plan: #2f8b8b; }
+  @media (prefers-color-scheme: dark) { :root { --g-fiche: #ee9a7b; --g-quiz: #8db4ec; --g-cartes: #86cf9c; --g-examen: #c9a0ec; --g-plan: #7fd0cf; } }
+  .g-fiche { --g: var(--g-fiche); } .g-quiz { --g: var(--g-quiz); } .g-cartes { --g: var(--g-cartes); }
+  .g-examen { --g: var(--g-examen); } .g-plan { --g: var(--g-plan); }
+  .pastille-genre { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 12px;
+    color: var(--g, var(--accent-fonce)); background: color-mix(in srgb, var(--g, var(--accent)) 14%, transparent); }
+  .etiquette { display: inline-flex; align-items: center; gap: 4px; padding: 1px 10px; border-radius: 999px; font-size: .8rem; font-weight: 600;
+    color: var(--g, var(--accent-fonce)); background: color-mix(in srgb, var(--g, var(--accent)) 13%, transparent); white-space: nowrap; }
+  .etat { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: .78rem; font-weight: 600; white-space: nowrap; border: 1px solid var(--bord); color: var(--doux); }
+  .etat.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+  .etat.attente { color: var(--accent-fonce); border-color: var(--accent); background: var(--accent-pale); }
+  .etat.erreur { color: var(--alerte); border-color: var(--alerte); }
+  .barre-progres { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--texte) 9%, transparent); overflow: hidden; }
+  .barre-progres > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .3s; }
+  .barre-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+  .barre-actions form { margin: 0; }
+  .barre-actions .bouton, .barre-actions button { display: inline-flex; align-items: center; gap: 6px; }
+  button.fait { color: var(--ok); border-color: var(--ok); }
+  .menu-plus { position: relative; margin: 0; }
+  .menu-plus > summary { list-style: none; display: inline-flex; align-items: center; padding: 8px 14px; border: 1px solid var(--bord); border-radius: 10px; color: var(--texte); background: var(--carte); }
+  .menu-plus > summary::-webkit-details-marker { display: none; }
+  .menu-plus .feuille-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 5; min-width: 230px; padding: 6px; border-radius: 16px; background: var(--carte); border: 1px solid var(--bord); box-shadow: var(--verre-ombre); }
+  .feuille-menu a, .feuille-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; border-radius: 10px; background: none; color: var(--texte); text-decoration: none; text-align: left; font-weight: 500; min-height: 0; }
+  .feuille-menu a:hover, .feuille-menu button:hover { background: var(--fond-doux); }
+  .feuille-menu form { margin: 0; }
+  .feuille-menu .danger { color: var(--alerte); }
+  .lignes .pastille-genre { margin-top: 0; }
+  .lignes .pastille-genre svg { color: inherit; margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+  @media (max-width: 760px) {
+    .barre-actions .bouton, .barre-actions button, .menu-plus > summary { min-height: 44px; border-radius: 999px; padding-left: 16px; padding-right: 16px; }
+    .menu-plus .feuille-menu { right: auto; left: 0; }
+  }
+</style>
+<script>
+  // Partager un PDF : feuille de partage d'iOS (AirDrop, Messages, Fichiers…), sinon on ouvre le PDF.
+  // Le PDF est préparé à l'avance : iOS refuse le partage s'il arrive trop longtemps après le toucher.
+  (() => {
+    const prets = new Map();
+    const peutPartager = () => navigator.canShare && navigator.canShare({ files: [new File([""], "a.pdf", { type: "application/pdf" })] });
+    const charger = (b) => {
+      if (!prets.has(b.dataset.pdf)) prets.set(b.dataset.pdf, fetch(b.dataset.pdf, { credentials: "same-origin" })
+        .then((r) => r.ok ? r.blob() : Promise.reject(r.status)).then((blob) => new File([blob], b.dataset.nom, { type: "application/pdf" }))
+        .catch(() => { prets.delete(b.dataset.pdf); return null; }));
+      return prets.get(b.dataset.pdf);
+    };
+    document.addEventListener("DOMContentLoaded", () => {
+      const boutons = document.querySelectorAll("[data-partager]");
+      if (!boutons.length) return;
+      if (peutPartager()) setTimeout(() => boutons.forEach(charger), 600);
+      boutons.forEach((b) => b.addEventListener("click", async (e) => {
+        e.preventDefault();
+        if (!peutPartager()) { window.open(b.dataset.pdf + (b.dataset.pdf.includes("?") ? "&" : "?") + "telecharger=1", "_blank"); return; }
+        const texte = b.querySelector("span");
+        const avant = texte.textContent;
+        texte.textContent = "Préparation…";
+        const fichier = await charger(b);
+        texte.textContent = avant;
+        if (!fichier) { alert("Le PDF n'a pas pu être préparé. Réessaie dans un instant."); return; }
+        try { await navigator.share({ files: [fichier], title: b.dataset.titre || fichier.name }); }
+        catch (err) { if (err.name === "NotAllowedError") texte.textContent = "Toucher pour partager"; }
+      }));
+    });
+  })();
+</script>

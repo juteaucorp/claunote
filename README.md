@@ -35,6 +35,7 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Organiser : reclassement, actions de masse par date d'ajout, rangement IA, espace « Hors cours »
 - [x] Ergonomie mobile : accueil « Aujourd'hui », onglets en bas, photo depuis le téléphone
 - [x] Appli iPhone (HTTPS local, style Liquid Glass) et notifications push (voir infra/SETUP.md §13)
+- [x] Réviser : historique, épreuves blanches, campagnes multi-matières avec programme jour par jour, PDF à partager
 
 ## Installation et utilisation
 

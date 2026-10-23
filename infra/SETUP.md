@@ -137,19 +137,29 @@ Après une mise à jour du code : `git pull && docker compose up -d --build`.
 
 ## 7. Réviser (phase 3)
 
-Page **Réviser** du site : choisis une matière, un sujet (facultatif) et le type de support.
+Page **Réviser** du site : deux boutons en haut, **Une révision** et **Une campagne**, puis ce qui
+est au programme et l'historique **Déjà fait** (filtres par type, matière, recherche).
 
 | Support | Ce que tu obtiens |
 | --- | --- |
 | **Fiche de révision** | l'essentiel, définitions, formules/commandes, méthodes, pièges, 3 exercices corrigés |
-| **Quiz** | 10 QCM, réponse et explication cachées sous chaque question |
+| **Quiz** | 10 QCM à faire sur le site : bouton **Corriger**, score gardé dans l'historique |
+| **Flashcards** | 20 cartes en répétition espacée (onglet Cartes), export Anki |
+| **Épreuve blanche** | un sujet type examen avec barème, et son corrigé à part |
 | **Plan de révision** | un programme jour par jour jusqu'à la date de l'évaluation |
 
 - L'agent n'utilise **que tes cours** : chaque point renvoie au document source (`[D1]`, cliquable).
-- Le sujet sert de recherche dans la matière ; s'il ne trouve rien, toute la matière est utilisée.
-- Depuis la page d'un document : boutons **Fiche** et **Quiz** sur ce seul document.
-- Chaque support est aussi copié dans `Etudes/fiches/` sur kDrive (en Markdown).
-- Les révisions passent **avant** les scans dans la file du worker.
+- Tu peux **cocher les cours** à utiliser, et donner un **contexte** (consignes du prof, points faibles…).
+  Sans cours cochés, le sujet sert de recherche dans la matière ; s'il ne trouve rien, toute la matière est utilisée.
+- **Campagne** : plusieurs matières × plusieurs supports d'un coup (24 au maximum) + un **programme
+  jour par jour** sur la période choisie, qui tient compte de ton contexte et des évaluations Pronote.
+  Les tâches se cochent sur la page de la campagne ; celles du jour apparaissent sur Aujourd'hui et
+  dans le rappel quotidien. Une seule notification quand tout est prêt.
+- **PDF** : chaque support (et le livret complet d'une campagne) s'ouvre en PDF, avec ou sans corrigé.
+  **Partager** ouvre la feuille de partage de l'iPhone (AirDrop, Messages, Fichiers…).
+- Chaque support est aussi déposé en PDF dans `Etudes/fiches/<matière ou campagne>/` sur kDrive.
+- Les révisions passent **avant** les scans dans la file du worker ; avec le forfait Pro elles sont
+  générées l'une après l'autre (2 à 3 min chacune), et reprennent seules après une limite d'usage.
 
 ## 8. Pronote (phase 4)
 

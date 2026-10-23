@@ -1,29 +1,103 @@
 {% extends "base.html" %}
+{% from "_icones.html" import icone %}
 {% block titre %}{{ genres[rev.genre] }} : {{ rev.sujet }}{% endblock %}
 {% block tete %}{% if rev.statut == 'en_attente' %}<meta http-equiv="refresh" content="8">{% endif %}{% endblock %}
 {% block contenu %}
-<p class="doux"><a href="/reviser">Réviser</a> › {{ genres[rev.genre] }}</p>
+{% include "_reviser.html" %}
+<p class="fil"><a href="/reviser">Réviser</a>{% if rev.campagne_id %} › <a href="/campagne/{{ rev.campagne_id }}">{{ rev.campagne_titre }}</a>{% endif %} › {{ genres[rev.genre] }}</p>
+<div class="g-{{ rev.genre }} meta tete-revision">
+  <span class="etiquette">{{ icone(rev.genre, 15) }} {{ genres[rev.genre] }}</span>
+  {% if rev.matiere %}<span class="doux">{{ rev.matiere }}{% if rev.niveau %} · {{ rev.niveau }}{% endif %}</span>{% endif %}
+</div>
 <h1>{{ rev.sujet }}</h1>
-{% if rev.date_eval %}<p class="doux">Évaluation le {{ rev.date_eval.strftime('%d/%m/%Y') }}</p>{% endif %}
+<p class="doux meta">
+  {% if rev.cree_le %}<span>Créé le {{ (rev.cree_le|paris)[:10] }}</span>{% endif %}
+  {% if rev.date_eval %}<span>· Évaluation le {{ rev.date_eval.strftime('%d/%m/%Y') }}</span>{% endif %}
+  {% if rev.score %}<span class="etat ok">Dernier score : {{ rev.score.bonnes }}/{{ rev.score.total }}</span>
+  {% elif rev.fait_le %}<span class="etat ok">Fait le {{ (rev.fait_le|paris)[:10] }}</span>{% endif %}
+</p>
+
+{% if rev.statut == 'pret' %}
+{% set nom_pdf = (genres[rev.genre] ~ ' ' ~ rev.sujet)|replace('/', '-') ~ '.pdf' %}
+<div class="barre-actions">
+  <a class="bouton" href="/revision/{{ rev.id }}/pdf" target="_blank">{{ icone('pdf', 18) }}<span>PDF</span></a>
+  <a class="bouton" href="#" data-partager data-pdf="/revision/{{ rev.id }}/pdf" data-nom="{{ nom_pdf }}" data-titre="{{ rev.sujet }}">{{ icone('partager', 18) }}<span>Partager</span></a>
+  {% if rev.genre != 'quiz' %}
+  <form method="post" action="/revision/{{ rev.id }}/fait"><input type="hidden" name="fait" value="{{ '0' if rev.fait_le else '1' }}">
+    <button class="{{ 'fait' if rev.fait_le }}">{{ icone('check', 18) }}<span>{{ 'Fait' if rev.fait_le else 'Marquer comme fait' }}</span></button></form>
+  {% endif %}
+  <details class="menu-plus">
+    <summary aria-label="Plus d'actions">{{ icone('plus', 20) }}</summary>
+    <div class="feuille-menu">
+      {% if rev.genre in ('quiz', 'examen') %}
+      <a href="/revision/{{ rev.id }}/pdf?corrige=0" target="_blank">{{ icone('examen', 18) }} PDF du sujet seul</a>
+      <a href="#" data-partager data-pdf="/revision/{{ rev.id }}/pdf?corrige=0" data-nom="{{ nom_pdf[:-4] }} (sujet).pdf" data-titre="{{ rev.sujet }}">{{ icone('partager', 18) }}<span>Partager le sujet seul</span></a>
+      {% endif %}
+      {% if rev.genre == 'cartes' %}<a href="/cartes/anki?paquet={{ rev.id }}" download>{{ icone('cartes', 18) }} Exporter vers Anki</a>{% endif %}
+      <form method="post" action="/revision/{{ rev.id }}/relancer" onsubmit="return confirm('Refaire ce support ? L\'actuel sera remplacé.')"><button>{{ icone('relancer', 18) }} Régénérer</button></form>
+      <form method="post" action="/revision/{{ rev.id }}/supprimer" onsubmit="return confirm('Supprimer ce support ?')"><button class="danger">{{ icone('corbeille', 18) }} Supprimer</button></form>
+    </div>
+  </details>
+</div>
+{% endif %}
 
 {% if rev.statut == 'en_attente' %}
-<div class="carte">L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).</div>
+<div class="carte accent">L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).</div>
 {% elif rev.statut == 'erreur' %}
-<div class="carte alerte">Erreur : {{ rev.erreur }}</div>
+<div class="carte"><p class="alerte">Erreur : {{ rev.erreur }}</p>
+  <div class="actions">
+    <form method="post" action="/revision/{{ rev.id }}/relancer"><button class="principal">Réessayer</button></form>
+    <form method="post" action="/revision/{{ rev.id }}/supprimer"><button>Supprimer</button></form>
+  </div></div>
 {% elif rev.genre == 'quiz' %}
-<ol class="quiz">
+<form id="quiz" class="quiz" onsubmit="return false">
   {% for q in questions %}
-  <li class="carte">
-    <strong>{{ q.question }}</strong>
-    <ol type="A">{% for c in q.choix %}<li>{{ c }}</li>{% endfor %}</ol>
-    <details><summary>Voir la réponse</summary>
+  {% set i = loop.index0 %}
+  <fieldset class="carte question" data-reponse="{{ q.reponse }}">
+    <legend><span class="num-q">{{ loop.index }}</span> {{ q.question }}</legend>
+    {% for c in q.choix %}
+    <label class="choix-q"><input type="radio" name="q{{ i }}" value="{{ loop.index0 }}"><span class="lettre">{{ 'ABCDEFGH'[loop.index0] }}</span><span>{{ c }}</span></label>
+    {% endfor %}
+    <details class="explication"><summary>Voir la réponse</summary>
       <p><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse] }}</strong></p>
       <p>{{ q.explication }}
       {% if q.source in reperes %}<a href="/doc/{{ reperes[q.source] }}">[{{ q.source }}]</a>{% endif %}</p>
     </details>
-  </li>
+  </fieldset>
   {% endfor %}
-</ol>
+  <div class="carte resultat" id="resultat" hidden></div>
+  <div class="actions"><button class="principal" id="corriger" type="button">Corriger</button>
+    <button type="button" id="recommencer" hidden>Recommencer</button></div>
+</form>
+<script>
+  (() => {
+    const quiz = document.getElementById("quiz");
+    const questions = [...quiz.querySelectorAll(".question")];
+    document.getElementById("corriger").addEventListener("click", async () => {
+      let bonnes = 0;
+      questions.forEach((q) => {
+        const choisi = q.querySelector("input:checked");
+        const bon = q.querySelectorAll("input")[+q.dataset.reponse];
+        bon.closest("label").classList.add("bonne");
+        if (choisi && choisi === bon) bonnes++;
+        else if (choisi) choisi.closest("label").classList.add("fausse");
+        q.classList.add(choisi === bon ? "reussie" : "ratee");
+        q.querySelector(".explication").open = choisi !== bon;
+        q.querySelectorAll("input").forEach((i) => { i.disabled = true; });
+      });
+      const total = questions.length;
+      const r = document.getElementById("resultat");
+      r.hidden = false;
+      r.innerHTML = `<strong class="score">${bonnes}/${total}</strong> ${bonnes === total ? "Parfait !" : bonnes >= total * .7 ? "Bien joué." : "Relis les explications des questions ratées."}`;
+      r.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("corriger").hidden = true;
+      document.getElementById("recommencer").hidden = false;
+      const donnees = new URLSearchParams({ bonnes, total, fait: "1" });
+      fetch("/revision/{{ rev.id }}/fait", { method: "POST", body: donnees, credentials: "same-origin", redirect: "manual" }).catch(() => {});
+    });
+    document.getElementById("recommencer").addEventListener("click", () => location.reload());
+  })();
+</script>
 {% elif rev.genre == 'cartes' %}
 <div class="carte accent actions">
   <strong>{{ cartes|length }} flashcard{{ 's' if cartes|length > 1 }}</strong>
@@ -38,17 +112,51 @@
 </details>
 {% endfor %}
 {% else %}
-<div class="carte transcription">{{ contenu }}</div>
+<div class="carte transcription contenu-revision">{{ contenu }}</div>
+{% if corrige %}
+<details class="carte corrige"><summary>Voir le corrigé</summary><div class="transcription contenu-revision">{{ corrige }}</div></details>
+{% elif rev.genre == 'examen' %}<p class="doux">Pas de corrigé séparé dans ce sujet.</p>{% endif %}
+{% endif %}
+
+{% if rev.consigne %}
+<details class="carte"><summary>Contexte donné à l'IA</summary><p>{{ rev.consigne|e|replace('\n', '<br>'|safe) }}</p></details>
 {% endif %}
 
 {% if sources %}
 <h2>Sources</h2>
-<ul>
+<ul class="carte lignes">
   {% for repere, doc_id in reperes.items() %}
     {% for d in sources if d.id == doc_id %}
-    <li>[{{ repere }}] <a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a> <span class="doux">{{ d.type }}</span></li>
+    <li><span class="etiquette">{{ repere }}</span><div class="corps"><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a> <span class="doux">{{ d.type }}</span></div></li>
     {% endfor %}
   {% endfor %}
 </ul>
 {% endif %}
+<style>
+  .tete-revision { margin-bottom: 4px; }
+  .tete-revision + h1 { margin-top: 4px; margin-bottom: 4px; }
+  h1 + p.meta { margin: 0 0 16px; }
+  .contenu-revision h2 { font-size: 1.15rem; margin: 22px 0 8px; color: var(--accent-fonce); }
+  .contenu-revision h1 { font-size: 1.35rem; }
+  .contenu-revision table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
+  .contenu-revision th, .contenu-revision td { border: 1px solid var(--bord); padding: 6px 8px; }
+  .corrige > summary { font-size: 1.05rem; }
+  .question { border: 1px solid var(--bord); margin: 0 0 12px; }
+  .question legend { float: left; width: 100%; padding: 0; margin-bottom: 10px; font-weight: 600; display: flex; gap: 10px; }
+  .question legend + * { clear: both; }
+  .num-q { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--fond-doux); font-size: .85rem; }
+  .choix-q { position: relative; display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 6px 0; border: 1.5px solid var(--bord); border-radius: 12px; cursor: pointer; line-height: 1.4; }
+  .choix-q input { position: absolute; opacity: 0; pointer-events: none; }
+  .choix-q .lettre { flex: none; width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; border: 1.5px solid var(--bord); font-size: .82rem; font-weight: 700; }
+  .choix-q:has(input:checked) { border-color: var(--g-quiz); background: color-mix(in srgb, var(--g-quiz) 9%, var(--carte)); }
+  .choix-q:has(input:checked) .lettre { background: var(--g-quiz); border-color: var(--g-quiz); color: #fff; }
+  .choix-q.bonne { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, var(--carte)); }
+  .choix-q.bonne .lettre { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .choix-q.fausse { border-color: var(--alerte); background: color-mix(in srgb, var(--alerte) 10%, var(--carte)); }
+  .choix-q.fausse .lettre { background: var(--alerte); border-color: var(--alerte); color: #fff; }
+  .question.reussie .num-q { background: var(--ok); color: #fff; }
+  .question.ratee .num-q { background: var(--alerte); color: #fff; }
+  .resultat { font-size: 1.05rem; }
+  .resultat .score { font-size: 1.6rem; font-family: ui-serif, Georgia, serif; margin-right: 8px; }
+</style>
 {% endblock %}

@@ -44,7 +44,14 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "niveaux_matieres", lambda: [{"niveau": "BTS1", "matiere": "Réseaux"}])
     monkeypatch.setattr(db, "revisions", lambda limite=30: [])
     monkeypatch.setattr(db, "choisir_documents", lambda n, m, q="": [1] if q == "" or q == "vlan" else [])
-    monkeypatch.setattr(db, "creer_revision", lambda *a: appels.append(("rev",) + a) or 5)
+    monkeypatch.setattr(db, "creer_revision", lambda *a, **k: appels.append(("rev",) + a + ((k,) if k.get("campagne_id") else ())) or 5)
+    monkeypatch.setattr(db, "campagne_du_jour", lambda jour: None)
+    monkeypatch.setattr(db, "campagnes", lambda limite=20: [])
+    monkeypatch.setattr(db, "historique", lambda *a: ([], 0))
+    monkeypatch.setattr(db, "compte_revisions", lambda: {"genres": {}, "attente": 0, "total": 0})
+    monkeypatch.setattr(db, "matieres_revisions", lambda: ["Réseaux"])
+    monkeypatch.setattr(db, "niveaux_matieres_comptes", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
+    monkeypatch.setattr(db, "documents_matiere", lambda n, m: [DOC] if m == "Réseaux" else [])
     monkeypatch.setattr(db, "documents", lambda ids: [DOC] if 1 in ids else [])
     with TestClient(main.app) as c:
         c.appels = appels
@@ -107,7 +114,10 @@ def test_classer_deplace_dans_kdrive(client, monkeypatch):
 
 def test_page_reviser(client):
     r = client.get("/reviser")
-    assert r.status_code == 200 and 'value="BTS1|Réseaux"' in r.text and "Plan de révision" in r.text
+    assert r.status_code == 200 and "/reviser/nouvelle" in r.text and "/campagne/nouvelle" in r.text
+    assert "Déjà fait" in r.text and "Épreuve blanche" in r.text
+    r = client.get("/reviser/nouvelle")
+    assert 'value="BTS1|Réseaux"' in r.text and "Plan de révision" in r.text and 'name="consigne"' in r.text
 
 
 def test_demander_une_fiche_depuis_un_document(client):
@@ -293,7 +303,7 @@ def test_agenda_preparer(agenda):
     assert r.headers["location"] == "/revision/42"
     # Pas de cours : formulaire de révision prérempli
     r = agenda.post("/agenda/preparer", data={"ev_id": "devoir:d1"}, follow_redirects=False)
-    assert r.headers["location"].startswith("/reviser?sujet=Unit+4&genre=plan&date_eval=")
+    assert r.headers["location"].startswith("/reviser/nouvelle?sujet=Unit+4&genre=plan&date_eval=")
     agenda.evs["cours:c1"]["revision_id"] = 7
     assert agenda.post("/agenda/preparer", data={"ev_id": "cours:c1"}, follow_redirects=False).headers["location"] == "/revision/7"
     assert agenda.post("/agenda/preparer", data={"ev_id": "x"}).status_code == 404
@@ -301,6 +311,7 @@ def test_agenda_preparer(agenda):
 
 def test_reviser_prerempli(client):
     r = client.get("/reviser", params={"sujet": "VLAN", "matiere": "Réseaux", "genre": "plan", "date_eval": "2030-01-02"})
+    assert str(r.url).startswith("http://testserver/reviser/nouvelle?")  # anciens liens : vers le formulaire
     assert 'value="VLAN"' in r.text and "selected" in r.text and 'value="2030-01-02"' in r.text
     assert 'value="plan" checked' in r.text
 
@@ -686,3 +697,121 @@ def test_page_notifications(client, monkeypatch):
     assert client.post("/notifications/reglages", data={"heure": "25h"}).status_code == 400
     client.post("/notifications/desabonnement", json={"endpoint": "https://web.push.apple.com/x"})
     assert abos == []
+
+
+REV = {"id": 5, "genre": "examen", "sujet": "Suites", "date_eval": None, "erreur": None, "reperes": {"D1": 1},
+       "statut": "pret", "contenu": "# Épreuve\n## Exercice 1\nCalculer [D1]\n\n## Corrigé\nRéponse",
+       "matiere": "Maths", "niveau": "BTS2", "campagne_id": None, "campagne_titre": None, "consigne": "Sans calculatrice",
+       "fait_le": None, "score": None, "cree_le": None}
+
+
+def test_epreuve_blanche_et_pdf(client, monkeypatch):
+    monkeypatch.setattr(db, "revision", lambda i: REV if i == 5 else None)
+    r = client.get("/revision/5")
+    assert "Voir le corrigé" in r.text and r.text.index("Exercice 1") < r.text.index("Réponse")
+    assert "Sans calculatrice" in r.text and "data-partager" in r.text and "/revision/5/pdf?corrige=0" in r.text
+    r = client.get("/revision/5/pdf")
+    assert r.headers["content-type"] == "application/pdf" and r.content.startswith(b"%PDF-")
+    assert "inline" in r.headers["content-disposition"]
+    sujet = client.get("/revision/5/pdf?corrige=0&telecharger=1")
+    assert "attachment" in sujet.headers["content-disposition"] and "sujet" in sujet.headers["content-disposition"]
+    assert len(sujet.content) < len(r.content)  # sans la page du corrigé
+    monkeypatch.setattr(db, "revision", lambda i: {**REV, "statut": "en_attente"})
+    assert client.get("/revision/5/pdf").status_code == 404
+
+
+def test_quiz_pdf_et_score(client, monkeypatch):
+    quiz = {**REV, "genre": "quiz", "contenu": '[{"question": "Q?", "choix": ["a", "b"], "reponse": 1, '
+                                                '"explication": "car", "source": "D1"}]'}
+    monkeypatch.setattr(db, "revision", lambda i: quiz)
+    vu = []
+    monkeypatch.setattr(db, "marquer_fait", lambda i, fait=True, score=None: vu.append((i, fait, score)))
+    assert client.get("/revision/5/pdf").content.startswith(b"%PDF-")
+    r = client.post("/revision/5/fait", data={"bonnes": "1", "total": "1"}, follow_redirects=False)
+    assert r.status_code == 303 and vu == [(5, True, {"bonnes": 1, "total": 1})]
+    client.post("/revision/5/fait", data={"fait": "0"}, follow_redirects=False)
+    assert vu[-1] == (5, False, None)
+
+
+def test_supprimer_et_relancer_revision(client, monkeypatch):
+    vu = []
+    monkeypatch.setattr(db, "revision", lambda i: {**REV, "campagne_id": 3})
+    monkeypatch.setattr(db, "supprimer_revision", lambda i: vu.append(("suppr", i)))
+    monkeypatch.setattr(db, "relancer_revision", lambda i: vu.append(("relance", i)))
+    assert client.post("/revision/5/supprimer", follow_redirects=False).headers["location"] == "/campagne/3"
+    assert client.post("/revision/5/relancer", follow_redirects=False).headers["location"] == "/revision/5"
+    assert vu == [("suppr", 5), ("relance", 5)] and "scan" in client.appels
+
+
+def test_historique_filtre(client, monkeypatch):
+    vu = {}
+    lignes = [{"id": 5, "genre": "quiz", "sujet": "VLAN", "statut": "pret", "date_eval": None,
+               "cree_le": date(2026, 10, 20), "niveau": "BTS1", "matiere": "Réseaux", "fait_le": None,
+               "score": {"bonnes": 7, "total": 10}, "campagne_id": 2, "campagne_titre": "BTS blanc"}]
+    monkeypatch.setattr(db, "historique", lambda *a: vu.update(args=a) or (lignes, 45))
+    import datetime as dt
+    monkeypatch.setattr(main.templates.env, "filters", {**main.templates.env.filters,
+                                                        "paris": lambda d: d.strftime("%d/%m/%Y 00:00")})
+    r = client.get("/reviser", params={"filtre": "quiz", "m": "Réseaux", "q": "vl", "page": 2})
+    assert vu["args"] == ("quiz", "Réseaux", "vl", 20, 20)
+    assert "7/10" in r.text and "BTS blanc" in r.text and "Page 2 / 3" in r.text and "20/10/2026" in r.text
+    # Filtre en direct : seulement la liste
+    r = client.get("/reviser", params={"filtre": "inconnu"}, headers={"HX-Request": "true", "HX-Target": "historique"})
+    assert vu["args"][0] == "" and r.text.lstrip().startswith('<div id="historique">') and "<h1>" not in r.text
+
+
+def test_nouvelle_revision_avec_contexte_et_cours(client):
+    r = client.post("/reviser", data={"genre": "examen", "niveau_matiere": "BTS1|Réseaux", "sujet": "VLAN",
+                                      "consigne": "  2 h  ", "doc_ids": ["1", "x"]}, follow_redirects=False)
+    assert r.status_code == 303 and ("rev", "examen", "VLAN", [1], None) in client.appels
+    r = client.get("/reviser/documents", params={"niveau_matiere": "BTS1|Réseaux", "nom": "docs:BTS1|Réseaux"})
+    assert 'name="docs:BTS1|Réseaux" value="1"' in r.text and "Les VLAN" in r.text
+    assert "Les VLAN" in client.get("/reviser/nouvelle?doc=1").text
+
+
+def test_creer_campagne(client, monkeypatch):
+    monkeypatch.setattr(db, "creer_campagne", lambda *a: client.appels.append(("campagne",) + a) or 9)
+    r = client.get("/campagne/nouvelle")
+    assert 'value="BTS1|Réseaux"' in r.text and 'name="genres" value="examen" checked' in r.text
+    donnees = {"titre": "BTS blanc", "consigne": "Maths lundi", "debut": "2026-11-02", "fin": "2026-11-06",
+               "matieres": ["BTS1|Réseaux"], "genres": ["examen", "fiche", "plan"], "sujet:BTS1|Réseaux": "vlan"}
+    r = client.post("/campagne", data=donnees, follow_redirects=False)
+    assert r.headers["location"] == "/campagne/9"
+    assert ("campagne", "BTS blanc", "Maths lundi", date(2026, 11, 2), date(2026, 11, 6)) in client.appels
+    revs = [a for a in client.appels if a[0] == "rev"]
+    assert revs == [("rev", "examen", "Réseaux : vlan", [1], date(2026, 11, 6), {"consigne": "Maths lundi", "campagne_id": 9}),
+                    ("rev", "fiche", "Réseaux : vlan", [1], None, {"consigne": "Maths lundi", "campagne_id": 9})]
+    assert client.post("/campagne", data={**donnees, "fin": "2026-10-01"}).status_code == 400
+    assert client.post("/campagne", data={**donnees, "genres": ["plan"]}).status_code == 400
+
+
+def test_page_campagne(client, monkeypatch):
+    import datetime as dt
+    jour = dt.date.today()
+    campagne = {"id": 9, "titre": "BTS blanc", "consigne": "Maths lundi", "debut": jour, "fin": jour + dt.timedelta(days=2),
+                "statut": "pret", "erreur": None, "faits": [f"{jour}:0"],
+                "programme": {"conseil": "Courage !", "jours": [{"date": jour.isoformat(), "titre": "Réseaux", "taches": [
+                    {"matiere": "Réseaux", "quoi": "Faire l'épreuve", "duree": 120, "support": "examen"},
+                    {"matiere": "Réseaux", "quoi": "Relire la fiche", "duree": 20, "support": "fiche"}]}]}}
+    revs = [{"id": 5, "genre": "examen", "sujet": "Réseaux", "statut": "pret", "niveau": "BTS1", "matiere": "Réseaux",
+             "fait_le": None, "score": None, "erreur": None, "doc_ids": [1]},
+            {"id": 6, "genre": "fiche", "sujet": "Réseaux", "statut": "en_attente", "niveau": "BTS1", "matiere": "Réseaux",
+             "fait_le": None, "score": None, "erreur": None, "doc_ids": [1]}]
+    monkeypatch.setattr(db, "campagne", lambda i: campagne if i == 9 else None)
+    monkeypatch.setattr(db, "revisions_campagne", lambda i: revs)
+    r = client.get("/campagne/9")
+    assert "Courage !" in r.text and "1</strong>/2 tâches" in r.text and 'id="aujourdhui"' in r.text
+    assert 'href="/revision/5"' in r.text and "Génération en cours · 1/2" in r.text and 'http-equiv="refresh"' in r.text
+    assert "/campagne/9/pdf" in r.text
+    vu = []
+    monkeypatch.setattr(db, "basculer_tache", lambda i, cle: vu.append(cle) or True)
+    r = client.post("/campagne/9/tache", data={"cle": f"{jour}:1"}, headers={"HX-Request": "true"})
+    assert r.status_code == 200 and vu == [f"{jour}:1"] and '"fait": true' in r.headers["HX-Trigger"]
+    assert client.post("/campagne/9/tache", data={"cle": "x"}).status_code == 400
+    monkeypatch.setattr(db, "revision", lambda i: {**REV, "id": i, "matiere": "Réseaux"} if i == 5 else None)
+    pdf = client.get("/campagne/9/pdf")
+    assert pdf.content.startswith(b"%PDF-") and "BTS-blanc.pdf" in pdf.headers["content-disposition"]
+    monkeypatch.setattr(db, "supprimer_campagne", lambda i, avec_revisions=True: vu.append(("suppr", avec_revisions)))
+    client.post("/campagne/9/supprimer", data={"garder": "true"})
+    assert vu[-1] == ("suppr", False)
+    assert client.get("/campagne/1").status_code == 404
