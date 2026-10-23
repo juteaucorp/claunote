@@ -3,23 +3,55 @@
 // seul le jeton de reconnexion de Pronote est stocké, et il change à chaque connexion.
 import { randomUUID } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 const JOUR = 24 * 60 * 60 * 1000;
 const MAX_REDIRECTIONS = 5;
 
+const UA_BUREAU = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0";
+const MARQUE_VERSION = />PRONOTE \d+\.\d+\.\d+/u; // ce que Pawnote cherche dans la page
+const AUTRES_VERSIONS = [
+  /PRONOTE(?:\s|&nbsp;|\u00A0)*(?:-|–)?(?:\s|&nbsp;|\u00A0)*(\d{4}\.\d+\.\d+)/u,
+  /["']?version["']?\s*[:=]\s*["']?(\d{4}\.\d+\.\d+)/iu,
+  /\b(20\d{2}\.\d{1,2}\.\d{1,3})\b/u,
+];
+
+const titre = (html) =>
+  (html.match(/<title[^>]*>([^<]*)<\/title>/iu)?.[1] ?? "").replace(/\s+/gu, " ").trim();
+
+const apercu = (html) =>
+  html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/giu, " ").replace(/<[^>]+>/gu, " ")
+    .replace(/\s+/gu, " ").trim().slice(0, 300);
+
 /**
- * Fetcher passé à Pawnote. Pawnote charge la page Pronote sans suivre les redirections ;
- * certains serveurs redirigent (domaine de l'établissement, https, ENT…) et Pawnote voit alors
- * une page vide (« Pronote est indisponible »). On suit les redirections des GET, comme le font
- * les autres clients (Home Assistant / pronotepy), et on garde la trace du dernier échange.
+ * Page d'accueil Pronote telle que Pawnote sait la lire, ou null.
+ * Pawnote attend « >PRONOTE x.y.z » et un appel « Start(…) » ; certaines versions de Pronote
+ * affichent la version autrement : on ajoute alors la marque attendue en fin de page.
  */
-export function creerFetcher({ fetch: f = globalThis.fetch, journal = console.log } = {}) {
-  const fetcher = async (req) => {
-    let url = new URL(req.url.href ?? req.url);
-    const methode = req.method ?? "GET";
-    const entetes = { ...(req.headers instanceof Headers ? Object.fromEntries(req.headers) : req.headers) };
+export function pageLisible(html) {
+  if (!html.includes("Start")) return null;
+  if (MARQUE_VERSION.test(html)) return html;
+  for (const motif of AUTRES_VERSIONS) {
+    const version = html.match(motif)?.[1];
+    if (version) return `${html}\n<!-- claunote --><span>>PRONOTE ${version}</span>`;
+  }
+  return null;
+}
+
+/**
+ * Fetcher passé à Pawnote, qui corrige ce qui la fait échouer sur certains serveurs :
+ * - Pawnote ne suit pas les redirections : on suit celles des GET (cookies compris), comme
+ *   pronotepy / Home Assistant ;
+ * - la page d'accueil n'est pas reconnue (version absente, page « mets à jour l'application »
+ *   servie au user-agent de l'appli mobile) : on retente avec un navigateur de bureau, comme
+ *   pronotepy, et si rien ne marche on garde la page dans `diagnostic` pour comprendre.
+ */
+export function creerFetcher({ fetch: f = globalThis.fetch, journal = console.log, diagnostic = null } = {}) {
+  let uaBureau = false;
+
+  async function echange(url, methode, entetes, corps) {
     for (let saut = 0; ; saut++) {
-      const r = await f(url.href, { redirect: "manual", headers: entetes, method: methode, body: req.content });
+      const r = await f(url.href, { redirect: "manual", headers: entetes, method: methode, body: corps });
       const lieu = r.headers.get("location");
       // Les cookies posés pendant une redirection suivent (session de l'établissement)
       const poses = r.headers.getSetCookie?.() ?? [];
@@ -36,7 +68,43 @@ export function creerFetcher({ fetch: f = globalThis.fetch, journal = console.lo
       if (r.status >= 400) journal(`pronote : ${methode} ${url.origin}${url.pathname} → ${r.status}`);
       return { status: r.status, content: await r.text(), headers: r.headers };
     }
+  }
+
+  const avecUa = (entetes) => {
+    if (!uaBureau) return entetes;
+    const cle = Object.keys(entetes).find((k) => k.toLowerCase() === "user-agent") ?? "User-Agent";
+    return { ...entetes, [cle]: UA_BUREAU };
   };
+
+  async function fetcher(req) {
+    const url = new URL(req.url.href ?? req.url);
+    const methode = req.method ?? "GET";
+    const entetes = { ...(req.headers instanceof Headers ? Object.fromEntries(req.headers) : req.headers) };
+    let r = await echange(url, methode, avecUa(entetes), req.content);
+
+    const accueil = methode === "GET" && /\/mobile\.[a-z]+\.html$/u.test(url.pathname);
+    if (!accueil || r.status !== 200) return r;
+    let lisible = pageLisible(r.content);
+    if (!lisible && !uaBureau) {
+      journal(`pronote : page d'accueil non reconnue (« ${titre(r.content)} »), nouvel essai en navigateur de bureau`);
+      uaBureau = true;
+      const r2 = await echange(url, methode, avecUa(entetes), req.content);
+      if (r2.status === 200 && pageLisible(r2.content)) r = r2;
+      else uaBureau = false;
+      lisible = pageLisible(r.content);
+    }
+    if (lisible) return { ...r, content: lisible };
+
+    fetcher.dernier = { ...fetcher.dernier, titre: titre(r.content) || apercu(r.content).slice(0, 80) };
+    journal(`pronote : page d'accueil toujours non reconnue. Titre : « ${titre(r.content)} ». Début : ${apercu(r.content)}`);
+    if (diagnostic) {
+      try {
+        await writeFile(diagnostic, r.content);
+        journal(`pronote : page complète gardée dans ${diagnostic}`);
+      } catch { /* diagnostic facultatif */ }
+    }
+    return r;
+  }
   fetcher.dernier = null;
   return fetcher;
 }
@@ -64,7 +132,8 @@ export const traduire = (e, fetcher = null) => {
   let message = MESSAGES[e?.name] ?? `Erreur Pronote : ${e?.message ?? e}`;
   const d = fetcher?.dernier;
   if (d && ["PageUnavailableError", "BusyPageError"].includes(e?.name)) {
-    message += ` (dernière réponse : ${d.methode} ${d.url} → HTTP ${d.statut}${d.lieu ? `, redirige vers ${d.lieu}` : ""})`;
+    message += ` (dernière réponse : ${d.methode} ${d.url} → HTTP ${d.statut}${d.lieu ? `, redirige vers ${d.lieu}` : ""}`
+      + `${d.titre ? `, page « ${d.titre} »` : ""})`;
   }
   const err = new ErreurPronote(message, 502);
   err.cause = e; // gardé pour les logs du service
@@ -175,7 +244,7 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
   let file = Promise.resolve(); // une seule opération à la fois : le jeton change à chaque connexion
   const enFile = (f) => (file = file.then(f, f));
   const nouvelleSession = () => {
-    const fetcher = creerFetcher({ fetch, journal });
+    const fetcher = creerFetcher({ fetch, journal, diagnostic: join(dirname(fichier), "page-pronote.html") });
     return { session: pawnote.createSessionHandle(fetcher), fetcher };
   };
 
