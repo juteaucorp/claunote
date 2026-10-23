@@ -489,5 +489,5 @@ def test_tour_sans_claude_continue_le_reste(worker, monkeypatch):
     for nom in ("ranger_en_attente", "pdf_manquants", "nettoyer_inbox"):
         monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
     monkeypatch.setattr(worker, "lire_inbox", lambda kd: fait.append("inbox") or [])
-    worker.tour(None, 0.0)
+    worker.tour(None, float("-inf"))
     assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "nettoyer_inbox"]
