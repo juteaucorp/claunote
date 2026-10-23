@@ -3,9 +3,7 @@ import re
 import unicodedata
 from pathlib import PurePosixPath
 
-from claunote.agent import Analyse
-
-SEUIL_CONFIANCE = 0.7
+from claunote.agent import SEUIL_CONFIANCE, Analyse
 A_VERIFIER = ["a-verifier"]
 HORS_COURS = ["hors-cours"]
 

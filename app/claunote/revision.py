@@ -12,7 +12,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from claunote.agent import ErreurAgent, appeler_claude
+from claunote.agent import ErreurAgent, demander
 from claunote.rangement import slug
 
 GENRES = {"fiche": "Fiche de révision", "quiz": "Quiz", "cartes": "Flashcards", "examen": "Épreuve blanche",
@@ -210,14 +210,20 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
     if not docs:
         raise ErreurAgent("aucun document à utiliser")
     texte_cours, reperes = contexte(docs)
+
+    def lire(texte: str):
+        # Réponse inutilisable : demander() réessaie avec le modèle au-dessus
+        if genre == "quiz":
+            return json.dumps(parse_quiz(texte), ensure_ascii=False), web_json(texte)
+        if genre == "cartes":
+            return json.dumps(parse_cartes(texte), ensure_ascii=False), web_json(texte)
+        if len(texte.strip()) < 80:
+            raise ErreurAgent(f"réponse trop courte : {texte[:200]!r}")
+        return separer_web(texte.strip())
+
     with tempfile.TemporaryDirectory() as vide:  # aucun fichier local : les cours sont dans l'entrée
-        texte = appeler_claude(prompt(genre, sujet, date_eval, consigne=consigne), Path(vide), outils=OUTILS_WEB,
-                               entree=texte_cours, timeout=1200)
-    if genre == "quiz":
-        return json.dumps(parse_quiz(texte), ensure_ascii=False), reperes, web_json(texte)
-    if genre == "cartes":
-        return json.dumps(parse_cartes(texte), ensure_ascii=False), reperes, web_json(texte)
-    contenu, web = separer_web(texte.strip())
+        (contenu, web), _ = demander(genre, prompt(genre, sujet, date_eval, consigne=consigne), Path(vide), lire=lire,
+                                     outils=OUTILS_WEB, entree=texte_cours, timeout=1200)
     return contenu, reperes, web
 
 
@@ -327,9 +333,10 @@ def jours_programme(programme: dict | None, faits: list[str], revisions: list[di
 
 def generer_programme(campagne: dict, matieres: list[dict], evenements: list[dict]) -> dict:
     with tempfile.TemporaryDirectory() as vide:
-        texte = appeler_claude(prompt_programme(campagne["titre"], campagne["debut"], campagne["fin"]), Path(vide),
-                               entree=entree_programme(campagne["consigne"], matieres, evenements), timeout=600)
-    return parse_programme(texte, campagne["debut"], campagne["fin"])
+        programme, _ = demander("programme", prompt_programme(campagne["titre"], campagne["debut"], campagne["fin"]),
+                                Path(vide), lire=lambda t: parse_programme(t, campagne["debut"], campagne["fin"]),
+                                entree=entree_programme(campagne["consigne"], matieres, evenements), timeout=600)
+    return programme
 
 
 def quiz_en_markdown(questions: list[dict]) -> str:

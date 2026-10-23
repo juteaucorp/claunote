@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from claunote import revision
+from claunote import agent, revision
 from claunote.agent import ErreurAgent
 
 DOCS = [{"id": 11, "nom": "a.pdf", "titre": "VLAN", "niveau": "BTS1", "matiere": "Réseaux", "type": "Cours",
@@ -41,12 +41,12 @@ def test_parse_quiz_ignore_les_questions_invalides():
 def test_generer_passe_les_cours_sur_l_entree(monkeypatch):
     vu = {}
 
-    def faux(prompt, cwd, outils=None, entree=None, timeout=0):
+    def faux(prompt, cwd, outils=None, entree=None, timeout=0, **k):
         vu.update(prompt=prompt, entree=entree, outils=outils)
         return ("## L'essentiel\nUn VLAN… [D1], norme 802.1Q [W1]\n\n## Sources web\n"
                 "- [W1] IEEE 802.1Q — https://fr.wikipedia.org/wiki/IEEE_802.1Q\n")
 
-    monkeypatch.setattr(revision, "appeler_claude", faux)
+    monkeypatch.setattr(agent, "appeler_claude", faux)
     contenu, reperes, web = revision.generer("fiche", "VLAN", DOCS)
     assert contenu == "## L'essentiel\nUn VLAN… [D1], norme 802.1Q [W1]" and reperes["D1"] == 11
     assert web == [{"repere": "W1", "titre": "IEEE 802.1Q", "url": "https://fr.wikipedia.org/wiki/IEEE_802.1Q"}]

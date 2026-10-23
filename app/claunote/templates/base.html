@@ -115,6 +115,8 @@
   .carte.accent { border-color: var(--accent); background: var(--accent-pale); }
   .doux { color: var(--doux); font-size: .92rem; }
   .alerte { color: var(--alerte); }
+  .bandeau { display: flex; gap: 12px; align-items: flex-start; text-decoration: none; color: var(--texte); border-color: var(--alerte); }
+  .bandeau svg { flex: none; color: var(--alerte); margin-top: 2px; }
   .fil { color: var(--doux); font-size: .9rem; margin: 0 0 6px; }
   .fil a { color: var(--doux); }
 
@@ -248,6 +250,7 @@
       <a href="/recherche">{{ icone('recherche') }}Rechercher</a>
       <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" onclick="document.getElementById('plus').open = false">{{ icone('scan') }}Scanner l'inbox</button>
       <a href="/notifications">{{ icone('cloche') }}Notifications</a>
+      <a href="/etat">{{ icone('etat') }}État du service</a>
       <a href="/compte">{{ icone('compte') }}Compte</a>
       <form method="post" action="/deconnexion"><button>{{ icone('sortie') }}Déconnexion</button></form>
     </div>
@@ -256,6 +259,8 @@
 {% endif %}
 <main>
   {% if not sans_nav %}<p id="retour-scan" class="carte accent"></p>
+  {% set panne = bandeau_service() if not chemin.startswith('/etat') else None %}
+  {% if panne %}<a class="carte bandeau" href="/etat">{{ icone('etat', 20) }}<span><strong>{{ panne[0] }}</strong>{% if panne[1] %}<br><span class="doux">{{ panne[1] }}</span>{% endif %}</span></a>{% endif %}
   {% if mdp_par_defaut() and not chemin.startswith('/compte') %}<p class="carte accent">⚠️ Tu utilises le mot de passe par défaut
     (<code>admin</code> / <code>claunote</code>). <a href="/compte">Change-le maintenant</a>.</p>{% endif %}
   {% endif %}

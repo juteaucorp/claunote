@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}État du service{% endblock %}
+{% block contenu %}
+<h1>État du service</h1>
+{% set c, k = s.claude, s.kdrive %}
+
+<div class="grille services">
+  <div class="carte {{ 'ko' if s.connu and not s.vivant }}">
+    <strong>Worker</strong>
+    {% if not s.connu %}<p class="doux">Pas encore démarré.</p>
+    {% elif not s.vivant %}<p class="alerte">Ne répond plus depuis {{ heure(s.vu) }}.</p>
+      <p class="doux">Sur la VM : <code>docker compose up -d</code>, puis <code>docker compose logs -f worker</code>.</p>
+    {% elif s.arret %}<p>Redémarre : il termine le travail en cours.</p>
+    {% else %}<p><span class="point ok"></span>{{ s.activite or 'En veille, vérifie l\'inbox chaque minute' }}</p>
+      {% if s.demarre %}<p class="doux">Démarré {{ heure(s.demarre) }}.</p>{% endif %}{% endif %}
+  </div>
+  <div class="carte {{ 'ko' if c.etat != 'ok' }}">
+    <strong>Claude (forfait Pro)</strong>
+    {% if c.etat == 'ok' %}<p><span class="point ok"></span>Disponible</p>
+    {% elif c.etat == 'limite' %}<p class="alerte">Limite d'usage atteinte{% if c.depuis %} depuis {{ heure(c.depuis) }}{% endif %}.</p>
+      <p>Reprise {% if c.jusqu_a %}vers <strong>{{ heure(c.jusqu_a) }}</strong>{% else %}dès que possible (nouvel essai toutes les 20 à 60 min){% endif %}.
+        La file attend, rien n'est perdu.</p>
+    {% elif c.etat == 'connexion' %}<p class="alerte">Jeton refusé ou expiré.</p>
+      <p class="doux">Sur la VM : <code>claude setup-token</code>, colle le jeton dans <code>.env</code>
+        (<code>CLAUDE_CODE_OAUTH_TOKEN</code>), puis <code>docker compose up -d</code>.</p>
+    {% else %}<p class="alerte">Ne répond pas{% if c.depuis %} depuis {{ heure(c.depuis) }}{% endif %}.</p>
+      {% if c.jusqu_a %}<p>Nouvel essai à {{ heure(c.jusqu_a) }}.</p>{% endif %}{% endif %}
+    {% if c.message and c.etat != 'ok' %}<details><summary>Message de Claude Code</summary><p class="doux">{{ c.message }}</p></details>{% endif %}
+  </div>
+  <div class="carte {{ 'ko' if k.etat != 'ok' }}">
+    <strong>kDrive</strong>
+    {% if k.etat == 'ok' %}<p><span class="point ok"></span>Disponible</p>
+    {% else %}<p class="alerte">Ne répond pas{% if k.depuis %} depuis {{ heure(k.depuis) }}{% endif %}.</p>
+      {% if k.jusqu_a %}<p>Nouvel essai à {{ heure(k.jusqu_a) }}.</p>{% endif %}
+      <p class="doux">{{ k.message }}</p>{% endif %}
+  </div>
+</div>
+
+<h2>En attente</h2>
+<div class="carte">
+  {% if file.scans or file.revisions or file.campagnes or file.reclassements %}
+  <ul class="file">
+    {% if file.campagnes %}<li><strong>{{ file.campagnes }}</strong> programme{{ 's' if file.campagnes > 1 }} de campagne</li>{% endif %}
+    {% if file.revisions %}<li><strong>{{ file.revisions }}</strong> révision{{ 's' if file.revisions > 1 }} à générer</li>{% endif %}
+    {% if file.reclassements %}<li><strong>{{ file.reclassements }}</strong> document{{ 's' if file.reclassements > 1 }} à reclasser</li>{% endif %}
+    {% if file.scans %}<li><strong>{{ file.scans }}</strong> fichier{{ 's' if file.scans > 1 }} à analyser</li>{% endif %}
+  </ul>
+  <p class="doux">Dans cet ordre : ce que tu attends sur le site passe avant les scans.</p>
+  {% else %}<p>Rien en attente.</p>{% endif %}
+</div>
+
+<h2>Quel modèle pour quoi</h2>
+<div class="carte">
+  <p class="doux">Chaque tâche a son modèle. Si l'agent doute (confiance sous 70 %) ou rend une réponse inutilisable,
+    le modèle au-dessus prend le relais avant de te demander de vérifier.</p>
+  <table class="notes">
+    <tr><th>Tâche</th><th>Modèle</th><th class="large">Si doute</th></tr>
+    {% for t in taches %}
+    <tr><td>{{ t.libelle }}</td>
+      <td>{{ noms[t.actuel] }}{% if t.actuel != t.prevu %} <span class="doux">(au lieu de {{ noms[t.prevu] }})</span>{% endif %}</td>
+      <td class="large">{{ noms[t.second_avis] if t.second_avis else '–' }}</td></tr>
+    {% endfor %}
+  </table>
+  {% for m, v in indispo.items() %}<p class="alerte">{{ noms[m] }} indisponible ({{ v.raison }}){% if v.jusqu_a %} jusqu'à {{ heure(v.jusqu_a) }}{% endif %} : le modèle du dessous le remplace.</p>{% endfor %}
+  {% if maximum != 'opus' %}<p class="doux">Modèle maximal réglé sur {{ noms[maximum] }} (<code>CLAUDE_MODELE_MAX</code>).</p>{% endif %}
+</div>
+
+<h2>Dernières 24 heures</h2>
+<div class="carte">
+  {% if bilan %}
+  <table class="notes">
+    <tr><th>Modèle</th><th class="n">Appels</th><th class="n">Seconds avis</th><th class="n large">Minutes</th></tr>
+    {% for b in bilan %}<tr><td>{{ noms.get(b.modele, b.modele) }}</td><td class="n">{{ b.appels }}</td>
+      <td class="n">{{ b.escalades }}</td><td class="n large">{{ b.minutes|int }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<p>Aucun appel à Claude.</p>{% endif %}
+  {% if appels %}
+  <details><summary>Derniers appels</summary>
+    <table class="notes">
+      {% for a in appels %}<tr><td class="n">{{ a.le|paris }}</td><td>{{ libelles.get(a.tache, a.tache) }}</td>
+        <td>{{ noms.get(a.modele, a.modele) }}</td>
+        <td class="{{ '' if a.resultat in ('ok', 'escalade') else 'alerte' }}" title="{{ a.detail or '' }}">{{ {'ok': 'ok', 'escalade': 'second avis', 'limite': 'limite', 'panne': 'panne', 'connexion': 'jeton', 'modele': 'modèle refusé', 'erreur': 'erreur'}.get(a.resultat, a.resultat) }}</td>
+        <td class="n large">{{ a.duree|round|int }} s</td></tr>{% endfor %}
+    </table>
+  </details>
+  {% endif %}
+</div>
+
+<style>
+  .services .carte.ko { border-color: var(--alerte); }
+  .point { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+  .point.ok { background: var(--ok); }
+  ul.file { margin: 0; padding-left: 20px; }
+  ul.file li { margin: 4px 0; }
+  .carte table.notes { margin-top: 8px; }
+</style>
+{% endblock %}

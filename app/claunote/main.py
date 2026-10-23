@@ -19,9 +19,9 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import anki, auth, db, importation, notifications, pdf, pronote, rangement, revision
+from claunote import anki, auth, db, importation, modeles, notifications, pdf, pronote, rangement, revision
 from claunote.agent import NIVEAUX, TYPES
-from claunote.kdrive import KDrive
+from claunote.kdrive import KDrive, KDriveIndisponible
 
 INBOX_ID = int(os.environ.get("KDRIVE_INBOX_ID", "0"))
 ETUDES_ID = int(os.environ.get("KDRIVE_ETUDES_ID", "0"))
@@ -54,7 +54,82 @@ async def exiger_connexion(request: Request, call_next):
         return Response("connexion requise", status_code=401)
     suite = chemin + (f"?{request.url.query}" if request.url.query else "")
     return RedirectResponse(f"/connexion?{urlencode({'suite': suite})}", status_code=303)
+@app.exception_handler(KDriveIndisponible)
+def kdrive_indisponible(request: Request, e: KDriveIndisponible):
+    """kDrive en panne pendant une page qui en a besoin (ouvrir un scan, déposer) : explication claire."""
+    texte = f"kDrive ne répond pas pour l'instant ({e}). Réessaie dans quelques minutes : rien n'est perdu."
+    if request.headers.get("HX-Request") or request.query_params.get("paquet"):
+        return JSONResponse({"erreur": texte}, status_code=503)
+    return HTMLResponse(f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                        f"<body style='font-family:system-ui;margin:24px'><p>{html.escape(texte)}</p>"
+                        f"<p><a href='javascript:history.back()'>Retour</a> · <a href='/etat'>État du service</a></p>",
+                        status_code=503)
+
+
+def _instant(iso: str | None) -> dt.datetime | None:
+    try:
+        return dt.datetime.fromisoformat(iso).astimezone(pronote.PARIS) if iso else None
+    except ValueError:
+        return None
+
+
+def _heure_fr(d: dt.datetime) -> str:
+    """« 19 h 05 », ou « lun. 27/10 à 9 h 00 » si ce n'est pas aujourd'hui."""
+    heure = f"{d:%H} h {d:%M}"
+    return heure if d.date() == dt.datetime.now(pronote.PARIS).date() else \
+        f"{notifications.JOURS[d.weekday()]} {d:%d/%m} à {heure}"
+
+
+WORKER_MUET = dt.timedelta(minutes=3)  # le worker publie son état toutes les 30 s
+
+
+def etat_service() -> dict:
+    """État du worker, de Claude et de kDrive, publié par le worker (voir worker.publier)."""
+    try:
+        s = json.loads(db.etat_valeur("service") or "{}")
+    except ValueError:
+        s = {}
+    vu = _instant(s.get("vu"))
+    for nom in ("claude", "kdrive"):
+        service = s.get(nom) or {"etat": "ok"}
+        service["jusqu_a"] = _instant(service.get("jusqu_a"))
+        service["depuis"] = _instant(service.get("depuis"))
+        s[nom] = service
+    s["vu"], s["demarre"] = vu, _instant(s.get("demarre"))
+    s["vivant"] = bool(vu) and dt.datetime.now(pronote.PARIS) - vu < WORKER_MUET
+    s["connu"] = vu is not None
+    return s
+
+
+def bandeau_service() -> tuple[str, str] | None:
+    """Une phrase en haut de chaque page quand quelque chose bloque : (texte, détail)."""
+    s = etat_service()
+    if not s["connu"]:
+        return None
+    if not s["vivant"]:
+        return (f"Le worker ne répond plus depuis {_heure_fr(s['vu'])} : scans et révisions attendent.",
+                "Sur la VM : docker compose up -d")
+    if s.get("arret"):
+        return "Le worker redémarre : il termine le travail en cours.", ""
+    c, k = s["claude"], s["kdrive"]
+    if c["etat"] == "limite":
+        quand = f" vers {_heure_fr(c['jusqu_a'])}" if c["jusqu_a"] else " dans un moment"
+        return (f"Limite de ton forfait Claude atteinte : l'IA reprend{quand}.",
+                "Rien n'est perdu : la file attend et repart toute seule.")
+    if c["etat"] == "connexion":
+        return ("Claude refuse le jeton du forfait : l'IA est en pause.",
+                "Sur la VM : claude setup-token, puis mets le jeton dans .env (CLAUDE_CODE_OAUTH_TOKEN).")
+    if c["etat"] == "panne":
+        return (f"Claude ne répond pas, nouvel essai à {_heure_fr(c['jusqu_a'])}." if c["jusqu_a"]
+                else "Claude ne répond pas.", "Rien n'est perdu : la file attend.")
+    if k["etat"] != "ok":
+        return (f"kDrive ne répond pas, nouvel essai à {_heure_fr(k['jusqu_a'])}." if k["jusqu_a"]
+                else "kDrive ne répond pas.", "Les analyses et les rangements reprendront tout seuls.")
+    return None
+
+
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.globals["bandeau_service"] = bandeau_service
 templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
 templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirmer()
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
@@ -1112,6 +1187,19 @@ def agenda_preparer(ev_id: str = Form(...)):
 def scan():
     db.demander_scan()
     return "Scan demandé : le worker vérifie l'inbox dans les 5 secondes."
+
+
+@app.get("/etat", response_class=HTMLResponse)
+def page_etat(request: Request):
+    """Santé du service : worker, Claude (limite du forfait), kDrive, file d'attente, modèles utilisés."""
+    s = etat_service()
+    indispo = {m: {**v, "jusqu_a": _instant(v.get("jusqu_a"))} for m, v in (s.get("modeles") or {}).items()}
+    for m in indispo:  # le site ne voit pas l'état mémoire du worker : il recopie ses indisponibilités
+        modeles.marquer_indisponible(m, indispo[m]["jusqu_a"], indispo[m]["raison"])
+    return templates.TemplateResponse(request, "etat.html", {
+        "s": s, "heure": _heure_fr, "file": db.file_attente(), "taches": modeles.tableau(), "noms": modeles.NOMS,
+        "indispo": indispo, "bilan": db.bilan_ia(24), "appels": db.appels_ia(25), "libelles": modeles.LIBELLES,
+        "maximum": modeles.maximum()})
 
 
 @app.get("/health")

@@ -48,3 +48,45 @@ def test_find_or_create_dir_cree_si_absent():
     kd = make(handler)
     assert kd.find_or_create_dir(1, "Maths") == 3
     assert kd.find_or_create_dir(1, "BTS1") == 8
+
+
+def test_panne_passagere_reessayee(monkeypatch):
+    import pytest
+    from claunote import kdrive
+    monkeypatch.setattr(kdrive.time, "sleep", lambda s: None)
+    reponses = [httpx.Response(503), httpx.Response(429, headers={"Retry-After": "3"}),
+                httpx.Response(200, json={"data": {"id": 7}})]
+    assert make(lambda req: reponses.pop(0)).stat(7) == {"id": 7}
+
+    with pytest.raises(kdrive.KDriveIndisponible):  # toujours en panne : le worker patientera
+        make(lambda req: httpx.Response(502)).stat(7)
+    with pytest.raises(httpx.HTTPStatusError):        # 404 : pas une panne
+        make(lambda req: httpx.Response(404)).stat(7)
+    with pytest.raises(kdrive.KDriveIndisponible, match="jeton"):
+        make(lambda req: httpx.Response(401)).stat(7)
+
+
+def test_envoi_rename_pas_rejoue_s_il_est_peut_etre_parti(monkeypatch):
+    import pytest
+    from claunote import kdrive
+    monkeypatch.setattr(kdrive.time, "sleep", lambda s: None)
+    vus = []
+
+    def handler(req):
+        vus.append(req)
+        return httpx.Response(500)
+    with pytest.raises(kdrive.KDriveIndisponible):
+        make(handler).upload(1, "a.pdf", b"x", conflict="rename")
+    assert len(vus) == 1  # un 500 peut avoir créé le fichier : pas de doublon
+    vus.clear()
+    with pytest.raises(kdrive.KDriveIndisponible):
+        make(handler).upload(1, "a.md", b"x")  # "version" : rejouable
+    assert len(vus) == 4
+
+    def coupe(req):
+        vus.append(req)
+        raise httpx.ConnectError("réseau coupé")
+    vus.clear()
+    with pytest.raises(kdrive.KDriveIndisponible):
+        make(coupe).upload(1, "a.pdf", b"x", conflict="rename")
+    assert len(vus) == 4  # connexion impossible : rien n'est parti, on peut réessayer

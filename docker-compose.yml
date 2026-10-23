@@ -5,6 +5,11 @@ services:
     env_file: .env
     volumes:
       - pgdata:/var/lib/postgresql/data   # disque local de la VM, jamais sur kDrive
+    healthcheck:   # web et worker attendent que la base accepte les connexions (démarrage de la VM)
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   web:
     build: ./app
@@ -16,7 +21,9 @@ services:
       - "${BIND_ADDR:-127.0.0.1}:8000:8000"   # IP de la VM sur ton VPN, jamais 0.0.0.0
     volumes:
       - caddy:/caddy:ro   # certificat racine à installer sur l'iPhone (page /installer)
-    depends_on: [db, pronote]
+    depends_on:
+      db: {condition: service_healthy}
+      pronote: {condition: service_started}
 
   caddy:
     # HTTPS pour l'appli iPhone et les notifications (voir infra/SETUP.md, section 13)
@@ -41,7 +48,11 @@ services:
       CACHE_DIR: /cache
     volumes:
       - cache:/cache   # copies locales des scans en cours de traitement
-    depends_on: [db, pronote]
+    # À une mise à jour, le worker finit le document en cours avant de s'arrêter (sinon, il est refait)
+    stop_grace_period: 2m
+    depends_on:
+      db: {condition: service_healthy}
+      pronote: {condition: service_started}
 
   pronote:
     build: ./pronote

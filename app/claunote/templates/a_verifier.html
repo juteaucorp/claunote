@@ -67,7 +67,7 @@
   <a href="/doc/{{ d.id }}"><strong>{{ d.titre or d.nom }}</strong></a>
   {% if d.note %}<div class="alerte">{{ d.note }}</div>{% endif %}
   <div class="doux">Proposition : {{ d.niveau or '?' }} · {{ d.matiere or '?' }} · {{ d.type or '?' }}
-    (confiance {{ '%.0f'|format((d.confiance or 0) * 100) }} %){% if d.origine %} · déposé dans « {{ d.origine }} »{% endif %}</div>
+    (confiance {{ '%.0f'|format((d.confiance or 0) * 100) }} %{% if d.modele %}, {{ d.modele|capitalize }}{% endif %}){% if d.origine %} · déposé dans « {{ d.origine }} »{% endif %}</div>
   {{ classer(d) }}
   <div class="actions pied">
     <form method="post" action="/doc/{{ d.id }}/hors-cours"><input type="hidden" name="retour" value="/a-verifier">

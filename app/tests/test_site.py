@@ -897,3 +897,44 @@ def test_page_campagne(client, monkeypatch):
     client.post("/campagne/9/supprimer", data={"garder": "true"})
     assert vu[-1] == ("suppr", False)
     assert client.get("/campagne/1").status_code == 404
+
+
+def test_bandeau_et_page_etat(client, monkeypatch):
+    import datetime as dt
+    import json
+    maintenant = dt.datetime.now(dt.timezone.utc)
+    reprise = (maintenant + dt.timedelta(hours=2)).replace(second=0, microsecond=0)
+    client.etat["service"] = json.dumps({
+        "vu": maintenant.isoformat(), "demarre": maintenant.isoformat(), "activite": "Analyse de « a.pdf »",
+        "claude": {"etat": "limite", "message": "5-hour limit reached", "jusqu_a": reprise.isoformat(),
+                   "depuis": maintenant.isoformat()},
+        "kdrive": {"etat": "ok"}, "modeles": {}})
+    monkeypatch.setattr(db, "file_attente", lambda: {"scans": 12, "revisions": 1, "campagnes": 0, "reclassements": 0})
+    monkeypatch.setattr(db, "bilan_ia", lambda h: [{"modele": "sonnet", "appels": 4, "escalades": 1, "minutes": 9,
+                                                    "jetons_sortie": 0}])
+    monkeypatch.setattr(db, "appels_ia", lambda n: [])
+    heure = reprise.astimezone(main.pronote.PARIS)
+    page = client.get("/bibliotheque").text
+    assert "Limite de ton forfait Claude atteinte" in page and f"{heure:%H} h {heure:%M}" in page
+    page = client.get("/etat").text
+    assert "Limite d'usage atteinte" in page and "12</strong> fichiers à analyser" in page
+    assert "Épreuve blanche" in page and "Opus" in page and "Limite de ton forfait" not in page
+
+    # Worker muet depuis 10 min : on le dit, avec la commande pour le relancer
+    client.etat["service"] = json.dumps({"vu": (maintenant - dt.timedelta(minutes=10)).isoformat(),
+                                         "claude": {"etat": "ok"}, "kdrive": {"etat": "ok"}})
+    assert "Le worker ne répond plus" in client.get("/bibliotheque").text
+    client.etat["service"] = json.dumps({"vu": maintenant.isoformat(), "claude": {"etat": "ok"},
+                                         "kdrive": {"etat": "ok"}})
+    assert "bandeau" not in client.get("/bibliotheque").text.split("<main>")[1]
+
+
+def test_kdrive_en_panne_page_claire(client, monkeypatch):
+    from claunote.kdrive import KDriveIndisponible
+
+    class KD:
+        def download(self, *a):
+            raise KDriveIndisponible("kDrive répond 503")
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: KD()))
+    r = client.get("/doc/1/fichier")
+    assert r.status_code == 503 and "kDrive ne répond pas" in r.text
