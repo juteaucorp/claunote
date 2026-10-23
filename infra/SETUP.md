@@ -82,6 +82,9 @@ L'agent utilise **Claude Code en mode non interactif** (`claude -p`), connecté 
 Claude Pro**. Pas de clé API, pas de facturation en plus : ça compte dans les limites
 d'usage de ton forfait, comme tes conversations sur claude.ai.
 
+Claude Code est **installé automatiquement dans l'image Docker** du worker. Sur la VM, tu n'en as
+besoin qu'une fois, pour générer le jeton :
+
 ```bash
 curl -fsSL https://claude.ai/install.sh | bash   # installe Claude Code
 claude setup-token                               # ouvre la connexion claude.ai, affiche un jeton
@@ -99,3 +102,15 @@ export $(grep CLAUDE_CODE_OAUTH_TOKEN .env) && claude -p "Réponds juste : ok"
 **Limites du forfait Pro** : le worker traite les scans **par petits lots** et se met en pause
 quand la limite d'usage est atteinte, puis reprend tout seul. La numérisation de tout ton
 stock prendra donc plusieurs jours en tâche de fond, sans rien te coûter de plus.
+
+## 6. Utilisation (phases 1 et 2)
+
+1. Dépose un ou plusieurs PDF dans `Etudes/inbox` sur kDrive (**un document = un PDF** : un cours,
+   un TP, un contrôle).
+2. Clique sur **« Scanner maintenant »** sur le site (ou attends 1 minute).
+3. Suis l'analyse : `docker compose logs -f worker`.
+4. Le scan est déplacé dans `Etudes/archives/<niveau>/<matière>/<type>/`, renommé
+   (`2025-03-12_les-vlan.pdf`), avec sa transcription `.md` à côté. S'il n'est pas sûr du
+   classement, il part dans `Etudes/a-verifier/` et apparaît sur la page **À vérifier**.
+
+Après une mise à jour du code : `git pull && docker compose up -d --build`.

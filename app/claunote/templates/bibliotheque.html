@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block contenu %}
+<h1>Bibliothèque</h1>
+{% if nb_a_verifier %}
+<p class="alerte"><a href="/a-verifier">{{ nb_a_verifier }} document{{ 's' if nb_a_verifier > 1 }} à vérifier</a></p>
+{% endif %}
+{% if not niveaux %}
+<div class="carte">Aucun document classé pour l'instant. Dépose des scans dans <code>Etudes/inbox</code> sur kDrive, puis clique sur « Scanner maintenant ».</div>
+{% endif %}
+{% for niveau in niveaux %}
+<h2>{{ niveau }}</h2>
+<div class="grille">
+  {% for matiere, types in arbre[niveau].items() %}
+  <div class="carte">
+    <strong>{{ matiere }}</strong>
+    <div class="pastilles">
+      {% for t in types %}
+      <a href="/liste?niveau={{ niveau|urlencode }}&matiere={{ matiere|urlencode }}&type={{ t.type|urlencode }}">{{ t.type }} · {{ t.n }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endblock %}

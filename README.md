@@ -23,13 +23,19 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 
 ## Phases
 
-- [ ] **Phase 0** : VM, montage kDrive, Docker Compose (ce dépôt)
-- [ ] Phase 1 : pipeline d'ingestion (OCR + classement)
-- [ ] Phase 2 : site MVP (bibliothèque, recherche, « à vérifier »)
+- [x] **Phase 0** : VM, accès kDrive par API, Docker Compose
+- [x] Phase 1 : pipeline d'ingestion (transcription + classement par Claude Code)
+- [x] Phase 2 : site MVP (bibliothèque, recherche, « à vérifier »)
 - [ ] Phase 3 : agent de révision
 - [ ] Phase 4 : Pronote
 - [ ] Phase 5 : flashcards, Anki, PWA
 
-## Démarrage (phase 0)
+## Installation et utilisation
 
 Voir [infra/SETUP.md](infra/SETUP.md).
+
+## Tests
+
+```bash
+cd app && pip install -r requirements.txt pytest && pytest
+```
