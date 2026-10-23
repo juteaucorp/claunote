@@ -2,7 +2,7 @@
 {% block titre %}Recherche : {{ q }}{% endblock %}
 {% block contenu %}
 <h1>Recherche</h1>
-<form action="/recherche"><input name="q" value="{{ q }}" placeholder="ex. suites géométriques" size="32" aria-label="Recherche"> <button class="principal">Chercher</button></form>
+<form action="/recherche" class="actions"><input type="search" name="q" value="{{ q }}" placeholder="ex. suites géométriques" aria-label="Recherche" enterkeyhint="search" style="flex: 1; min-width: 0" {{ 'autofocus' if not q }}> <button class="principal">Chercher</button></form>
 {% if q %}<p class="doux">{{ resultats|length }} résultat{{ 's' if resultats|length > 1 }}</p>{% endif %}
 {% for r in resultats %}
 <div class="carte">

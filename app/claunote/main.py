@@ -165,6 +165,19 @@ def deconnexion():
 # --- Bibliothèque ----------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
+def accueil(request: Request):
+    """Aujourd'hui : ce qui arrive (évals, devoirs), ce qui attend (cartes, docs des profs)."""
+    matieres = sorted({r["matiere"] for r in db.niveaux_matieres()})
+    evaluations = [{**e, "cours": pronote.trouver_matiere(e["matiere"], matieres)}
+                   for e in db.evenements_a_venir("evaluation", 21)]
+    return templates.TemplateResponse(request, "accueil.html", {
+        "aujourdhui": dt.datetime.now(pronote.PARIS).date(), "paris": pronote.PARIS,
+        "evaluations": evaluations[:6], "devoirs": [d for d in db.evenements_a_venir("devoir", 7) if not d["fait"]],
+        "documents": db.documents_pronote(5), "revisions": db.revisions(4),
+        "synchro": db.etat_valeur("pronote_synchro"), "nb_documents": db.nb_documents()})
+
+
+@app.get("/bibliotheque", response_class=HTMLResponse)
 def bibliotheque(request: Request):
     arbre = defaultdict(lambda: defaultdict(list))
     for r in db.bibliotheque():

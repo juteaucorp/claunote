@@ -33,6 +33,8 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Phase 5 : flashcards (révision espacée), export Anki, appli installable (PWA)
 - [x] Connexion au site (identifiant + mot de passe, changeable sur le site)
 - [x] Organiser : reclassement, actions de masse par date d'ajout, rangement IA, espace « Hors cours »
+- [x] Ergonomie mobile : accueil « Aujourd'hui », onglets en bas, photo depuis le téléphone
+- [ ] Notifications push
 
 ## Installation et utilisation
 

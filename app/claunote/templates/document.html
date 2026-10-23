@@ -2,7 +2,7 @@
 {% block titre %}{{ doc.titre or doc.nom }}{% endblock %}
 {% block contenu %}
 {% if doc.niveau and doc.matiere and doc.type %}
-<p class="doux"><a href="/">Bibliothèque</a> › {{ doc.niveau }} ›
+<p class="doux"><a href="/bibliotheque">Bibliothèque</a> › {{ doc.niveau }} ›
   <a href="/liste?niveau={{ doc.niveau|urlencode }}&matiere={{ doc.matiere|urlencode }}&type={{ doc.type|urlencode }}">{{ doc.matiere }} · {{ doc.type }}</a></p>
 {% endif %}
 <h1>{{ doc.titre or doc.nom }}</h1>
@@ -15,9 +15,12 @@
 {% if doc.statut == 'classe' %}
 <form method="post" action="/reviser" class="carte">
   <input type="hidden" name="doc_id" value="{{ doc.id }}">
-  <strong>Réviser ce document :</strong>
-  <button name="genre" value="fiche" class="principal">Fiche de révision</button>
-  <button name="genre" value="quiz">Quiz</button>
+  <strong>Réviser ce document</strong>
+  <div class="actions" style="margin-top: 8px">
+    <button name="genre" value="fiche" class="principal">Fiche</button>
+    <button name="genre" value="quiz">Quiz</button>
+    <button name="genre" value="cartes">Flashcards</button>
+  </div>
 </form>
 {% endif %}
 {% if doc.statut not in ('nouveau', 'erreur', 'reclasser') %}
@@ -45,5 +48,11 @@
 <h2>Transcription</h2>
 <div class="carte transcription">{{ transcription|safe }}</div>
 <h2>Scan</h2>
-<iframe src="/doc/{{ doc.id }}/fichier" title="Scan original"></iframe>
+{% if doc.nom.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')) %}
+<a href="/doc/{{ doc.id }}/fichier" target="_blank"><img class="scan-image" src="/doc/{{ doc.id }}/fichier" alt="Scan original" loading="lazy"></a>
+{% else %}
+<iframe class="scan" src="/doc/{{ doc.id }}/fichier" title="Scan original" loading="lazy"></iframe>
+<a class="bouton scan-mobile" href="/doc/{{ doc.id }}/fichier" target="_blank">Ouvrir le scan original</a>
+{% endif %}
+<style>.scan-image { max-width: 100%; border-radius: 12px; border: 1px solid var(--bord); }</style>
 {% endblock %}

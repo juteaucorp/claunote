@@ -2,13 +2,15 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{% block titre %}Claunote{% endblock %} · Claunote</title>
 <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#d97757">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1b1a" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="/static/icone-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Claunote">
 {% block tete %}{% endblock %}
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
@@ -32,18 +34,51 @@
   h1 { font-size: 1.9rem; margin: 4px 0 18px; }
   h2 { font-size: 1.25rem; margin: 32px 0 10px; }
 
-  header { position: sticky; top: 0; z-index: 10; background: var(--fond); border-bottom: 1px solid var(--bord); }
-  .barre { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  header { position: sticky; top: 0; z-index: 10; background: var(--fond); border-bottom: 1px solid var(--bord); padding-top: env(safe-area-inset-top); }
+  .barre { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 8px 14px; }
   .marque { display: flex; align-items: center; gap: 10px; font-size: 1.35rem; color: var(--texte); text-decoration: none; margin-right: auto; }
   .marque img { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--bord); background: #fff; }
-  nav { display: flex; flex-wrap: wrap; gap: 4px; }
-  nav a { color: var(--texte); text-decoration: none; padding: 6px 12px; border-radius: 999px; font-weight: 500; font-size: .95rem; }
-  nav a:hover { background: var(--fond-doux); }
-  nav a.actif { background: var(--accent-pale); color: var(--accent-fonce); }
-  .badge { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: .75rem; line-height: 20px; text-align: center; }
+  nav.haut { display: flex; flex-wrap: wrap; gap: 4px; }
+  nav.haut a { color: var(--texte); text-decoration: none; padding: 6px 12px; border-radius: 999px; font-weight: 500; font-size: .95rem; }
+  nav.haut a:hover { background: var(--fond-doux); }
+  nav.haut a.actif { background: var(--accent-pale); color: var(--accent-fonce); }
+  .badge { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: .75rem; line-height: 20px; text-align: center; font-weight: 600; }
   .outils { display: flex; gap: 8px; align-items: center; }
+  .icone-entete { display: none; }
+
+  /* Téléphone : barre du haut réduite, onglets en bas (comme une appli) */
+  nav.onglets { display: none; }
+  @media (max-width: 760px) {
+    nav.haut, .outils { display: none; }
+    .barre { padding: 8px 12px; }
+    .marque { font-size: 1.2rem; }
+    .marque img { width: 32px; height: 32px; border-radius: 9px; }
+    .icone-entete { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 12px; color: var(--texte); }
+    .icone-entete:active { background: var(--fond-doux); }
+    nav.onglets { display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+      background: var(--fond); border-top: 1px solid var(--bord); padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); }
+    nav.onglets > a, nav.onglets summary { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px;
+      color: var(--doux); text-decoration: none; font-size: .7rem; font-weight: 600; list-style: none; border-radius: 12px; }
+    nav.onglets summary::-webkit-details-marker { display: none; }
+    nav.onglets .actif { color: var(--accent-fonce); }
+    nav.onglets .actif svg { background: var(--accent-pale); border-radius: 999px; }
+    nav.onglets svg { padding: 2px 10px; box-sizing: content-box; }
+    nav.onglets .badge { position: absolute; top: 0; left: calc(50% + 8px); margin: 0; min-width: 18px; line-height: 18px; font-size: .68rem; padding: 0 5px; }
+    nav.onglets details { margin: 0; }
+    .feuille { position: fixed; left: 8px; right: 8px; bottom: calc(70px + env(safe-area-inset-bottom)); background: var(--carte); border: 1px solid var(--bord);
+      border-radius: 18px; box-shadow: 0 10px 40px rgba(0, 0, 0, .18); padding: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .feuille a, .feuille button { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 12px; color: var(--texte); text-decoration: none;
+      font-weight: 500; font-size: .95rem; border: 0; background: none; width: 100%; text-align: left; }
+    .feuille a:active, .feuille button:active { background: var(--fond-doux); }
+    .feuille form { margin: 0; }
+    .feuille .badge { margin-left: auto; }
+    main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  }
 
   main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
+  body { -webkit-tap-highlight-color: transparent; }
+  input, select, textarea { max-width: 100%; }
+  textarea { font: inherit; padding: 8px 12px; border: 1px solid var(--bord); border-radius: 10px; background: var(--carte); color: var(--texte); }
   .carte { background: var(--carte); border: 1px solid var(--bord); border-radius: 14px; padding: 16px 18px; margin: 12px 0; box-shadow: var(--ombre); }
   .carte.accent { border-color: var(--accent); background: var(--accent-pale); }
   .doux { color: var(--doux); font-size: .92rem; }
@@ -104,27 +139,46 @@
   .notes-carte .n0 { border-color: var(--alerte); color: var(--alerte); }
   .notes-carte .n5 { border-color: var(--ok); color: var(--ok); }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .actions a.bouton { display: inline-block; padding: 8px 12px; border: 1px solid var(--bord); border-radius: 10px; text-decoration: none; color: var(--texte); background: var(--carte); font-weight: 500; }
-  .actions a.bouton.principal { background: var(--accent); color: #fff; border-color: var(--accent); }
-  @media (max-width: 640px) { .recherche-entete input { width: 140px; } h1 { font-size: 1.5rem; } table.notes .large { display: none; } table.notes td, table.notes th { padding: 6px 4px; } }
+  a.bouton { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--bord); border-radius: 10px; text-decoration: none; color: var(--texte); background: var(--carte); font-weight: 500; }
+  a.bouton.principal { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .lignes { list-style: none; margin: 0; padding: 0; }
+  .carte.lignes { padding-top: 4px; padding-bottom: 4px; }
+  .lignes > li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--bord); }
+  .lignes > li:last-child { border-bottom: 0; }
+  .lignes .corps { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .lignes .fin { margin-left: auto; text-align: right; white-space: nowrap; }
+  .scan-mobile { display: none; }
+  @media (max-width: 760px) {
+    h1 { font-size: 1.55rem; margin-bottom: 12px; }
+    h2 { margin-top: 26px; }
+    main { padding-top: 16px; padding-left: 12px; padding-right: 12px; }
+    .carte { padding: 14px; border-radius: 16px; }
+    button, a.bouton, select, input:not([type=checkbox]):not([type=radio]) { min-height: 44px; }
+    table.notes .large { display: none; } table.notes td, table.notes th { padding: 6px 4px; }
+    iframe.scan { display: none; }
+    .scan-mobile { display: flex; }
+  }
 </style>
 </head>
 <body>
+{% from "_icones.html" import icone %}
 {% set chemin = request.url.path %}
 {% if not sans_nav %}
+{% set cartes_dues = nb_cartes_a_revoir() %}
+{% set evals = nb_evaluations_proches() %}
+{% set attente = nb_a_verifier() %}
+{% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
 <header>
   <div class="barre">
     <a class="marque" href="/"><img src="/static/logo.svg" alt="">Claunote</a>
-    <nav>
-      <a href="/" class="{{ 'actif' if chemin == '/' or chemin.startswith('/liste') }}">Bibliothèque</a>
-      <a href="/deposer" class="{{ 'actif' if chemin.startswith('/deposer') }}">Déposer</a>
+    <nav class="haut" aria-label="Menu">
+      <a href="/" class="{{ 'actif' if chemin == '/' }}">Aujourd'hui</a>
+      <a href="/bibliotheque" class="{{ 'actif' if chemin.startswith(('/bibliotheque', '/liste')) }}">Bibliothèque</a>
       <a href="/reviser" class="{{ 'actif' if chemin.startswith('/revis') }}">Réviser</a>
-      {% set cartes_dues = nb_cartes_a_revoir() %}
       <a href="/cartes" class="{{ 'actif' if chemin.startswith('/cartes') }}">Cartes{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
-      {% set evals = nb_evaluations_proches() %}
       <a href="/agenda" class="{{ 'actif' if chemin.startswith('/agenda') }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
-      <a href="/organiser" class="{{ 'actif' if chemin.startswith('/organiser') or chemin.startswith('/hors-cours') }}">Organiser</a>
-      {% set attente = nb_a_verifier() %}
+      <a href="/deposer" class="{{ 'actif' if chemin.startswith('/deposer') }}">Déposer</a>
+      <a href="/organiser" class="{{ 'actif' if chemin.startswith(('/organiser', '/hors-cours')) }}">Organiser</a>
       <a href="/a-verifier" class="{{ 'actif' if chemin.startswith('/a-verifier') }}">À vérifier{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
     </nav>
     <div class="outils">
@@ -133,8 +187,30 @@
       <a href="/compte" class="bouton-icone" title="Compte et mot de passe" aria-label="Compte">⚙</a>
       <form method="post" action="/deconnexion" class="sortie"><button title="Se déconnecter" aria-label="Se déconnecter">⏻</button></form>
     </div>
+    <a href="/recherche" class="icone-entete" aria-label="Rechercher">{{ icone('recherche') }}</a>
+    <a href="/deposer" class="icone-entete" aria-label="Déposer un scan">{{ icone('deposer') }}</a>
   </div>
 </header>
+<nav class="onglets" aria-label="Onglets">
+  <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">{{ icone('accueil') }}Aujourd'hui</a>
+  <a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}Cours</a>
+  <a href="/reviser" class="{{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
+  <a href="/agenda" class="{{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
+  <details id="plus">
+    <summary class="{{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
+    <div class="feuille">
+      <a href="/deposer">{{ icone('deposer') }}Déposer</a>
+      <a href="/cartes">{{ icone('cartes') }}Flashcards{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
+      <a href="/a-verifier">{{ icone('verifier') }}À vérifier{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
+      <a href="/organiser">{{ icone('organiser') }}Organiser</a>
+      <a href="/hors-cours">{{ icone('hors') }}Hors cours</a>
+      <a href="/recherche">{{ icone('recherche') }}Rechercher</a>
+      <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" onclick="document.getElementById('plus').open = false">{{ icone('scan') }}Scanner l'inbox</button>
+      <a href="/compte">{{ icone('compte') }}Compte</a>
+      <form method="post" action="/deconnexion"><button>{{ icone('sortie') }}Déconnexion</button></form>
+    </div>
+  </details>
+</nav>
 {% endif %}
 <main>
   {% if not sans_nav %}<p id="retour-scan" class="carte accent"></p>
@@ -144,6 +220,11 @@
   {% block contenu %}{% endblock %}
 </main>
 <script>
+  // Menu « Plus » : se ferme en touchant ailleurs
+  document.addEventListener("click", (e) => {
+    const plus = document.getElementById("plus");
+    if (plus && plus.open && !plus.contains(e.target)) plus.open = false;
+  });
   // Appli installable (PWA) : le navigateur n'accepte le service worker qu'en HTTPS ou sur localhost
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 </script>

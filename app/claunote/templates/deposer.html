@@ -22,8 +22,10 @@
     <input type="file" name="fichiers" id="fichiers" multiple accept=".pdf,.jpg,.jpeg,.png,.heic,.webp">
   </label>
   <p class="boutons">
+    <button type="button" class="principal photo" onclick="document.getElementById('photo').click()">📷 Prendre en photo</button>
+    <input type="file" id="photo" accept="image/*" capture="environment" hidden>
     <button type="button" onclick="document.getElementById('fichiers').click()">Choisir des fichiers</button>
-    <button type="button" onclick="document.getElementById('dossier').click()">Choisir un dossier</button>
+    <button type="button" class="dossier-seul" onclick="document.getElementById('dossier').click()">Choisir un dossier</button>
     <input type="file" id="dossier" webkitdirectory multiple hidden>
   </p>
   <p><label>Année d'étude (facultatif)<br>
@@ -47,6 +49,13 @@
   .zone.survol { border-color: var(--accent); background: var(--accent-pale); }
   .zone input { display: none; }
   .boutons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .photo { display: none; }
+  @media (max-width: 760px), (pointer: coarse) {
+    .photo { display: block; width: 100%; }
+    .zone { padding: 16px 12px; }
+    .zone img, .dossier-seul { display: none; }
+    #envoyer { width: 100%; }
+  }
 </style>
 <script>
   // Garde le chemin relatif des fichiers d'un dossier (BTS1/Réseaux/tp1.pdf) pour le serveur
@@ -62,6 +71,15 @@
   const depuisInput = input => montrer([...input.files].map(f => ({ fichier: f, chemin: f.webkitRelativePath || f.name })));
   choixFichiers.addEventListener('change', () => depuisInput(choixFichiers));
   choixDossier.addEventListener('change', () => depuisInput(choixDossier));
+  // Photos prises une à une : elles s'ajoutent à la sélection (une photo = un document)
+  const photo = document.getElementById('photo');
+  photo.addEventListener('change', () => {
+    const f = photo.files[0];
+    if (!f) return;
+    const nom = 'photo-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + (f.name.match(/\.\w+$/) || ['.jpg'])[0];
+    montrer([...selection, { fichier: f, chemin: nom }]);
+    photo.value = '';
+  });
 
   async function lireEntree(entree, chemin, liste) {
     if (entree.isFile) {
