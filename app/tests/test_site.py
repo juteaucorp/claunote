@@ -34,6 +34,7 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "a_verifier", lambda: [{**DOC, "id": 2, "statut": "a_verifier", "confiance": 0.4,
                                                     "note": "Le dossier « BTS1 » indique BTS1", "origine": "BTS1"}])
     monkeypatch.setattr(db, "nb_a_verifier", lambda: 1)
+    monkeypatch.setattr(db, "nb_import_a_confirmer", lambda: 0)
     monkeypatch.setattr(db, "nb_evaluations_proches", lambda: 0)
     monkeypatch.setattr(db, "document", lambda i: DOC if i == 1 else None)
     monkeypatch.setattr(db, "liste", lambda *a: [DOC])
@@ -175,15 +176,86 @@ def test_deposer_garde_les_dossiers(client, monkeypatch):
     monkeypatch.setattr(main, "INBOX_ID", 10)
     fichiers = [("fichiers", ("Terminale/Maths/suites.pdf", b"%PDF-1", "application/pdf")),
                 ("fichiers", ("Terminale/Maths/cours2.pdf", b"%PDF-2", "application/pdf")),
-                ("fichiers", ("notes.txt", b"x", "text/plain")),
+                ("fichiers", ("script.py", b"x", "text/plain")),
+                ("fichiers", ("Projet/node_modules/lib/doc.pdf", b"x", "application/pdf")),
+                ("fichiers", ("Terminale/~$suites.docx", b"x", "application/octet-stream")),
                 ("fichiers", ("../../photo.JPG", b"img", "image/jpeg"))]
     r = client.post("/deposer", files=fichiers, data={"niveau": ""})
-    assert r.status_code == 200 and "3 fichiers envoyés" in r.text and "notes.txt" in r.text
+    assert r.status_code == 200 and "3 fichiers envoyés" in r.text and "script.py" in r.text
+    assert "node_modules" in r.text and "~$suites.docx" in r.text
     assert ("path", 10, ["Terminale", "Maths"]) in faits and ("path", 10, []) in faits
     assert [f for f in faits if f[0] == "path"].count(("path", 10, ["Terminale", "Maths"])) == 1
     assert ("upload", 902, "suites.pdf", b"%PDF-1", "rename") in faits
     assert ("upload", 900, "photo.JPG", b"img", "rename") in faits
     assert "scan" in client.appels
+
+
+def test_deposer_par_paquets_en_json(client, monkeypatch):
+    class FauxKD:
+        def ensure_path(self, parent, parts):
+            return 900
+
+        def upload(self, dir_id, nom, contenu, conflict="version"):
+            return {"id": 1}
+
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: FauxKD()))
+    r = client.post("/deposer?paquet=1", files=[("fichiers", ("BTS1/Dev/cours.docx", b"PK", "application/octet-stream")),
+                                                ("fichiers", ("BTS1/Dev/app.js", b"x", "text/javascript"))])
+    assert r.json() == {"envoyes": ["BTS1/Dev/cours.docx"], "ignores": ["BTS1/Dev/app.js"]}
+    page = client.get("/deposer").text
+    assert '".docx"' in page and '"node_modules"' in page  # mêmes filtres côté navigateur
+
+
+def test_page_import(client, monkeypatch):
+    inutile = {"kdrive_id": 5, "lot": "Cours", "chemin": "Cours/Dev/.vscode", "nom": ".vscode", "categorie": "code",
+               "decision": "inutile", "raison": "dossier « .vscode » d'outil de développement", "dossier": True}
+    page = {"kdrive_id": 7, "lot": "Cours", "chemin": "Cours/Maths/IMG_1.jpg", "nom": "IMG_1.jpg", "ordre": 0}
+    page2 = {**page, "kdrive_id": 8, "nom": "scan2.pdf", "ordre": 1}
+    bilan = {"lot": "Cours", "le": None, "total": 9, "documents": 4, "en_attente": 2, "variantes": 1,
+             "pages_fusionnees": 3, "fusions": 1, "inutiles": 1, "inutiles_traites": 0,
+             "resume": "Rangé par année scolaire puis par matière.", "compris": {"Cours/2023-2024": {"niveau": "BTS1"}}}
+    monkeypatch.setattr(db, "import_bilan", lambda: [bilan])
+    monkeypatch.setattr(db, "import_dossiers", lambda lot: {"Cours/2023-2024": 3, "Cours/2023-2024/Réseaux/TP": 1})
+    monkeypatch.setattr(db, "import_fichiers", lambda d, ids=None: [inutile] if d == "inutile" else [])
+    monkeypatch.setattr(db, "import_groupes", lambda sur: ["Cours/Maths/img"])
+    monkeypatch.setattr(db, "import_groupe", lambda g: [page, page2])
+    r = client.get("/import")
+    assert r.status_code == 200
+    assert ".vscode" in r.text and "Supprimer la sélection" in r.text
+    assert "/import/fichier/7" in r.text and 'name="coupes" value="1"' in r.text
+    assert "Rangé par année scolaire" in r.text and "BTS1" in r.text and "Réseaux" in r.text and "TP" in r.text
+
+
+def test_choix_import(client, monkeypatch):
+    marques = []
+    lignes = [{"kdrive_id": 5, "nom": "a.py", "dossier": False}, {"kdrive_id": 6, "nom": "b.pdf", "dossier": False}]
+    monkeypatch.setattr(db, "import_fichiers", lambda d, ids=None: [l for l in lignes if l["kdrive_id"] in ids])
+    monkeypatch.setattr(db, "import_marquer", lambda ids, d, **k: marques.append((ids, d)) or len(ids))
+    r = client.post("/import/choix", data={"ids": ["5", "6"], "action": "supprimer"}, follow_redirects=False)
+    assert r.status_code == 303 and marques[-1] == ([5, 6], "supprimer") and "corbeille" in r.headers["location"]
+    client.post("/import/choix", data={"ids": ["5", "6"], "action": "analyser"}, follow_redirects=False)
+    assert marques[-1] == ([6], "analyser")  # le .py ne s'analyse pas
+    assert client.post("/import/choix", data={"ids": ["5"], "action": "tout"}).status_code == 400
+
+
+def test_decouper_les_scans(client, monkeypatch):
+    marques = []
+    pages = [{"kdrive_id": 10 + i, "ordre": i} for i in range(5)]
+    monkeypatch.setattr(db, "import_groupe", lambda g: pages)
+    monkeypatch.setattr(db, "import_marquer", lambda ids, d, **k: marques.append((ids, d, k)))
+    r = client.post("/import/decouper", data={"groupe": "C/img", "coupes": ["2", "4"]}, follow_redirects=False)
+    assert r.status_code == 303 and "3+documents" in r.headers["location"]
+    assert ([10], "page", {"groupe": "C/img#1", "ordre": 0, "sur": True}) in marques
+    assert ([13], "page", {"groupe": "C/img#2", "ordre": 1, "sur": True}) in marques
+    assert ([14], "analyser", {"groupe": None}) in marques
+    marques.clear()
+    client.post("/import/decouper", data={"groupe": "C/img", "action": "separer"}, follow_redirects=False)
+    assert [m[1] for m in marques] == ["analyser"] * 5
+
+
+def test_apercu_import_seulement_pour_les_fichiers_du_tri(client, monkeypatch):
+    monkeypatch.setattr(db, "import_connus", lambda ids: {})
+    assert client.get("/import/fichier/123").status_code == 404
 
 
 def test_deposer_avec_niveau(client, monkeypatch):

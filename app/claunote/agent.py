@@ -181,9 +181,44 @@ def texte_office(chemin: Path) -> str:
     return "\n".join(lignes)
 
 
-def analyser(chemin: Path, dossiers: list[str] | None = None) -> Analyse:
+# Anciens formats Office (.doc, .xls, .ppt) : texte extrait par les outils de catdoc
+VIEUX_OFFICE = {".doc": ["catdoc", "-w"], ".rtf": ["catdoc", "-w"], ".xls": ["xls2csv"], ".ppt": ["catppt"]}
+
+
+def texte_vieux_office(chemin: Path) -> str:
+    try:
+        p = subprocess.run([*VIEUX_OFFICE[chemin.suffix.lower()], str(chemin)], capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ErreurAgent(f"fichier {chemin.suffix} illisible : {e}") from e
+    if p.returncode != 0:
+        raise ErreurAgent(f"fichier {chemin.suffix} illisible : {p.stderr.decode(errors='replace')[:200]}")
+    return p.stdout.decode("utf-8", errors="replace")
+
+
+def heic_en_jpeg(chemin: Path) -> Path:
+    """Photo d'iPhone (HEIC) convertie en JPEG : Claude Code ne lit pas le HEIC."""
+    from PIL import Image
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    jpeg = chemin.with_suffix(".jpg")
+    Image.open(chemin).convert("RGB").save(jpeg, quality=90)
+    return jpeg
+
+
+def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "") -> Analyse:
     nom = chemin.name
-    if chemin.suffix.lower() in OFFICE:
+    if chemin.suffix.lower() in (".heic", ".heif"):
+        try:
+            nom = heic_en_jpeg(chemin).name
+        except Exception as e:
+            raise ErreurAgent(f"photo HEIC illisible : {e}") from e
+    elif chemin.suffix.lower() in VIEUX_OFFICE:
+        texte = texte_vieux_office(chemin)
+        if not texte.strip():
+            raise ErreurAgent(f"aucun texte dans {nom}")
+        chemin.with_name(chemin.name + ".txt").write_text(texte)
+        nom = chemin.name + ".txt"
+    elif chemin.suffix.lower() in OFFICE:
         try:
             texte = texte_office(chemin)
         except (zipfile.BadZipFile, ElementTree.ParseError, KeyError) as e:
@@ -193,7 +228,7 @@ def analyser(chemin: Path, dossiers: list[str] | None = None) -> Analyse:
         chemin.with_name(chemin.name + ".txt").write_text(texte)
         nom = chemin.name + ".txt"
     prompt = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
-    if nom != chemin.name:
+    if nom.endswith(".txt") and nom != chemin.name:
         prompt += f"\nC'est le texte extrait du fichier bureautique `{chemin.name}` (mise en page perdue).\n"
     if dossiers and "Pronote" in dossiers:
         prompt += ("\nCe document a été déposé sur Pronote par un professeur (cours, sujet, corrigé…) : "
@@ -201,6 +236,8 @@ def analyser(chemin: Path, dossiers: list[str] | None = None) -> Analyse:
     if dossiers:
         prompt += (f"\nIndice : l'élève a rangé ce fichier dans le dossier « {'/'.join(dossiers)} ». "
                    "Le nom du dossier indique souvent l'année d'étude, parfois la matière.\n")
+    if indice:
+        prompt += (f"D'après l'organisation de ses dossiers (imparfaite, à confirmer par le contenu) : {indice}.\n")
     return parse_reponse(appeler_claude(prompt, chemin.parent, outils=["Read"]))
 
 
@@ -236,3 +273,46 @@ def reclasser(doc: dict, matieres: list[str]) -> Analyse:
     if doc.get("niveau"):
         a.niveau = doc["niveau"]
     return a
+
+
+PROMPT_ARBORESCENCE = """Voici, sur l'entrée, l'arborescence d'un dossier de cours importé par un élève
+(du collège au BTS SIO, il est aujourd'hui en BTS SIO). Une ligne par dossier, avec le nombre de documents.
+Son organisation est ancienne et imparfaite : noms abrégés, années scolaires (« 2021-2022 ») au lieu
+de l'année d'étude, matières mélangées, dossiers « divers »…
+
+Déduis pour chaque dossier ce qu'il contient le plus probablement. Pour les années scolaires, sers-toi
+des dossiers voisins (ex. « 2023-2024 » à côté de « BTS2 » et « 2024-2025 ») ; laisse null si tu ne sais pas.
+Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte autour :
+{{"resume": "2 phrases sur la façon dont c'est rangé", "dossiers": {{"chemin/du/dossier":
+  {{"niveau": "... ou null", "matiere": "... ou null", "type": "... ou null"}}}}}}
+
+Règles :
+- niveau : exactement un parmi {niveaux}, ou null.
+- matiere : nom court en français (Mathématiques, Français, Anglais, Réseaux, Systèmes, Développement,
+  Cybersécurité, CEJM, …), ou null. Reprends de préférence : {matieres}.
+- type : exactement un parmi {types}, ou null.
+- n'invente rien : null vaut mieux qu'une supposition sans indice.
+"""
+
+
+def interpreter_arborescence(dossiers: dict[str, int], matieres: list[str]) -> tuple[str, dict[str, dict]]:
+    """Une seule passe texte, peu coûteuse, sur les noms de dossiers d'un import (pas sur les fichiers).
+
+    Renvoie (résumé, {chemin: {niveau, matiere, type}}).
+    """
+    lignes = "\n".join(f"{chemin or '(racine)'} ({n})" for chemin, n in sorted(dossiers.items()))
+    prompt = PROMPT_ARBORESCENCE.format(niveaux=", ".join(NIVEAUX), types=", ".join(TYPES),
+                                        matieres=", ".join(matieres) or "aucune")
+    with tempfile.TemporaryDirectory() as vide:
+        texte = appeler_claude(prompt, Path(vide), entree=lignes[:40_000], timeout=600)
+    debut, fin = texte.find("{"), texte.rfind("}")
+    try:
+        d = json.loads(texte[debut:fin + 1])
+    except (json.JSONDecodeError, ValueError) as e:
+        raise ErreurAgent(f"JSON invalide : {e}") from e
+    compris = {}
+    for chemin, v in (d.get("dossiers") or {}).items():
+        if chemin in dossiers and isinstance(v, dict):
+            compris[chemin] = {"niveau": _choix(v.get("niveau"), NIVEAUX), "type": _choix(v.get("type"), TYPES),
+                               "matiere": (v.get("matiere") or "").strip() or None if isinstance(v.get("matiere"), str) else None}
+    return str(d.get("resume") or ""), compris

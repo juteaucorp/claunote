@@ -19,6 +19,13 @@
   <span class="doux">Classement incertain ou analyse en échec</span></span>{{ icone('fleche', 18) }}</a>
 {% endif %}
 
+{% set a_importer = nb_import_a_confirmer() %}
+{% if a_importer %}
+<a class="carte accent ligne-lien" href="/import">{{ icone('organiser') }}
+  <span><strong>Import à confirmer</strong><br>
+  <span class="doux">Fichiers inutiles à supprimer ou scans à regrouper</span></span>{{ icone('fleche', 18) }}</a>
+{% endif %}
+
 {% set dues = nb_cartes_a_revoir() %}
 <div class="carte tuile-cartes {{ 'accent' if dues }}">
   {% if dues %}

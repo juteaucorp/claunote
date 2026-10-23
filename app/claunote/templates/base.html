@@ -205,7 +205,8 @@
 {% if not sans_nav %}
 {% set cartes_dues = nb_cartes_a_revoir() %}
 {% set evals = nb_evaluations_proches() %}
-{% set attente = nb_a_verifier() %}
+{% set a_importer = nb_import_a_confirmer() %}
+{% set attente = nb_a_verifier() + a_importer %}
 {% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
 <header>
   <div class="barre">
@@ -216,7 +217,7 @@
       <a href="/reviser" class="{{ 'actif' if chemin.startswith(('/revis', '/campagne')) }}">Réviser</a>
       <a href="/cartes" class="{{ 'actif' if chemin.startswith('/cartes') }}">Cartes{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
       <a href="/agenda" class="{{ 'actif' if chemin.startswith('/agenda') }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
-      <a href="/organiser" class="{{ 'actif' if chemin.startswith(('/organiser', '/hors-cours')) }}">Organiser</a>
+      <a href="/organiser" class="{{ 'actif' if chemin.startswith(('/organiser', '/hors-cours', '/import')) }}">Organiser</a>
     </nav>
     <div class="outils">
       <form action="/recherche" class="recherche-entete"><input name="q" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
@@ -239,6 +240,7 @@
     <summary class="{{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
     <div class="feuille verre">
       <a href="/deposer">{{ icone('deposer') }}Déposer</a>
+      <a href="/import">{{ icone('organiser') }}Import de dossiers{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
       <a href="/cartes">{{ icone('cartes') }}Flashcards{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
       <a href="/a-verifier">{{ icone('verifier') }}À vérifier{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
       <a href="/organiser">{{ icone('organiser') }}Organiser</a>

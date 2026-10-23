@@ -10,3 +10,6 @@ genanki==0.13.1
 pywebpush==2.0.3
 psycopg-pool==3.2.6
 weasyprint==66.0
+pypdf==5.4.0
+pillow==11.2.1
+pillow-heif==0.22.0

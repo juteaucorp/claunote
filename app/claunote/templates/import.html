@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block titre %}Import{% endblock %}
+{% block contenu %}
+<h1>Import de dossiers</h1>
+{% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
+
+<ol class="etapes" aria-label="Étapes d'un import">
+  <li><strong>Dossier copié</strong><span>dans l'inbox kDrive ou sur <a href="/deposer">Déposer</a></span></li>
+  <li><strong>Tri sans IA</strong><span>code, doublons, PDF + Word, pages de scans</span></li>
+  <li class="{{ 'actif' if inutiles or groupes }}"><strong>Ton feu vert</strong><span>suppressions, découpage des scans</span></li>
+  <li><strong>Analyse IA</strong><span>un document à la fois, rangé dans kDrive</span></li>
+</ol>
+
+{% if not lots and not inutiles and not groupes %}
+<div class="carte">
+  <strong>Aucun import pour l'instant.</strong>
+  <p class="doux">Copie un dossier entier (avec ses sous-dossiers) dans l'inbox kDrive, ou dépose-le sur la page
+  <a href="/deposer">Déposer</a>. Je lis l'ancienne organisation, j'écarte le code et les fichiers de config,
+  je relie les PDF à leur version Word et je regroupe les scans page par page.</p>
+</div>
+{% endif %}
+
+{% for lot, fichiers in inutiles.items() %}
+<form method="post" action="/import/choix" class="carte tri" data-tri>
+  <div class="entete-section">
+    <h2>Inutiles dans « {{ lot or 'inbox' }} » <span class="compteur">{{ fichiers.n }}</span></h2>
+  </div>
+  <p class="doux">Rien n'est supprimé sans toi. Les fichiers supprimés vont dans la corbeille kDrive (30 jours).</p>
+  <label class="tout-cocher"><input type="checkbox" data-tout checked> Tout cocher</label>
+  {% for cat, liste in fichiers.categories %}
+  <details {{ 'open' if loop.first }}>
+    <summary>{{ libelles.get(cat, cat) }} <span class="doux">· {{ liste|length }}</span></summary>
+    <ul class="lignes fichiers">
+      {% for f in liste %}
+      <li>
+        <input type="checkbox" name="ids" value="{{ f.kdrive_id }}" checked aria-label="{{ f.nom }}">
+        <div class="corps">
+          <span class="nom">{{ '📁 ' if f.dossier }}{{ f.nom }}</span>
+          <div class="doux">{{ f.chemin.rsplit('/', 1)[0] if '/' in f.chemin else 'racine' }} · {{ f.raison }}</div>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endfor %}
+  <div class="actions commandes">
+    <button name="action" value="supprimer" class="principal" data-confirmer>Supprimer la sélection</button>
+    <button name="action" value="garder" title="Déplacés dans Etudes/autres, sans analyse">Garder à part</button>
+    <button name="action" value="analyser" title="Seulement PDF, Word, images…">Analyser quand même</button>
+  </div>
+</form>
+{% endfor %}
+
+{% for g in groupes %}
+<form method="post" action="/import/decouper" class="carte scans" data-scans>
+  <input type="hidden" name="groupe" value="{{ g.cle }}">
+  <div class="entete-section">
+    <h2>Scans à regrouper <span class="compteur">{{ g.pages|length }} pages</span></h2>
+  </div>
+  <p class="doux">« {{ g.cle }} » : une page par fichier, mais le nom ne dit pas où commence chaque document.
+    Coche <strong>✂ Nouveau document</strong> sur la première page de chaque document.</p>
+  <ol class="pages">
+    {% for p in g.pages %}
+    <li>
+      {% if not loop.first %}
+      <label class="coupe"><input type="checkbox" name="coupes" value="{{ p.ordre }}"> ✂ Nouveau document</label>
+      {% else %}<span class="coupe debut">Début</span>{% endif %}
+      {% if p.nom.lower().endswith(('.pdf',)) %}
+      <a class="apercu pdf" href="/import/fichier/{{ p.kdrive_id }}" target="_blank">PDF<br><small>{{ p.nom }}</small></a>
+      {% else %}
+      <a class="apercu" href="/import/fichier/{{ p.kdrive_id }}" target="_blank"><img src="/import/fichier/{{ p.kdrive_id }}" alt="{{ p.nom }}" loading="lazy"></a>
+      {% endif %}
+      <span class="doux numero">{{ loop.index }}. {{ p.nom }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  <div class="actions commandes">
+    <button class="principal" name="action" value="decouper">Valider : <span data-nb>1 document</span></button>
+    <button name="action" value="separer">Une page = un document</button>
+  </div>
+</form>
+{% endfor %}
+
+{% for lot in lots %}
+<section class="carte bilan">
+  <div class="entete-section"><h2>« {{ lot.lot or 'inbox' }} »</h2><span class="doux">{{ lot.le|paris }}</span></div>
+  <ul class="chiffres">
+    <li><strong>{{ lot.documents }}</strong> document{{ 's' if lot.documents > 1 }}{% if lot.en_attente %} <span class="doux">({{ lot.en_attente }} en analyse)</span>{% endif %}</li>
+    {% if lot.fusions %}<li><strong>{{ lot.pages_fusionnees }}</strong> pages → <strong>{{ lot.fusions }}</strong> PDF</li>{% endif %}
+    {% if lot.variantes %}<li><strong>{{ lot.variantes }}</strong> autre{{ 's' if lot.variantes > 1 }} format{{ 's' if lot.variantes > 1 }} (PDF ↔ Word) relié{{ 's' if lot.variantes > 1 }}</li>{% endif %}
+    {% if lot.inutiles %}<li class="alerte"><strong>{{ lot.inutiles }}</strong> inutile{{ 's' if lot.inutiles > 1 }} à confirmer</li>{% endif %}
+    {% if lot.inutiles_traites %}<li><strong>{{ lot.inutiles_traites }}</strong> écarté{{ 's' if lot.inutiles_traites > 1 }}</li>{% endif %}
+  </ul>
+  {% if lot.resume %}<p><strong>Ce que j'ai compris :</strong> {{ lot.resume }}</p>{% endif %}
+  {% if lot.arbre %}
+  <details>
+    <summary>Organisation lue dans les dossiers <span class="doux">· {{ lot.arbre|length }} dossier{{ 's' if lot.arbre|length > 1 }}</span></summary>
+    <ul class="arbre">
+      {% for d in lot.arbre %}
+      <li style="--profondeur: {{ [d.profondeur, 6]|min }}">
+        <span class="nom">📁 {{ d.nom }} <span class="doux">({{ d.n }})</span></span>
+        <span class="puces">
+          {% for v in (d.niveau, d.matiere, d.type, d.annee) if v %}<span class="puce">{{ v }}</span>{% else %}<span class="doux">?</span>{% endfor %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="doux">Ces indices guident l'IA ; le contenu de chaque document a le dernier mot.
+      En cas de doute, il part dans <a href="/a-verifier">À vérifier</a>.</p>
+  </details>
+  {% endif %}
+</section>
+{% endfor %}
+
+<style>
+  .etapes { list-style: none; padding: 0; margin: 0 0 18px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; counter-reset: etape; }
+  .etapes li { position: relative; padding: 10px 12px 10px 42px; border: 1px solid var(--bord); border-radius: 14px; background: var(--carte); font-size: .9rem; line-height: 1.35; }
+  .etapes li::before { counter-increment: etape; content: counter(etape); position: absolute; left: 12px; top: 10px; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--fond-doux); border: 1px solid var(--bord); font-size: .78rem; font-weight: 600; text-align: center; line-height: 22px; }
+  .etapes li span { display: block; color: var(--doux); font-size: .82rem; }
+  .etapes li.actif { border-color: var(--accent); background: var(--accent-pale); }
+  .etapes li.actif::before { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .entete-section { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .entete-section h2 { margin: 0; font-size: 1.15rem; }
+  .compteur { display: inline-block; min-width: 24px; padding: 0 8px; border-radius: 999px; background: var(--accent-pale); color: var(--accent-fonce); font: 600 .85rem/24px ui-sans-serif, system-ui, sans-serif; text-align: center; vertical-align: middle; }
+  .tout-cocher { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-weight: 500; }
+  input[type=checkbox] { width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+  .tri details summary { font-weight: 600; padding: 6px 0; }
+  .fichiers { max-height: 50vh; overflow-y: auto; margin: 0; }
+  .fichiers li { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; }
+  .fichiers .corps { min-width: 0; }
+  .fichiers .nom { overflow-wrap: anywhere; }
+  .fichiers .doux { font-size: .84rem; overflow-wrap: anywhere; }
+  .commandes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .pages { list-style: none; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .pages li { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .coupe { display: flex; align-items: center; gap: 6px; font-size: .82rem; font-weight: 600; line-height: 1.25; min-height: 2.6em; color: var(--doux); }
+  .coupe.debut { color: var(--accent-fonce); }
+  .pages li:has(.coupe input:checked) .apercu { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .pages li:has(.coupe input:checked) .coupe { color: var(--accent-fonce); }
+  .apercu { display: block; aspect-ratio: 3 / 4; border: 1px solid var(--bord); border-radius: 10px; overflow: hidden; background: var(--fond-doux); }
+  .apercu img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .apercu.pdf { display: flex; flex-direction: column; align-items: center; justify-content: center; text-decoration: none; font-weight: 700; color: var(--accent-fonce); text-align: center; padding: 8px; }
+  .apercu.pdf small { font-weight: 400; color: var(--doux); overflow-wrap: anywhere; }
+  .numero { font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chiffres { list-style: none; padding: 0; margin: 10px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+  .chiffres li { padding: 4px 12px; border-radius: 999px; background: var(--fond-doux); border: 1px solid var(--bord); font-size: .9rem; }
+  .arbre { list-style: none; padding: 0; margin: 8px 0; max-height: 60vh; overflow-y: auto; }
+  .arbre li { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; padding: 6px 0 6px calc(var(--profondeur) * 16px); border-bottom: 1px solid var(--bord); }
+  .arbre .nom { overflow-wrap: anywhere; }
+  .puces { display: flex; flex-wrap: wrap; gap: 4px; }
+  .puce { padding: 0 8px; border-radius: 999px; background: var(--accent-pale); color: var(--accent-fonce); font-size: .78rem; line-height: 22px; }
+  @media (max-width: 900px) {
+    .etapes { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 760px) {
+    .etapes li { padding: 8px 10px 8px 38px; font-size: .85rem; }
+    .etapes li::before { left: 9px; top: 8px; }
+    .pages { grid-template-columns: repeat(2, 1fr); }
+    .commandes button { width: 100%; }
+    .arbre li { padding-left: calc(var(--profondeur) * 10px); }
+  }
+</style>
+<script>
+  document.querySelectorAll('[data-tri]').forEach(form => {
+    const cases = [...form.querySelectorAll('input[name="ids"]')];
+    form.querySelector('[data-tout]').addEventListener('change', e => cases.forEach(c => c.checked = e.target.checked));
+    form.addEventListener('submit', e => {
+      const n = cases.filter(c => c.checked).length;
+      if (!n) { e.preventDefault(); alert('Coche au moins un fichier.'); return; }
+      if (e.submitter && e.submitter.hasAttribute('data-confirmer') &&
+          !confirm(`Supprimer ${n} fichier(s) ? Ils partent dans la corbeille kDrive (récupérables 30 jours).`)) e.preventDefault();
+    });
+  });
+  document.querySelectorAll('[data-scans]').forEach(form => {
+    const nb = form.querySelector('[data-nb]');
+    const maj = () => {
+      const n = 1 + form.querySelectorAll('input[name="coupes"]:checked').length;
+      nb.textContent = n + (n > 1 ? ' documents' : ' document');
+    };
+    form.addEventListener('change', maj);
+    maj();
+  });
+</script>
+{% endblock %}
