@@ -30,6 +30,9 @@ const apercu = (html) =>
  */
 export function pageLisible(html) {
   if (!html.includes("Start")) return null;
+  // Pawnote lit ce qu'il y a entre « Start( » et « )}catch » (espaces retirés). Depuis Pronote
+  // 2026 l'appel finit par « Start ({…});} catch » : on remet la forme attendue.
+  html = html.replace(/Start\s*\((\s*\{[\s\S]*?\}\s*)\)\s*;\s*\}\s*catch/u, "Start($1)} catch");
   if (MARQUE_VERSION.test(html)) return html;
   for (const motif of AUTRES_VERSIONS) {
     const version = html.match(motif)?.[1];
