@@ -41,14 +41,16 @@
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--fond-ambiance), var(--fond-doux);
-    background-attachment: fixed; color: var(--texte); min-height: 100vh; }
-  @view-transition { navigation: auto; }  /* passage d'une page à l'autre en fondu, comme une appli */
-  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .18s; }
+  /* Pas de fond « fixed » ni de fondu entre pages : sur iPhone, ils font sauter l'affichage sous le verre */
+  html { background: var(--fond-doux); overscroll-behavior-y: none; }  /* l'en-tête ne descend plus quand on tire la page */
+  body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background-color: var(--fond-doux);
+    background-image: var(--fond-ambiance); background-repeat: no-repeat; background-size: 100% 100lvh; color: var(--texte); min-height: 100vh;
+    overscroll-behavior-y: none; }
   /* Le flou est porté par ::before : un élément flouté ne laisse pas ses enfants (le menu Plus) flouter la page */
   .verre { isolation: isolate; border: 1px solid var(--verre-bord); box-shadow: var(--verre-reflet), var(--verre-ombre); }
   .verre::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--verre);
-    -webkit-backdrop-filter: var(--verre-flou); backdrop-filter: var(--verre-flou); }
+    -webkit-backdrop-filter: var(--verre-flou); backdrop-filter: var(--verre-flou);
+    transform: translateZ(0); -webkit-backface-visibility: hidden; }  /* calque à part : le flou ne clignote pas au défilement */
   .feuille.verre::before { background: var(--verre-fort); }
   @media (prefers-reduced-transparency: reduce) { :root { --verre: var(--carte); --verre-fort: var(--carte); } }
   a { color: var(--accent-fonce); text-underline-offset: 3px; }
@@ -56,8 +58,7 @@
   h1 { font-size: 1.9rem; line-height: 1.25; margin: 4px 0 20px; }
   h2 { font-size: 1.25rem; line-height: 1.3; margin: 32px 0 12px; }
 
-  header { position: sticky; top: 0; z-index: 10; background: var(--verre-fort); -webkit-backdrop-filter: var(--verre-flou); backdrop-filter: var(--verre-flou);
-    border-bottom: 1px solid var(--verre-bord); box-shadow: 0 1px 0 rgba(0, 0, 0, .04); padding-top: env(safe-area-inset-top); }
+  header { position: sticky; top: 0; z-index: 10; background: var(--fond); border-bottom: 1px solid var(--bord); padding-top: env(safe-area-inset-top); }
   .barre { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 8px 14px; }
   .marque { display: flex; align-items: center; gap: 10px; font-size: 1.35rem; color: var(--texte); text-decoration: none; margin-right: auto; }
   .marque img { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--bord); background: #fff; }
@@ -90,7 +91,7 @@
     nav.onglets details { margin: 0; }
     .feuille { position: fixed; left: 12px; right: 12px; margin-left: auto; max-width: 460px; bottom: calc(80px + env(safe-area-inset-bottom));
       border-radius: 28px; padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; animation: monter .22s cubic-bezier(.2, .9, .3, 1.2); transform-origin: bottom right; }
-    @keyframes monter { from { opacity: 0; transform: scale(.92) translateY(8px); } }
+    @keyframes monter { from { transform: scale(.94) translateY(10px); } }  /* sans opacité : le flou reste actif pendant l'animation */
     .feuille a, .feuille button { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 18px; color: var(--texte); text-decoration: none;
       font-weight: 500; font-size: .95rem; border: 0; background: none; width: 100%; text-align: left; }
     .feuille a:active, .feuille button:active { background: var(--accent-pale); }
