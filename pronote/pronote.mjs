@@ -5,6 +5,41 @@ import { randomUUID } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 
 const JOUR = 24 * 60 * 60 * 1000;
+const MAX_REDIRECTIONS = 5;
+
+/**
+ * Fetcher passé à Pawnote. Pawnote charge la page Pronote sans suivre les redirections ;
+ * certains serveurs redirigent (domaine de l'établissement, https, ENT…) et Pawnote voit alors
+ * une page vide (« Pronote est indisponible »). On suit les redirections des GET, comme le font
+ * les autres clients (Home Assistant / pronotepy), et on garde la trace du dernier échange.
+ */
+export function creerFetcher({ fetch: f = globalThis.fetch, journal = console.log } = {}) {
+  const fetcher = async (req) => {
+    let url = new URL(req.url.href ?? req.url);
+    const methode = req.method ?? "GET";
+    const entetes = { ...(req.headers instanceof Headers ? Object.fromEntries(req.headers) : req.headers) };
+    for (let saut = 0; ; saut++) {
+      const r = await f(url.href, { redirect: "manual", headers: entetes, method: methode, body: req.content });
+      const lieu = r.headers.get("location");
+      // Les cookies posés pendant une redirection suivent (session de l'établissement)
+      const poses = r.headers.getSetCookie?.() ?? [];
+      if (poses.length) {
+        const cle = Object.keys(entetes).find((k) => k.toLowerCase() === "cookie") ?? "Cookie";
+        entetes[cle] = [entetes[cle], ...poses.map((c) => c.split(";")[0])].filter(Boolean).join("; ");
+      }
+      fetcher.dernier = { methode, url: `${url.origin}${url.pathname}`, statut: r.status, lieu };
+      if (r.status >= 300 && r.status < 400 && lieu && methode === "GET" && saut < MAX_REDIRECTIONS) {
+        journal(`pronote : ${url.origin}${url.pathname} → ${r.status} vers ${lieu}`);
+        url = new URL(lieu, url);
+        continue;
+      }
+      if (r.status >= 400) journal(`pronote : ${methode} ${url.origin}${url.pathname} → ${r.status}`);
+      return { status: r.status, content: await r.text(), headers: r.headers };
+    }
+  };
+  fetcher.dernier = null;
+  return fetcher;
+}
 
 const MESSAGES = {
   BadCredentialsError: "Pronote a refusé la connexion : identifiants, code PIN ou QR code incorrects (ou expirés).",
@@ -13,7 +48,7 @@ const MESSAGES = {
   SuspendedIPError: "Pronote a bloqué l'adresse IP du serveur pour un moment (trop d'essais).",
   RateLimitedError: "Pronote limite les requêtes : réessaie dans quelques minutes.",
   BusyPageError: "Pronote est indisponible pour le moment (maintenance ?).",
-  PageUnavailableError: "Pronote est indisponible pour le moment.",
+  PageUnavailableError: "Pronote n'a pas renvoyé sa page (adresse incorrecte, ou redirection vers l'ENT).",
   UnreachableError: "Impossible de joindre le serveur Pronote.",
 };
 
@@ -24,9 +59,14 @@ export class ErreurPronote extends Error {
   }
 }
 
-export const traduire = (e) => {
+export const traduire = (e, fetcher = null) => {
   if (e instanceof ErreurPronote) return e;
-  const err = new ErreurPronote(MESSAGES[e?.name] ?? `Erreur Pronote : ${e?.message ?? e}`, 502);
+  let message = MESSAGES[e?.name] ?? `Erreur Pronote : ${e?.message ?? e}`;
+  const d = fetcher?.dernier;
+  if (d && ["PageUnavailableError", "BusyPageError"].includes(e?.name)) {
+    message += ` (dernière réponse : ${d.methode} ${d.url} → HTTP ${d.statut}${d.lieu ? `, redirige vers ${d.lieu}` : ""})`;
+  }
+  const err = new ErreurPronote(message, 502);
   err.cause = e; // gardé pour les logs du service
   return err;
 };
@@ -131,9 +171,13 @@ export function extraireNotes(apercu, periode) {
  * Compte Pronote unique de Claunote, persisté dans `fichier`.
  * `pawnote` est injecté pour pouvoir tester sans serveur Pronote.
  */
-export function creerCompte({ pawnote, fichier }) {
+export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journal = console.log }) {
   let file = Promise.resolve(); // une seule opération à la fois : le jeton change à chaque connexion
   const enFile = (f) => (file = file.then(f, f));
+  const nouvelleSession = () => {
+    const fetcher = creerFetcher({ fetch, journal });
+    return { session: pawnote.createSessionHandle(fetcher), fetcher };
+  };
 
   const lire = async () => {
     try {
@@ -148,13 +192,13 @@ export function creerCompte({ pawnote, fichier }) {
     const etat = await lire();
     if (!etat) throw new ErreurPronote("Pronote n'est pas connecté.", 409);
     if (etat.expire) throw new ErreurPronote("La connexion Pronote a expiré : reconnecte-toi.", 409);
-    const session = pawnote.createSessionHandle();
+    const { session, fetcher } = nouvelleSession();
     try {
       const refresh = await pawnote.loginToken(session, { ...etat.refresh, deviceUUID: etat.deviceUUID });
       await ecrire(memoriser(refresh, etat.deviceUUID, session));
     } catch (e) {
       if (e?.name === "BadCredentialsError") await ecrire({ ...etat, expire: true });
-      throw traduire(e);
+      throw traduire(e, fetcher);
     }
     return session;
   }
@@ -180,21 +224,21 @@ export function creerCompte({ pawnote, fichier }) {
       pin = String(pin ?? "").trim();
       if (!/^\d{4}$/.test(pin)) throw new ErreurPronote("Le code PIN fait 4 chiffres.");
       const deviceUUID = randomUUID();
-      const session = pawnote.createSessionHandle();
+      const { session, fetcher } = nouvelleSession();
       try {
         const refresh = await pawnote.loginQrCode(session, { deviceUUID, pin, qr: donnees });
         const etat = memoriser(refresh, deviceUUID, session);
         await ecrire(etat);
         return etat.profil;
       } catch (e) {
-        throw traduire(e);
+        throw traduire(e, fetcher);
       }
     }),
 
     connexionIdentifiants: ({ url, username, password }) => enFile(async () => {
       if (!url || !username || !password) throw new ErreurPronote("Adresse, identifiant et mot de passe sont requis.");
       const deviceUUID = randomUUID();
-      const session = pawnote.createSessionHandle();
+      const { session, fetcher } = nouvelleSession();
       try {
         const refresh = await pawnote.loginCredentials(session, {
           url, username, password, deviceUUID, kind: pawnote.AccountKind.STUDENT,
@@ -203,7 +247,7 @@ export function creerCompte({ pawnote, fichier }) {
         await ecrire(etat);
         return etat.profil;
       } catch (e) {
-        throw traduire(e);
+        throw traduire(e, fetcher);
       }
     }),
 
