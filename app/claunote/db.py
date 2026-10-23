@@ -101,6 +101,25 @@ CREATE TABLE IF NOT EXISTS pronote_notes (
     commentaire     TEXT NOT NULL DEFAULT '',
     periode         TEXT
 );
+CREATE TABLE IF NOT EXISTS abonnements_push (
+    endpoint     TEXT PRIMARY KEY,                     -- adresse du service push (Apple, Google, Mozilla)
+    p256dh       TEXT NOT NULL,                        -- clés de chiffrement de l'appareil
+    auth         TEXT NOT NULL,
+    appareil     TEXT NOT NULL DEFAULT '',
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    vu_le        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS notifications (
+    id           SERIAL PRIMARY KEY,
+    cle          TEXT UNIQUE NOT NULL,                 -- empêche d'envoyer deux fois la même chose
+    titre        TEXT NOT NULL,
+    corps        TEXT NOT NULL DEFAULT '',
+    url          TEXT NOT NULL DEFAULT '/',
+    statut       TEXT NOT NULL DEFAULT 'attente',      -- attente, envoye, ignore, erreur
+    erreur       TEXT,
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    envoye_le    TIMESTAMPTZ
+);
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -312,6 +331,13 @@ def secret_session() -> str:
         c.execute("INSERT INTO etat VALUES ('secret_session', %s) ON CONFLICT (cle) DO NOTHING",
                   (secrets.token_hex(32),))
         return c.execute("SELECT valeur FROM etat WHERE cle = 'secret_session'").fetchone()["valeur"]
+
+
+def etat_initialiser(cle: str, valeur: str) -> str:
+    """Pose la valeur si la clé est libre et renvoie celle gardée (le site et le worker démarrent ensemble)."""
+    with connect() as c:
+        c.execute("INSERT INTO etat VALUES (%s, %s) ON CONFLICT (cle) DO NOTHING", (cle, valeur))
+        return c.execute("SELECT valeur FROM etat WHERE cle = %s", (cle,)).fetchone()["valeur"]
 
 
 def demander_scan():
@@ -559,3 +585,68 @@ def documents_pronote(limite: int = 30):
             """SELECT p.*, d.id AS doc_id, d.statut AS doc_statut, d.titre AS doc_titre
                FROM pronote_documents p LEFT JOIN documents d ON d.kdrive_id = p.kdrive_id
                ORDER BY p.le DESC NULLS LAST, p.nom LIMIT %s""", (limite,)).fetchall()
+
+
+# --- Notifications push -----------------------------------------------------
+
+def enregistrer_abonnement(endpoint: str, p256dh: str, auth: str, appareil: str = ""):
+    with connect() as c:
+        c.execute("""INSERT INTO abonnements_push (endpoint, p256dh, auth, appareil) VALUES (%s, %s, %s, %s)
+                     ON CONFLICT (endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth,
+                       appareil = EXCLUDED.appareil, vu_le = now()""", (endpoint, p256dh, auth, appareil))
+
+
+def retirer_abonnement(endpoint: str):
+    with connect() as c:
+        c.execute("DELETE FROM abonnements_push WHERE endpoint = %s", (endpoint,))
+
+
+def abonnements():
+    with connect() as c:
+        return c.execute("SELECT * FROM abonnements_push ORDER BY cree_le").fetchall()
+
+
+def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str = "attente") -> bool:
+    """Met une notification dans la file ; faux si cette clé a déjà servi."""
+    with connect() as c:
+        return c.execute("INSERT INTO notifications (cle, titre, corps, url, statut) VALUES (%s, %s, %s, %s, %s) "
+                         "ON CONFLICT (cle) DO NOTHING RETURNING id", (cle, titre, corps, url, statut)
+                         ).fetchone() is not None
+
+
+def notification_connue(cle: str) -> bool:
+    with connect() as c:
+        return c.execute("SELECT 1 FROM notifications WHERE cle = %s", (cle,)).fetchone() is not None
+
+
+def notifications_en_attente():
+    with connect() as c:
+        return c.execute("SELECT * FROM notifications WHERE statut = 'attente' "
+                         "AND cree_le > now() - interval '2 days' ORDER BY id").fetchall()
+
+
+def maj_notification(notif_id: int, statut: str, erreur: str | None = None):
+    with connect() as c:
+        c.execute("UPDATE notifications SET statut = %s, erreur = %s, envoye_le = now() WHERE id = %s",
+                  (statut, erreur, notif_id))
+
+
+def notifications_recentes(limite: int = 10):
+    with connect() as c:
+        return c.execute("SELECT * FROM notifications WHERE statut <> 'ignore' ORDER BY id DESC LIMIT %s",
+                         (limite,)).fetchall()
+
+
+def nouveaux_cours_sans_revision(jours: int = 7, minimum: int = 3):
+    """Matière où des cours récents sont arrivés cette semaine sans aucune révision faite dessus.
+
+    « Récents » : datés du dernier mois ou venus de Pronote, pour ignorer l'import des vieux cahiers.
+    """
+    with connect() as c:
+        return c.execute(
+            """SELECT d.niveau, d.matiere, count(*) AS n FROM documents d
+               WHERE d.statut = 'classe' AND d.cree_le > now() - make_interval(days => %s)
+                 AND (d.date_doc >= current_date - 30 OR d.origine ILIKE '%%pronote%%')
+                 AND NOT EXISTS (SELECT 1 FROM revisions r WHERE d.id = ANY(r.doc_ids))
+               GROUP BY d.niveau, d.matiere HAVING count(*) >= %s
+               ORDER BY n DESC LIMIT 1""", (jours, minimum)).fetchone()

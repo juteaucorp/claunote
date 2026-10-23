@@ -258,7 +258,7 @@ Réviser ─► « Flashcards » ─► Claude tire ~20 cartes de tes cours ─�
 
 - ⚠️ Les navigateurs n'autorisent l'installation qu'en **HTTPS**. En `http://IP-VPN:8000`, tu peux
   seulement « Ajouter à l'écran d'accueil » (raccourci, sans hors ligne).
-- Pour la vraie appli : mets un reverse proxy HTTPS devant le site (Caddy, Nginx Proxy Manager,
+- Le plus simple : le service `caddy` fourni (section 13). Sinon, mets ton propre reverse proxy HTTPS devant le site (Caddy, Nginx Proxy Manager,
   Traefik…) avec un certificat (par ex. Let's Encrypt en DNS-01 sur un sous-domaine qui pointe vers
   l'IP VPN). Le proxy doit envoyer `X-Forwarded-Proto: https` pour que le cookie soit `Secure`.
 - Puis sur Android (Chrome) : menu **⋮ → Installer l'application** ; sur iPhone (Safari) :
@@ -302,4 +302,47 @@ Organiser ─► filtres (ajouté du … au …, année, matière, type, état, 
   un PDF pour un cours de plusieurs pages).
 - Flashcards : toucher la carte pour la retourner, les boutons de note restent sous le pouce.
 - Le mode sombre suit celui du téléphone. Installation en appli : voir la section 10 (HTTPS requis).
-- Les notifications push viendront plus tard.
+- Notifications push et appli iPhone : voir la section 13.
+
+## 13. Appli iPhone et notifications (gratuit, sans App Store)
+
+```
+                 ┌──────────── VPN ou même réseau ────────────┐
+ iPhone ─ Safari ─┤ https://CLAUNOTE_HOTE ─► caddy ─► web:8000  │   ouvrir l'appli
+ (appli web)      └────────────────────────────────────────────┘
+      ▲
+      │ notification chiffrée (Apple ne peut pas la lire)
+      │
+ web.push.apple.com ◄── worker (VM, sortie Internet) : rappel du jour, Pronote, révision prête
+```
+
+**À retenir** : il faut le VPN pour **ouvrir** Claunote, mais **les notifications arrivent partout** (4G
+comprise) : c'est la VM qui les envoie au service push d'Apple, gratuit, sans compte développeur.
+
+### Mise en place (une fois)
+
+1. Dans `.env` : `CLAUNOTE_HOTE=<IP de la VM sur ton VPN>` (ou un nom si ton VPN a un DNS),
+   `BIND_ADDR` = cette même IP, et ton e-mail dans `CLAUNOTE_PUSH_CONTACT=mailto:…`.
+   Le port 443 est déjà pris sur la VM ? Mets `HTTPS_PORT=8443`.
+2. `git pull && docker compose up -d --build` : le service **caddy** crée l'autorité de certification
+   « Claunote » (volume `caddy`, à ne pas supprimer : sinon il faut réinstaller le certificat).
+3. Sur l'iPhone, VPN allumé, ouvre **`http://<BIND_ADDR>:8000/installer`** dans Safari et suis les 5 étapes :
+   certificat → confiance → `https://…` → **Partager → Sur l'écran d'accueil** → **Plus → Notifications → Activer**.
+
+> ⚠️ Utilise **toujours la même adresse** (celle de `CLAUNOTE_HOTE`) : l'iPhone considère une autre IP
+> comme une autre appli, avec ses propres réglages de notifications.
+
+### Ce que tu reçois (page **Plus → Notifications**)
+
+| Notification | Quand | En la touchant |
+|---|---|---|
+| **Rappel du jour** (le plus utile) : contrôle sans fiche → flashcards à revoir → fiche à relire → nouveaux cours sans révision | à l'heure choisie (18 h par défaut), une fois par jour, rien s'il n'y a rien | la page qui va avec |
+| Matin d'un contrôle | fin des heures de silence | ta fiche |
+| Nouveau contrôle annoncé / documents des profs | après la synchro Pronote | Agenda |
+| Fiche, quiz, flashcards prêts | dès que le worker a fini | la révision |
+
+- **Heures de silence** (22 h → 7 h 30 par défaut) : rien ne sonne, la file attend le matin.
+- La **pastille** sur l'icône = flashcards du jour + évaluations de la semaine.
+- **Envoyer un test** vérifie toute la chaîne. Échec ? `docker compose logs -f worker | grep notif`
+  (la VM doit pouvoir joindre `web.push.apple.com`).
+- Désactiver : bouton **Désactiver ici**, ou Réglages iPhone → Notifications → Claunote.

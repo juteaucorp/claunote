@@ -1,3 +1,4 @@
+import base64
 from datetime import date
 
 import pytest
@@ -610,7 +611,7 @@ def test_accueil_aujourd_hui(client, monkeypatch):
     assert "Oral" in r.text and "Déjà fait" not in r.text and "8 documents" in r.text
     assert "1 document à vérifier" in r.text
     # Navigation mobile : onglets en bas et menu Plus
-    assert 'class="onglets"' in r.text and 'id="plus"' in r.text and "Scanner l'inbox" in r.text
+    assert 'class="onglets verre"' in r.text and 'id="plus"' in r.text and "Scanner l'inbox" in r.text
 
 
 def test_documents_en_erreur(client, monkeypatch):
@@ -643,3 +644,45 @@ def test_explication_erreur():
     assert "abîmé" in main.explication_erreur("fichier .docx illisible : File is not a zip file")[0]
     assert "limite" in main.explication_erreur("usage limit reached")[0]
     assert main.explication_erreur(None)[0] == "L'analyse a échoué."
+
+
+def test_installer_et_certificat_sans_connexion(anonyme, monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUNOTE_HOTE", "10.8.0.5")
+    monkeypatch.setattr(main, "CA", tmp_path / "root.crt")
+    r = anonyme.get("/installer")
+    assert r.status_code == 200 and "https://10.8.0.5/" in r.text and "pas encore créé" in r.text
+    assert anonyme.get("/certificat.crt").status_code == 404
+    der = b"\x30\x82certificat"
+    (tmp_path / "root.crt").write_text("-----BEGIN CERTIFICATE-----\n"
+                                       + base64.b64encode(der).decode() + "\n-----END CERTIFICATE-----\n")
+    r = anonyme.get("/certificat.crt")
+    assert r.content == der and r.headers["content-type"] == "application/x-x509-ca-cert"
+    assert "Télécharger le certificat" in anonyme.get("/installer").text
+    assert anonyme.get("/notifications", follow_redirects=False).status_code == 303  # le reste demande la connexion
+
+
+def test_page_notifications(client, monkeypatch):
+    abos = []
+    monkeypatch.setattr(db, "abonnements", lambda: list(abos))
+    monkeypatch.setattr(db, "enregistrer_abonnement", lambda *a: abos.append(dict(zip(
+        ("endpoint", "p256dh", "auth", "appareil"), a), cree_le=None)))
+    monkeypatch.setattr(db, "retirer_abonnement", lambda e: abos.clear())
+    monkeypatch.setattr(db, "notifications_recentes", lambda limite=10: [])
+    monkeypatch.setattr(db, "etat_initialiser", lambda k, v: client.etat.setdefault(k, v))
+    r = client.get("/notifications")
+    assert r.status_code == 200 and "Rappel du jour" in r.text and "applicationServerKey" in r.text
+    assert client.post("/notifications/test").text.startswith("Aucun appareil")
+    assert client.post("/notifications/abonnement", json={"endpoint": "e"}).status_code == 400
+    client.post("/notifications/abonnement", json={"endpoint": "https://web.push.apple.com/x",
+                                                   "keys": {"p256dh": "p", "auth": "a"}, "appareil": "iPhone (appli)"})
+    assert abos[0]["appareil"] == "iPhone (appli)" and "iPhone (appli)" in client.get("/notifications").text
+    monkeypatch.setattr(main.notifications, "envoyer_a_tous", lambda *a: (1, []))
+    assert client.post("/notifications/test").text == "Envoyée sur 1 appareil."
+    r = client.post("/notifications/reglages", data={"heure": "19:00", "silence_debut": "22:30", "silence_fin": "07:00",
+                                                     "pronote": "true"}, follow_redirects=False)
+    assert r.status_code == 303
+    p = main.notifications.preferences()
+    assert p["heure"] == "19:00" and p["pronote"] is True and p["rappel"] is False and p["revisions"] is False
+    assert client.post("/notifications/reglages", data={"heure": "25h"}).status_code == 400
+    client.post("/notifications/desabonnement", json={"endpoint": "https://web.push.apple.com/x"})
+    assert abos == []

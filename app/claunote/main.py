@@ -1,3 +1,4 @@
+import base64
 import datetime as dt
 import html
 import json
@@ -18,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import anki, auth, db, pronote, rangement, revision
+from claunote import anki, auth, db, notifications, pronote, rangement, revision
 from claunote.agent import NIVEAUX, TYPES
 from claunote.kdrive import KDrive
 
@@ -39,7 +40,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Claunote", lifespan=lifespan)
-PUBLIC = ("/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne")
+PUBLIC = ("/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
 
 
 @app.middleware("http")
@@ -581,6 +582,94 @@ def service_worker():
 @app.get("/hors-ligne", response_class=HTMLResponse)
 def hors_ligne(request: Request):
     return templates.TemplateResponse(request, "hors_ligne.html", {"sans_nav": True})
+
+
+# --- Installation sur le téléphone et notifications --------------------------
+
+CA = Path(os.environ.get("CLAUNOTE_CA", "/caddy/caddy/pki/authorities/local/root.crt"))
+
+
+def adresse_https() -> str | None:
+    hote = os.environ.get("CLAUNOTE_HOTE", "").strip()
+    port = os.environ.get("HTTPS_PORT", "443").strip()
+    return f"https://{hote}{'' if port == '443' else ':' + port}" if hote else None
+
+
+@app.get("/installer", response_class=HTMLResponse)
+def installer(request: Request):
+    """Pas à pas pour l'iPhone ; ouvert sans connexion (on y arrive avant d'avoir le certificat)."""
+    https = request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
+    return templates.TemplateResponse(request, "installer.html", {
+        "sans_nav": True, "https": https, "adresse": adresse_https(), "certificat": CA.exists()})
+
+
+@app.get("/certificat.crt")
+def certificat():
+    """Certificat racine de l'autorité locale de Caddy, au format que l'iPhone sait installer."""
+    if not CA.exists():
+        raise HTTPException(404, "certificat introuvable : le service caddy a-t-il démarré ?")
+    pem = CA.read_text()
+    der = base64.b64decode("".join(l for l in pem.splitlines() if l and not l.startswith("-----")))
+    return Response(der, media_type="application/x-x509-ca-cert",
+                    headers={"Content-Disposition": 'attachment; filename="claunote.crt"'})
+
+
+@app.get("/notifications", response_class=HTMLResponse)
+def page_notifications(request: Request, message: str = ""):
+    return templates.TemplateResponse(request, "notifications.html", {
+        "p": notifications.preferences(), "appareils": db.abonnements(),
+        "recentes": db.notifications_recentes(8), "cle": notifications.cle_publique(),
+        "message": message, "adresse": adresse_https()})
+
+
+@app.post("/notifications/abonnement")
+async def abonner(request: Request):
+    d = await request.json()
+    try:
+        db.enregistrer_abonnement(d["endpoint"], d["keys"]["p256dh"], d["keys"]["auth"],
+                                  str(d.get("appareil") or "")[:80])
+    except (KeyError, TypeError):
+        raise HTTPException(400, "abonnement incomplet")
+    return {"ok": True}
+
+
+@app.post("/notifications/desabonnement")
+async def desabonner(request: Request):
+    d = await request.json()
+    db.retirer_abonnement(str(d.get("endpoint") or ""))
+    return {"ok": True}
+
+
+@app.post("/notifications/retirer")
+def retirer_appareil(endpoint: str = Form(...)):
+    db.retirer_abonnement(endpoint)
+    return RedirectResponse("/notifications", status_code=303)
+
+
+@app.post("/notifications/test", response_class=HTMLResponse)
+def tester_notification():
+    if not db.abonnements():
+        return "Aucun appareil abonné : active d'abord les notifications sur ton iPhone."
+    envoyes, erreurs = notifications.envoyer_a_tous("Claunote", "Les notifications marchent 🎉", "/notifications",
+                                                     "test")
+    if erreurs and not envoyes:
+        return f"Échec de l'envoi : {html.escape(erreurs[0])}. La VM a-t-elle accès à Internet ?"
+    return f"Envoyée sur {envoyes} appareil{'s' if envoyes > 1 else ''}."
+
+
+@app.post("/notifications/reglages")
+def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("22:00"),
+                         silence_fin: str = Form("07:30"), rappel: bool = Form(False), pronote_: bool = Form(False,
+                         alias="pronote"), revisions: bool = Form(False)):
+    for h in (heure, silence_debut, silence_fin):
+        try:
+            dt.time.fromisoformat(h)
+        except ValueError:
+            raise HTTPException(400, "heure invalide")
+    notifications.enregistrer_preferences({"heure": heure, "silence_debut": silence_debut,
+                                           "silence_fin": silence_fin, "rappel": rappel,
+                                           "pronote": pronote_, "revisions": revisions})
+    return RedirectResponse("/notifications?message=Réglages+enregistrés", status_code=303)
 
 
 # --- Agenda (Pronote) -------------------------------------------------------

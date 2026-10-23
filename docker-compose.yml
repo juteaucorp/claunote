@@ -14,7 +14,22 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:8000:8000"   # IP de la VM sur ton VPN, jamais 0.0.0.0
+    volumes:
+      - caddy:/caddy:ro   # certificat racine à installer sur l'iPhone (page /installer)
     depends_on: [db, pronote]
+
+  caddy:
+    # HTTPS pour l'appli iPhone et les notifications (voir infra/SETUP.md, section 13)
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      CLAUNOTE_HOTE: ${CLAUNOTE_HOTE:-localhost}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data      # autorité de certification locale : à garder
+    depends_on: [web]
 
   worker:
     build: ./app
@@ -41,3 +56,4 @@ volumes:
   pgdata:
   cache:
   pronote:
+  caddy:

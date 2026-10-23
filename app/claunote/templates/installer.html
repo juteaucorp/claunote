@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Installer sur l'iPhone{% endblock %}
+{% block contenu %}
+<div class="installer">
+  <p class="doux"><a href="/">← Claunote</a></p>
+  <h1>Claunote sur ton iPhone</h1>
+  <p class="doux">Gratuit, sans App Store : Claunote s'installe comme une appli web. Il faut le VPN allumé
+    (ou être sur le même réseau) pour l'ouvrir, mais <strong>les notifications arrivent partout</strong>.</p>
+
+  {% if not adresse %}
+  <p class="carte accent">⚠️ HTTPS n'est pas encore configuré sur le serveur : renseigne <code>CLAUNOTE_HOTE</code>
+    dans le <code>.env</code> (voir <code>infra/SETUP.md</code>, section 13), puis
+    <code>docker compose up -d</code>.</p>
+  {% endif %}
+
+  <ol class="etapes">
+    <li class="carte">
+      <strong>Installer le certificat de Claunote</strong>
+      <p class="doux">Il permet à l'iPhone de faire confiance à ton serveur (HTTPS sans nom de domaine payant).</p>
+      {% if certificat %}<a class="bouton principal" href="/certificat.crt">Télécharger le certificat</a>
+      {% else %}<p class="alerte">Certificat pas encore créé : le service <code>caddy</code> doit avoir démarré.</p>{% endif %}
+      <p>Puis <strong>Réglages → Profil téléchargé → Installer</strong> (code de l'iPhone).</p>
+    </li>
+    <li class="carte">
+      <strong>Lui faire confiance</strong>
+      <p><strong>Réglages → Général → Informations → Réglages des certificats</strong> (tout en bas) →
+        active <strong>Claunote</strong>.</p>
+    </li>
+    <li class="carte">
+      <strong>Ouvrir Claunote en HTTPS dans Safari</strong>
+      {% if adresse %}<p><a class="bouton" href="{{ adresse }}/">{{ adresse }}</a></p>{% endif %}
+      <p class="doux">Pas d'avertissement de sécurité ? Le certificat est bon.</p>
+    </li>
+    <li class="carte">
+      <strong>L'ajouter à l'écran d'accueil</strong>
+      <p>Bouton <strong>Partager</strong> → <strong>Sur l'écran d'accueil</strong> → laisse
+        <strong>Ouvrir en tant qu'app web</strong> activé → <strong>Ajouter</strong>.</p>
+    </li>
+    <li class="carte">
+      <strong>Activer les notifications</strong>
+      <p>Ouvre Claunote <strong>depuis son icône</strong>, puis <strong>Plus → Notifications → Activer</strong>
+        et accepte. Touche <strong>Envoyer un test</strong> pour vérifier.</p>
+    </li>
+  </ol>
+
+  {% if https %}<p class="doux">Tu es déjà en HTTPS : les étapes 1 à 3 sont faites.</p>{% endif %}
+</div>
+<style>
+  .installer { max-width: 560px; margin: 0 auto; }
+  .etapes { list-style: none; counter-reset: etape; padding: 0; margin: 20px 0; }
+  .etapes > li { counter-increment: etape; position: relative; padding-left: 60px; }
+  .etapes > li::before { content: counter(etape); position: absolute; left: 16px; top: 15px; width: 30px; height: 30px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .etapes p { margin: 8px 0; }
+</style>
+{% endblock %}

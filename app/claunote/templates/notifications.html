@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Notifications{% endblock %}
+{% block contenu %}
+<h1>Notifications</h1>
+{% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
+
+<div class="carte" id="cet-appareil">
+  <div class="ligne-etat">{{ icone('cloche') }}<div class="corps"><strong>Sur cet appareil</strong>
+    <div class="doux" id="etat-push">Vérification…</div></div></div>
+  <div class="actions" style="margin-top: 12px">
+    <button class="principal" id="activer" hidden>Activer les notifications</button>
+    <button id="tester" hidden hx-post="/notifications/test" hx-target="#retour-test">Envoyer un test</button>
+    <button id="desactiver" hidden>Désactiver ici</button>
+    <a class="bouton" id="aide" href="/installer" hidden>{{ icone('telephone', 18) }}Installer sur l'iPhone</a>
+  </div>
+  <p id="retour-test" class="doux"></p>
+</div>
+
+<h2>Ce que tu reçois</h2>
+<form method="post" action="/notifications/reglages" class="carte reglages">
+  <label class="interrupteur"><span><strong>Rappel du jour</strong><br>
+    <span class="doux">Le plus utile du moment : contrôle sans fiche, flashcards à revoir, fiche à relire,
+      ou une proposition sur tes nouveaux cours. Plus un rappel le matin d'un contrôle.</span></span>
+    <input type="checkbox" name="rappel" value="true" {{ 'checked' if p.rappel }}></label>
+  <label class="heure">À <input type="time" name="heure" value="{{ p.heure }}" required></label>
+  <label class="interrupteur"><span><strong>Pronote</strong><br>
+    <span class="doux">Nouveau contrôle annoncé, documents des profs récupérés.</span></span>
+    <input type="checkbox" name="pronote" value="true" {{ 'checked' if p.pronote }}></label>
+  <label class="interrupteur"><span><strong>Révision prête</strong><br>
+    <span class="doux">Ta fiche, ton quiz ou tes flashcards sont générés.</span></span>
+    <input type="checkbox" name="revisions" value="true" {{ 'checked' if p.revisions }}></label>
+  <p class="heure">Silence de <input type="time" name="silence_debut" value="{{ p.silence_debut }}" required>
+    à <input type="time" name="silence_fin" value="{{ p.silence_fin }}" required></p>
+  <p class="doux">Pendant le silence, rien ne sonne : les notifications attendent le matin.</p>
+  <button class="principal">Enregistrer</button>
+</form>
+
+{% if appareils %}
+<h2>Appareils abonnés</h2>
+<ul class="carte lignes">
+  {% for a in appareils %}
+  <li>{{ icone('telephone', 20) }}
+    <div class="corps">{{ a.appareil or 'Appareil' }}
+      <div class="doux">depuis le {{ a.cree_le|paris }}</div></div>
+    <form method="post" action="/notifications/retirer" class="fin"><input type="hidden" name="endpoint" value="{{ a.endpoint }}">
+      <button class="petit">Retirer</button></form>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if recentes %}
+<h2>Dernières envoyées</h2>
+<ul class="carte lignes">
+  {% for n in recentes %}
+  <li><div class="corps"><strong>{{ n.titre }}</strong><div class="doux">{{ n.corps }}</div>
+    {% if n.statut == 'erreur' %}<div class="alerte">Échec : {{ n.erreur }}</div>{% endif %}</div>
+    <span class="fin doux">{% if n.statut == 'attente' %}en attente{% else %}{{ (n.envoye_le or n.cree_le)|paris }}{% endif %}</span></li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<style>
+  .ligne-etat { display: flex; gap: 12px; align-items: flex-start; }
+  .ligne-etat svg { flex: none; color: var(--accent-fonce); margin-top: 2px; }
+  .reglages .interrupteur { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--bord); }
+  .reglages .heure { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .reglages input[type=checkbox] { appearance: none; -webkit-appearance: none; flex: none; width: 51px; height: 31px; border-radius: 999px; background: var(--bord);
+    position: relative; cursor: pointer; transition: background .2s; border: 0; padding: 0; min-height: 0; }
+  .reglages input[type=checkbox]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .2); transition: transform .2s; }
+  .reglages input[type=checkbox]:checked { background: #34c759; }
+  .reglages input[type=checkbox]:checked::after { transform: translateX(20px); }
+  button.petit { padding: 6px 12px; min-height: 36px; }
+  .lignes svg { flex: none; margin-top: 2px; color: var(--doux); }
+</style>
+<script>
+(() => {
+  const CLE = "{{ cle }}";
+  const ADRESSE = {{ (adresse or '')|tojson }};
+  const $ = (id) => document.getElementById(id);
+  const etat = (texte, boutons) => {
+    $("etat-push").textContent = texte;
+    for (const b of ["activer", "tester", "desactiver", "aide"]) $(b).hidden = !boutons.includes(b);
+  };
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const installee = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const cle = (b64) => {
+    const s = atob((b64 + "=".repeat((4 - b64.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(s, (c) => c.charCodeAt(0));
+  };
+  const nomAppareil = () => (ios ? "iPhone" : /Android/.test(navigator.userAgent) ? "Android" : "Ordinateur")
+    + (installee ? " (appli)" : " (navigateur)");
+  const envoyer = (url, corps) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corps) });
+
+  async function verifier() {
+    if (!window.isSecureContext) {
+      return etat(ADRESSE ? `Ouvre Claunote en HTTPS (${ADRESSE}) : les notifications ne marchent pas en http.`
+        : "Les notifications demandent HTTPS : suis le guide d'installation.", ["aide"]);
+    }
+    if (ios && !installee) return etat("Sur iPhone, ajoute d'abord Claunote à l'écran d'accueil, puis ouvre-la depuis son icône.", ["aide"]);
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return etat("Ce navigateur ne gère pas les notifications push (iOS 16.4 minimum).", ["aide"]);
+    if (Notification.permission === "denied") {
+      return etat(ios ? "Refusées. Réactive-les dans Réglages → Notifications → Claunote." : "Refusées dans les réglages du navigateur.", []);
+    }
+    const reg = await navigator.serviceWorker.ready;
+    const abo = await reg.pushManager.getSubscription();
+    if (abo) {
+      await envoyer("/notifications/abonnement", { ...abo.toJSON(), appareil: nomAppareil() });  // garde le serveur à jour
+      return etat("Activées ✓", ["tester", "desactiver"]);
+    }
+    etat("Désactivées.", ["activer"]);
+  }
+
+  $("activer").onclick = async () => {
+    try {
+      if (await Notification.requestPermission() !== "granted") return verifier();
+      const reg = await navigator.serviceWorker.ready;
+      const abo = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cle(CLE) });
+      await envoyer("/notifications/abonnement", { ...abo.toJSON(), appareil: nomAppareil() });
+      location.reload();
+    } catch (err) { etat("Activation impossible : " + err.message, ["activer", "aide"]); }
+  };
+  $("desactiver").onclick = async () => {
+    const abo = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+    if (abo) { await envoyer("/notifications/desabonnement", { endpoint: abo.endpoint }); await abo.unsubscribe(); }
+    location.reload();
+  };
+  verifier().catch((err) => etat("Erreur : " + err.message, ["aide"]));
+})();
+</script>
+{% endblock %}

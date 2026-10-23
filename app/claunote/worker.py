@@ -9,10 +9,11 @@ import datetime as dt
 import json
 import os
 import shutil
+import threading
 import time
 from pathlib import Path, PurePosixPath
 
-from claunote import agent, db, pronote, rangement, revision
+from claunote import agent, db, notifications, pronote, rangement, revision
 from claunote.agent import ErreurAgent, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive
 
@@ -154,6 +155,10 @@ def traiter_revision(kd: KDrive, rev: dict):
         log(f"copie kDrive de la révision impossible : {e}")
     db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, kdrive_id=kdrive_id)
     log(f"révision prête : {rev['genre']} « {rev['sujet']} »")
+    try:
+        notifications.revision_prete(rev)
+    except Exception as e:
+        log(f"notification impossible : {e}")
 
 
 def parcourir(kd: KDrive, dossier_id: int, dossiers: list[str], profondeur: int = 0):
@@ -211,6 +216,7 @@ def synchro_pronote(prochaine: float) -> float:
             log(f"pronote : {r['evenements']} évaluation(s)/devoir(s), {len(r['preparees'])} révision(s) lancée(s)"
                 + (f", erreurs : {r['erreurs']}" if r["erreurs"] else ""))
             b = pronote.importer_documents(KDrive.from_env(), INBOX_ID)
+            notifications.apres_synchro_pronote(b["deposes"] if b else 0)
             if b:
                 log(f"pronote : {b['deposes']} document(s) des profs déposé(s) dans l'inbox, {b['liens']} lien(s)"
                     + (f", {b['restant']} au prochain passage" if b["restant"] else "")
@@ -224,6 +230,7 @@ def main():
     db.init()
     kd = KDrive.from_env()
     log(f"worker : surveillance du dossier kDrive {INBOX_ID}")
+    threading.Thread(target=notifications.boucle, daemon=True, name="notifications").start()
     prochaine_synchro = 0.0
     while True:
         pause = INTERVALLE
