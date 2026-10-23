@@ -10,7 +10,7 @@ Plan complet : https://claude.ai/artifact/TftXx2h7fafSkS1WjNLMKK
 
 ```
 Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
-                              │ WebDAV (rclone mount)
+                              │ API REST kDrive (jeton)
                               ▼
 ┌──────────────── VM Linux (Docker Compose) ────────────────┐
 │  worker (OCR, classement) ──▶ PostgreSQL + pgvector        │

@@ -1,25 +1,32 @@
-"""Phase 0 : surveille l'inbox et signale les nouveaux fichiers.
+"""Phase 0 : surveille l'inbox kDrive via l'API et télécharge les nouveaux fichiers.
 
-Phase 1 remplacera le log par OCR + classement.
+Phase 1 remplacera le simple téléchargement par OCR + classement, puis
+rangera le fichier dans archives/ avec KDrive.move().
 """
 import os
 import time
 from pathlib import Path
 
-ETUDES_DIR = Path(os.environ.get("ETUDES_DIR", "/etudes"))
-INTERVALLE = 30  # secondes ; le polling évite les soucis d'inotify sur un montage rclone
+from claunote.kdrive import KDrive
+
+INBOX_ID = int(os.environ["KDRIVE_INBOX_ID"])
+CACHE_DIR = Path(os.environ.get("CACHE_DIR", "/cache"))
+INTERVALLE = 60  # secondes entre deux vérifications de l'inbox
 
 
 def main():
-    vus: set[str] = set()
-    print(f"worker : surveillance de {ETUDES_DIR / 'inbox'}", flush=True)
+    kd = KDrive.from_env()
+    vus: set[int] = set()
+    print(f"worker : surveillance du dossier kDrive {INBOX_ID}", flush=True)
     while True:
-        inbox = ETUDES_DIR / "inbox"
-        if inbox.is_dir():
-            for p in inbox.iterdir():
-                if p.is_file() and p.name not in vus:
-                    vus.add(p.name)
-                    print(f"nouveau fichier : {p.name}", flush=True)
+        try:
+            for item in kd.list_dir(INBOX_ID):
+                if item["type"] == "file" and item["id"] not in vus:
+                    kd.download(item["id"], CACHE_DIR / "inbox" / item["name"])
+                    vus.add(item["id"])
+                    print(f"nouveau fichier : {item['name']}", flush=True)
+        except Exception as e:
+            print(f"erreur kDrive : {e}", flush=True)
         time.sleep(INTERVALLE)
 
 
