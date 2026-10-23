@@ -29,6 +29,7 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Phase 3 : agent de révision (fiches, quiz, plans, sources citées)
 - [x] Avant Pronote : dossiers par année, dépôt depuis le site, confirmation des doutes, nouveau look
 - [x] Phase 4 : Pronote (agenda des évaluations, devoirs, notes, préparation en 1 clic)
+- [x] Documents des profs Pronote (Contenu et ressources, pièces jointes du Travail à faire) → bibliothèque
 - [ ] Phase 5 : flashcards, Anki, PWA
 
 ## Installation et utilisation

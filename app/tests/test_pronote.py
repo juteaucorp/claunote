@@ -173,3 +173,59 @@ def test_preparer_a_venir_une_seule_par_jour(fausse_base, monkeypatch):
     monkeypatch.setattr(db, "evenements_a_venir", lambda genre, jours: evs)
     assert pronote.preparer_a_venir(dt.date(2026, 10, 23)) == [1]
     assert len(fausse_base["revisions"]) == 1
+
+
+class FauxKD:
+    def __init__(self):
+        self.faits = []
+
+    def ensure_path(self, parent, parts):
+        self.faits.append(("path", parent, parts))
+        return 500 + len(self.faits)
+
+    def upload(self, dossier, nom, contenu, conflict="version"):
+        self.faits.append(("upload", dossier, nom, contenu, conflict))
+        return {"id": 9000 + len(self.faits)}
+
+
+def test_importer_documents(monkeypatch):
+    import base64
+    enregistres, appels = [], []
+    monkeypatch.setattr(db, "cles_documents_pronote", lambda: ["deja"])
+    monkeypatch.setattr(db, "enregistrer_document_pronote",
+                        lambda d, statut, kdrive_id=None, erreur=None: enregistres.append((d["cle"], statut, kdrive_id, erreur)))
+    monkeypatch.setattr(db, "demander_scan", lambda: appels.append("scan"))
+    b64 = lambda t: base64.b64encode(t).decode()
+    lots = [
+        {"documents": [
+            {"cle": "r:1", "source": "ressource", "matiere": "SISR - RESEAUX", "nom": "cours/vlan.pdf", "contenu": b64(b"%PDF1")},
+            {"cle": "r:2", "source": "ressource", "matiere": "SISR - RESEAUX", "nom": "tp.docx", "contenu": b64(b"PK")},
+            {"cle": "r:3", "source": "ressource", "matiere": "SISR - RESEAUX", "nom": "PT", "url": "https://netacad.com"},
+            {"cle": "d:4", "source": "devoir", "matiere": "CEJM", "nom": "gros.pdf", "erreur": "fichier trop gros (30 Mo)"},
+        ], "restant": 1, "erreurs": []},
+        {"documents": [{"cle": "d:5", "source": "devoir", "matiere": "CEJM", "nom": "dossier.pdf", "contenu": b64(b"%PDF2")}],
+         "restant": 0, "erreurs": []},
+    ]
+    c = faux_service({("GET", "/etat"): (200, {"connecte": True, "classe": "BTS SIO 2"})})
+    c.documents = lambda deja: (appels.append(("deja", deja)), lots.pop(0))[1]
+    kd = FauxKD()
+    b = pronote.importer_documents(kd, 10, c)
+    assert b == {"deposes": 3, "liens": 1, "erreurs": ["gros.pdf : fichier trop gros (30 Mo)"], "restant": 0}
+    assert ("path", 10, ["BTS SIO 2", "Pronote", "SISR - RESEAUX"]) in kd.faits
+    assert ("path", 10, ["BTS SIO 2", "Pronote", "CEJM"]) in kd.faits
+    assert len([f for f in kd.faits if f[0] == "path"]) == 2
+    assert ("upload", 502, "cours-vlan.pdf", b"%PDF1", "rename") in kd.faits[:2] or any(
+        f[0] == "upload" and f[2] == "cours-vlan.pdf" and f[3] == b"%PDF1" and f[4] == "rename" for f in kd.faits)
+    statuts = {cle: statut for cle, statut, _, _ in enregistres}
+    assert statuts == {"r:1": "depose", "r:2": "depose", "r:3": "lien", "d:4": "erreur", "d:5": "depose"}
+    assert appels.count("scan") == 1 and appels[0] == ("deja", ["deja"])
+
+
+def test_importer_documents_pas_connecte():
+    c = faux_service({("GET", "/etat"): (200, {"connecte": False})})
+    assert pronote.importer_documents(FauxKD(), 10, c) is None
+
+
+def test_niveau_du_dossier_de_classe():
+    from claunote import rangement
+    assert rangement.niveau_depuis_dossier(["BTS SIO 2", "Pronote", "SISR - RESEAUX"]) == "BTS2"

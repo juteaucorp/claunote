@@ -4,6 +4,7 @@ Le service Node fait la connexion ; ici on range ce qu'il renvoie et on relie
 les matières Pronote (« CULTURE ECONOMIQUE, JURIDIQUE ET MANAGERIALE ») aux
 matières des cours classés (« CEJM »).
 """
+import base64
 import datetime as dt
 import difflib
 import html
@@ -57,9 +58,10 @@ class Client:
     def __init__(self, url: str = URL, transport=None):
         self.http = httpx.Client(base_url=url, timeout=httpx.Timeout(120, connect=5), transport=transport)
 
-    def _appel(self, methode: str, chemin: str, corps=None) -> dict:
+    def _appel(self, methode: str, chemin: str, corps=None, timeout=None) -> dict:
         try:
-            r = self.http.request(methode, chemin, json=corps)
+            r = self.http.request(methode, chemin, json=corps,
+                                  **({"timeout": timeout} if timeout else {}))
         except httpx.HTTPError as e:
             raise ErreurPronote(f"Le service Pronote ne répond pas ({e.__class__.__name__}).") from e
         donnees = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
@@ -82,6 +84,10 @@ class Client:
 
     def synchro(self, jours: int = 28) -> dict:
         return self._appel("POST", "/synchro", {"jours": jours})
+
+    def documents(self, deja: list[str]) -> dict:
+        """Documents des profs pas encore récupérés (contenu en base64), par lots de 40 Mo."""
+        return self._appel("POST", "/documents", {"deja": deja}, timeout=600)
 
 
 def normaliser(texte: str) -> str:
@@ -220,3 +226,49 @@ def synchroniser(client: Client | None = None) -> dict:
     db.etat_ecrire("pronote_erreurs", " ; ".join(d.get("erreurs") or []) or None)
     preparees = preparer_a_venir() if PREPARATION_AUTO else []
     return {"connecte": True, "evenements": len(evs), "preparees": preparees, "erreurs": d.get("erreurs") or []}
+
+
+LOTS_DOCUMENTS = 5  # lots de 40 Mo au plus par passage
+
+
+def nom_sur(nom: str) -> str:
+    """Nom utilisable comme fichier ou dossier kDrive."""
+    return re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", "-", nom).strip(" .-")[:120] or "sans-nom"
+
+
+def importer_documents(kd, inbox_id: int, client: Client | None = None) -> dict | None:
+    """Documents des profs → inbox kDrive (<classe>/Pronote/<matière>/), analysés ensuite comme un scan.
+
+    Le dossier de classe (« BTS SIO 2 ») donne l'année d'étude au classement.
+    """
+    client = client or Client()
+    etat = client.etat()
+    if not etat.get("connecte"):
+        return None
+    classe = nom_sur(etat.get("classe") or "Pronote")
+    dossiers: dict[str, int] = {}
+    bilan = {"deposes": 0, "liens": 0, "erreurs": [], "restant": 0}
+    for _ in range(LOTS_DOCUMENTS):
+        r = client.documents(db.cles_documents_pronote())
+        bilan["erreurs"] += r.get("erreurs") or []
+        for d in r["documents"]:
+            if d.get("contenu") is not None:
+                matiere = nom_sur(d["matiere"] or "Divers")
+                if matiere not in dossiers:
+                    dossiers[matiere] = kd.ensure_path(inbox_id, [classe, "Pronote", matiere])
+                envoi = kd.upload(dossiers[matiere], nom_sur(d["nom"]), base64.b64decode(d["contenu"]),
+                                  conflict="rename")
+                db.enregistrer_document_pronote(d, "depose", kdrive_id=envoi.get("id"))
+                bilan["deposes"] += 1
+            elif d.get("url"):
+                db.enregistrer_document_pronote(d, "lien")
+                bilan["liens"] += 1
+            else:
+                db.enregistrer_document_pronote(d, "erreur", erreur=d.get("erreur"))
+                bilan["erreurs"].append(f"{d['nom']} : {d.get('erreur')}")
+        bilan["restant"] = r.get("restant", 0)
+        if not bilan["restant"]:
+            break
+    if bilan["deposes"]:
+        db.demander_scan()
+    return bilan

@@ -187,6 +187,22 @@ le refuse un jour (changement de mot de passe, fin d'année), la page Agenda te 
 plus récent. À 3 jours ou plus : un **plan de révision** ; plus près : une **fiche**. Si aucun cours ne
 correspond, le formulaire Réviser s'ouvre prérempli.
 
+**Documents des profs** : à chaque synchro, Claunote récupère les fichiers déposés dans
+**Contenu et ressources** (depuis la rentrée) et les **pièces jointes du Travail à faire**.
+
+```
+Pronote ──► service pronote ──► kDrive : Inbox/<classe>/Pronote/<matière>/ ──► analyse + classement ──► Bibliothèque
+```
+
+- Chaque fichier n'est téléchargé **qu'une fois** (5 lots de 40 Mo max par synchro, 25 Mo max par fichier ;
+  un échec est retenté 3 fois).
+- PDF et images sont lus comme tes scans ; **Word, PowerPoint, Excel, LibreOffice** : le texte est extrait
+  (un `.txt` est posé à côté).
+- Les liens web déposés par les profs sont seulement listés.
+- Suivi sur la page Agenda, tableau **Documents des profs** (classé / à vérifier / en analyse…).
+- ⚠️ Le premier import peut contenir beaucoup de fichiers : l'analyse consomme ton **forfait Claude Pro**
+  (le worker les traite petit à petit).
+
 Réglages dans `.env` :
 
 - `PRONOTE_INTERVALLE_H=3` : fréquence de la synchro.

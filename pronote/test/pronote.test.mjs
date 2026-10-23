@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { creerCompte, creerFetcher, lireQr, pageLisible, traduire } from "../pronote.mjs";
+import { creerCompte, creerFetcher, lireQr, listerPieces, pageLisible, traduire } from "../pronote.mjs";
 
 const maths = { id: "s1", name: "MATHEMATIQUES", inGroups: false };
 const reseau = { id: "s2", name: "SISR - RESEAUX", inGroups: false };
@@ -320,4 +320,66 @@ test("page réelle Pronote 2026.2.7 : la session démarre", async () => {
     assert.equal(session.information.accountKind, 6);
     assert.deepEqual(session.instance.version, [2026, 2, 7]);
   }
+});
+
+const RESSOURCES = [{
+  id: "r1", subject: { name: "SISR - RESEAUX" }, startDate: new Date("2026-10-06T08:00:00Z"),
+  contents: [
+    { title: "Chapitre 3 : VLAN", categoryText: "Cours", files: [
+      { kind: 1, name: "cours-vlan.pdf", url: "https://x/pronote/FichiersExternes/AAA/cours-vlan.pdf?Session=1", id: "n1" },
+      { kind: 0, name: "Cisco Packet Tracer", url: "https://www.netacad.com/pt", id: "n2" },
+    ] },
+    { description: "<p>Corrigé du <b>TP 2</b></p>", categoryText: "Correction", files: [
+      { kind: 1, name: "corrige-tp2.docx", url: "https://x/pronote/FichiersExternes/BBB/corrige-tp2.docx?Session=1", id: "n3" },
+    ] },
+  ],
+}];
+const DEVOIRS_PJ = [{
+  id: "d9", subject: { name: "CEJM" }, deadline: new Date("2026-10-27T07:00:00Z"),
+  description: "<p>Lire le dossier</p>", attachments: [
+    { kind: 1, name: "dossier4.pdf", url: "https://x/pronote/FichiersExternes/CCC/dossier4.pdf?Session=1", id: "n4" },
+  ],
+}];
+
+test("listerPieces : ressources et devoirs, clés stables, liens à part", () => {
+  const p = listerPieces(RESSOURCES, DEVOIRS_PJ);
+  assert.deepEqual(p.map((x) => x.cle), [
+    "ressource:SISR - RESEAUX:2026-10-06:cours-vlan.pdf",
+    "ressource:SISR - RESEAUX:2026-10-06:Cisco Packet Tracer",
+    "ressource:SISR - RESEAUX:2026-10-06:corrige-tp2.docx",
+    "devoir:CEJM:2026-10-27:dossier4.pdf",
+  ]);
+  assert.equal(p[0].titre, "Chapitre 3 : VLAN");
+  assert.equal(p[1].lien, "https://www.netacad.com/pt");
+  assert.equal(p[2].titre, "Corrigé du TP 2");
+  assert.equal(p[3].categorie, "Travail à faire");
+});
+
+test("documents : télécharge les nouveaux, saute ceux déjà vus, respecte la limite", async () => {
+  const dossier = await mkdtemp(join(tmpdir(), "pronote-"));
+  const pawnote = fauxPawnote();
+  pawnote.resourcesFromIntervals = async () => RESSOURCES;
+  pawnote.assignmentsFromIntervals = async () => DEVOIRS_PJ;
+  const telecharges = [];
+  const fetch = async (url, opts) => {
+    telecharges.push(url);
+    assert.match(opts.headers["User-Agent"], /PRONOTE Mobile/);
+    if (url.includes("BBB")) return new Response("non", { status: 404 });
+    return new Response(Buffer.from(`%PDF ${url}`), { status: 200 });
+  };
+  const compte = creerCompte({ pawnote, fichier: join(dossier, "c.json"), fetch, journal: () => {} });
+  await compte.connexionQr({ qr: QR, pin: "1234" });
+  const r = await compte.documents({ deja: ["devoir:CEJM:2026-10-27:dossier4.pdf"] });
+  assert.equal(telecharges.length, 2);
+  const [vlan, lien, corrige] = r.documents;
+  assert.equal(Buffer.from(vlan.contenu, "base64").toString(), "%PDF https://x/pronote/FichiersExternes/AAA/cours-vlan.pdf?Session=1");
+  assert.equal(vlan.url, undefined);
+  assert.equal(lien.url, "https://www.netacad.com/pt");
+  assert.equal(lien.contenu, undefined);
+  assert.match(corrige.erreur, /HTTP 404/);
+  assert.equal(r.restant, 0);
+
+  const limite = await compte.documents({ maxOctets: 1 });
+  assert.equal(limite.documents.filter((d) => d.contenu).length, 1);
+  assert.equal(limite.restant, 2);
 });

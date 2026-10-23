@@ -157,13 +157,18 @@ def attendre(secondes: int):
 
 def synchro_pronote(prochaine: float) -> float:
     """Synchronise Pronote si c'est l'heure ; renvoie l'heure (monotonic) de la suivante."""
-    if time.monotonic() < prochaine:
+    if time.monotonic() < prochaine and not db.etat_consommer("pronote_demande"):
         return prochaine
     try:
         r = pronote.synchroniser()
         if r["connecte"]:
             log(f"pronote : {r['evenements']} évaluation(s)/devoir(s), {len(r['preparees'])} révision(s) lancée(s)"
                 + (f", erreurs : {r['erreurs']}" if r["erreurs"] else ""))
+            b = pronote.importer_documents(KDrive.from_env(), INBOX_ID)
+            if b:
+                log(f"pronote : {b['deposes']} document(s) des profs déposé(s) dans l'inbox, {b['liens']} lien(s)"
+                    + (f", {b['restant']} au prochain passage" if b["restant"] else "")
+                    + (f", erreurs : {b['erreurs']}" if b["erreurs"] else ""))
     except Exception as e:
         log(f"pronote : synchro impossible : {e}")
     return time.monotonic() + SYNCHRO_PRONOTE

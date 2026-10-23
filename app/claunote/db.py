@@ -59,6 +59,21 @@ CREATE TABLE IF NOT EXISTS pronote_evenements (
     revision_id  INT REFERENCES revisions(id) ON DELETE SET NULL,
     vu_le        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS pronote_documents (
+    cle          TEXT PRIMARY KEY,                     -- source:matière:jour:nom (les ids Pronote changent)
+    source       TEXT NOT NULL,                        -- ressource, devoir
+    matiere      TEXT NOT NULL,
+    le           TIMESTAMPTZ,
+    titre        TEXT NOT NULL DEFAULT '',
+    categorie    TEXT NOT NULL DEFAULT '',
+    nom          TEXT NOT NULL,
+    url          TEXT,                                 -- pour un lien
+    statut       TEXT NOT NULL,                        -- depose, lien, erreur
+    erreur       TEXT,
+    tentatives   INT NOT NULL DEFAULT 1,
+    kdrive_id    BIGINT,
+    vu_le        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS pronote_notes (
     id              TEXT PRIMARY KEY,
     matiere         TEXT NOT NULL,
@@ -236,6 +251,12 @@ def etat_valeur(cle: str):
         return r["valeur"] if r else None
 
 
+def etat_consommer(cle: str) -> bool:
+    """Vrai si la clé était posée ; la retire (demande ponctuelle du site au worker)."""
+    with connect() as c:
+        return c.execute("DELETE FROM etat WHERE cle = %s RETURNING cle", (cle,)).fetchone() is not None
+
+
 def etat_ecrire(cle: str, valeur: str | None):
     with connect() as c:
         if valeur is None:
@@ -307,3 +328,36 @@ def nb_evaluations_proches(jours: int = 7) -> int:
         return c.execute("SELECT count(*) AS n FROM pronote_evenements WHERE genre = 'evaluation' "
                          "AND le >= date_trunc('day', now()) AND le < now() + make_interval(days => %s)",
                          (jours,)).fetchone()["n"]
+
+
+ESSAIS_DOCUMENT = 3
+
+
+def cles_documents_pronote() -> list[str]:
+    """Documents à ne plus demander : récupérés, liens, ou en échec après 3 essais."""
+    with connect() as c:
+        return [r["cle"] for r in c.execute(
+            "SELECT cle FROM pronote_documents WHERE statut <> 'erreur' OR tentatives >= %s",
+            (ESSAIS_DOCUMENT,)).fetchall()]
+
+
+def enregistrer_document_pronote(d: dict, statut: str, kdrive_id=None, erreur=None):
+    with connect() as c:
+        c.execute(
+            """INSERT INTO pronote_documents (cle, source, matiere, le, titre, categorie, nom, url, statut,
+                 erreur, kdrive_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (cle) DO UPDATE SET statut = EXCLUDED.statut, erreur = EXCLUDED.erreur,
+                 kdrive_id = EXCLUDED.kdrive_id, url = EXCLUDED.url, tentatives = pronote_documents.tentatives + 1,
+                 vu_le = now()""",
+            (d["cle"], d["source"], d["matiere"], d.get("date"), d.get("titre") or "", d.get("categorie") or "",
+             d["nom"], d.get("url"), statut, erreur, kdrive_id))
+
+
+def documents_pronote(limite: int = 30):
+    """Derniers documents des profs, avec le document Claunote une fois analysé."""
+    with connect() as c:
+        return c.execute(
+            """SELECT p.*, d.id AS doc_id, d.statut AS doc_statut, d.titre AS doc_titre
+               FROM pronote_documents p LEFT JOIN documents d ON d.kdrive_id = p.kdrive_id
+               ORDER BY p.le DESC NULLS LAST, p.nom LIMIT %s""", (limite,)).fetchall()

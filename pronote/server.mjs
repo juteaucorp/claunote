@@ -12,6 +12,7 @@ const ROUTES = {
   "POST /connexion/identifiants": (corps) => compte.connexionIdentifiants(corps),
   "POST /deconnexion": () => compte.deconnexion().then(() => ({ ok: true })),
   "POST /synchro": (corps) => compte.synchro({ jours: Math.min(Number(corps.jours) || 28, 120) }),
+  "POST /documents": (corps) => compte.documents({ deja: Array.isArray(corps.deja) ? corps.deja : [] }),
 };
 
 async function lireCorps(req) {

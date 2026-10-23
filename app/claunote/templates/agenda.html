@@ -90,6 +90,25 @@
   <p class="doux">Rien à faire pour les 2 prochaines semaines.</p>
   {% endfor %}
 
+  <h2>Documents des profs</h2>
+  {% if documents %}
+  <div class="carte" style="overflow-x:auto"><table class="notes">
+    <tr><th>Date</th><th>Matière</th><th>Document</th><th class="large">Statut</th></tr>
+    {% for d in documents %}
+    <tr><td>{{ d.le.astimezone(paris).strftime('%d/%m') if d.le }}</td><td>{{ d.matiere }}</td>
+      <td>{% if d.doc_id %}<a href="/doc/{{ d.doc_id }}">{{ d.doc_titre or d.nom }}</a>
+          {% elif d.statut == 'lien' and (d.url or '').startswith(('https://', 'http://')) %}<a href="{{ d.url }}" rel="noopener noreferrer">{{ d.nom }} ↗</a>
+          {% else %}{{ d.nom }}{% endif %}
+        <div class="doux">{{ d.categorie }}{% if d.categorie and d.titre %} · {% endif %}{{ d.titre }}</div></td>
+      <td class="large doux">{% if d.statut == 'lien' %}lien{% elif d.statut == 'erreur' %}<span class="alerte" title="{{ d.erreur }}">échec</span>
+          {% elif d.doc_statut == 'classe' %}classé{% elif d.doc_statut == 'a_verifier' %}<a href="/a-verifier">à vérifier</a>
+          {% elif d.doc_statut == 'erreur' %}<span class="alerte">analyse en échec</span>{% else %}en analyse…{% endif %}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <p class="doux">Aucun document récupéré pour l'instant (Contenu et ressources, pièces jointes du Travail à faire).</p>
+  {% endif %}
+
   <h2>Dernières notes</h2>
   {% if notes %}
   <div class="carte" style="overflow-x:auto"><table class="notes">
