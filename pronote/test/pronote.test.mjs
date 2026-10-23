@@ -293,8 +293,8 @@ test("fetcher : page jamais reconnue → gardée pour diagnostic, titre dans l'e
   assert.match(traduire(e, fetcher).message, /HTTP 200, page « Connexion ENT »/);
 });
 
-test("page réelle Pronote 2026.2.7 : Pawnote retrouve la session après correction", async () => {
-  const pawnote = await import("pawnote");
+test("page réelle Pronote 2026.2.7 : la session démarre", async () => {
+  const pawnote = await import("@blockshub/pawnote-lts");
   const page = await readFile(new URL("./pages/pronote-2026.2.7.html", import.meta.url), "utf8");
   const servir = (contenu) => async () => new Response(contenu, { status: 200 });
   const essai = async (fetcher) => {
@@ -308,13 +308,16 @@ test("page réelle Pronote 2026.2.7 : Pawnote retrouve la session après correct
     }
     return { session };
   };
-  // Sans correction : Pawnote ne lit pas « Start ({…});} catch »
-  const brut = await essai(async () => ({ status: 200, content: page, headers: new Headers() }));
-  assert.equal(brut.erreur?.name, "PageUnavailableError");
-  // Avec le fetcher de Claunote : la session est initialisée (l'échec suivant vient du faux serveur)
-  const { session, erreur } = await essai(creerFetcher({ fetch: servir(page), journal: () => {} }));
-  assert.notEqual(erreur?.name, "PageUnavailableError");
-  assert.equal(session.information.id, 3504712);
-  assert.equal(session.information.accountKind, 6);
-  assert.deepEqual(session.instance.version, [2026, 2, 7]);
+  // Page brute (Pawnote-LTS sait la lire) et page passée par le fetcher de Claunote :
+  // la session est initialisée dans les deux cas (l'échec suivant vient du faux serveur)
+  for (const fetcher of [
+    async () => ({ status: 200, content: page, headers: new Headers() }),
+    creerFetcher({ fetch: servir(page), journal: () => {} }),
+  ]) {
+    const { session, erreur } = await essai(fetcher);
+    assert.notEqual(erreur?.name, "PageUnavailableError");
+    assert.equal(session.information.id, 3504712);
+    assert.equal(session.information.accountKind, 6);
+    assert.deepEqual(session.instance.version, [2026, 2, 7]);
+  }
 });

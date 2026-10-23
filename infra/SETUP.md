@@ -153,7 +153,7 @@ Page **Réviser** du site : choisis une matière, un sujet (facultatif) et le ty
 
 ## 8. Pronote (phase 4)
 
-Page **Agenda** du site. Un petit service `pronote` (Node + [Pawnote](https://github.com/LiterateInk/Pawnote.js))
+Page **Agenda** du site. Un petit service `pronote` (Node + [Pawnote-LTS](https://github.com/BlocksHub/Pawnote-LTS), fork maintenu de Pawnote compatible Pronote 2026)
 tourne à côté du site, **sans port ouvert** : seuls le site et le worker lui parlent.
 
 ```
