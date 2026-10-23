@@ -286,8 +286,14 @@ def document(request: Request, doc_id: int):
     doc = db.document(doc_id)
     if doc is None:
         raise HTTPException(404)
+    # Aperçu : le fichier lui-même s'il s'affiche dans le navigateur, sinon son autre format (PDF d'un
+    # PowerPoint), sinon rien (un .pptx dans une iframe fait planter Safari sur iPhone).
+    apercu, variante = genre_apercu(doc["nom"]), 0
+    if apercu is None and doc.get("variante_nom") and genre_apercu(doc["variante_nom"]):
+        apercu, variante = genre_apercu(doc["variante_nom"]), 1
     return templates.TemplateResponse(request, "document.html", {
-        "doc": doc, "transcription": rendu_markdown(doc["transcription"]),
+        "doc": doc, "transcription": rendu_markdown(doc["transcription"]), "apercu": apercu, "variante": variante,
+        "format": PurePosixPath(doc["nom"]).suffix.lstrip(".").upper(),
         "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
 
 
@@ -302,11 +308,24 @@ def fichier(doc_id: int, variante: int = 0):
     return _servir(doc["kdrive_id"], doc["nom"])
 
 
+APERCUS = {".pdf": "pdf", ".jpg": "image", ".jpeg": "image", ".png": "image", ".webp": "image", ".gif": "image",
+           ".txt": "texte", ".md": "texte"}
+
+
+def genre_apercu(nom: str | None) -> str | None:
+    """pdf, image ou texte si le navigateur sait l'afficher ; None pour Word, PowerPoint, Excel, HEIC…"""
+    return APERCUS.get(PurePosixPath(nom or "").suffix.lower())
+
+
 def _servir(kdrive_id: int, nom: str) -> FileResponse:
+    """Affiché dans le navigateur s'il sait le lire ; sinon téléchargé (jamais ouvert de force dans la page)."""
     tmp = Path(tempfile.mkdtemp())
     chemin = KDrive.from_env().download(kdrive_id, tmp / PurePosixPath(nom).name)
     media = mimetypes.guess_type(nom)[0] or "application/octet-stream"
-    return FileResponse(chemin, media_type=media, content_disposition_type="inline",
+    if genre_apercu(nom) == "texte":
+        media = "text/plain; charset=utf-8"
+    return FileResponse(chemin, media_type=media,
+                        content_disposition_type="inline" if genre_apercu(nom) else "attachment",
                         filename=PurePosixPath(nom).name, background=BackgroundTask(lambda: _nettoyer(tmp)))
 
 

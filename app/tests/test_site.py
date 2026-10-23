@@ -938,3 +938,24 @@ def test_kdrive_en_panne_page_claire(client, monkeypatch):
     monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: KD()))
     r = client.get("/doc/1/fichier")
     assert r.status_code == 503 and "kDrive ne répond pas" in r.text
+
+
+def test_powerpoint_jamais_dans_la_page(client, monkeypatch, tmp_path):
+    pptx = {**DOC, "nom": "2025-03-12_vlan.pptx", "variante_kdrive_id": None, "variante_nom": None}
+    monkeypatch.setattr(db, "document", lambda i: pptx)
+    page = client.get("/doc/1").text
+    assert "<iframe" not in page and "Télécharger le PPTX" in page
+    # Avec son PDF à côté : l'aperçu montre le PDF
+    monkeypatch.setattr(db, "document", lambda i: {**pptx, "variante_kdrive_id": 8, "variante_nom": "2025-03-12_vlan.pdf"})
+    page = client.get("/doc/1").text
+    assert 'src="/doc/1/fichier?variante=1"' in page and "télécharger le PPTX" in page
+
+    class KD:
+        def download(self, fid, dest):
+            dest.write_bytes(b"PK")
+            return dest
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: KD()))
+    r = client.get("/doc/1/fichier")
+    assert r.headers["content-disposition"].startswith("attachment")  # téléchargé, pas ouvert dans la page
+    r = client.get("/doc/1/fichier?variante=1")
+    assert r.headers["content-disposition"].startswith("inline") and r.headers["content-type"] == "application/pdf"

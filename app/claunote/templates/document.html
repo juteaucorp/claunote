@@ -8,7 +8,7 @@
 <h1>{{ doc.titre or doc.nom }}</h1>
 <p class="doux">
   {{ doc.chapitre or '' }}{% if doc.date_doc %} · {{ doc.date_doc.strftime('%d/%m/%Y') }}{% endif %}
-  · <a href="/doc/{{ doc.id }}/fichier" target="_blank">scan original</a>
+  · <a href="/doc/{{ doc.id }}/fichier" target="_blank">original</a>
   {% if doc.variante_kdrive_id %} · <a href="/doc/{{ doc.id }}/fichier?variante=1" target="_blank">version {{ (doc.variante_nom or '').rsplit('.', 1)[-1]|upper }}</a>{% endif %}
   {% if doc.statut == 'hors_cours' %} · <a href="/hors-cours">hors cours</a>
   {% elif doc.statut != 'classe' %} · <span class="alerte">{{ doc.statut|replace('_', ' ') }}</span>{% endif %}
@@ -52,12 +52,19 @@
 {% if doc.mots_cles %}<p class="doux">Mots-clés : {{ doc.mots_cles|join(', ') }}</p>{% endif %}
 <h2>Transcription</h2>
 <div class="carte transcription">{{ transcription|safe }}</div>
-<h2>Scan</h2>
-{% if doc.nom.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')) %}
-<a href="/doc/{{ doc.id }}/fichier" target="_blank"><img class="scan-image" src="/doc/{{ doc.id }}/fichier" alt="Scan original" loading="lazy"></a>
+<h2>Original</h2>
+{% set url = '/doc/' ~ doc.id ~ '/fichier' ~ ('?variante=1' if variante else '') %}
+{% if apercu == 'image' %}
+<a href="{{ url }}" target="_blank"><img class="scan-image" src="{{ url }}" alt="Scan original" loading="lazy"></a>
+{% elif apercu %}
+{% if variante %}<p class="doux">Aperçu de la version {{ (doc.variante_nom or '').rsplit('.', 1)[-1]|upper }} ;
+  <a href="/doc/{{ doc.id }}/fichier">télécharger le {{ format }}</a>.</p>{% endif %}
+<iframe class="scan" src="{{ url }}" title="Document original" loading="lazy"></iframe>
+<a class="bouton scan-mobile" href="{{ url }}" target="_blank">Ouvrir l'original</a>
 {% else %}
-<iframe class="scan" src="/doc/{{ doc.id }}/fichier" title="Scan original" loading="lazy"></iframe>
-<a class="bouton scan-mobile" href="/doc/{{ doc.id }}/fichier" target="_blank">Ouvrir le scan original</a>
+<div class="carte"><p>Un fichier {{ format or 'de ce format' }} ne s'affiche pas dans le navigateur : son contenu est
+  dans la transcription ci-dessus.</p>
+  <a class="bouton" href="/doc/{{ doc.id }}/fichier">Télécharger le {{ format or 'fichier' }}</a></div>
 {% endif %}
 <style>.scan-image { max-width: 100%; border-radius: 12px; border: 1px solid var(--bord); }</style>
 {% endblock %}

@@ -770,7 +770,7 @@ def main():
         log("CLAUDE_MODEL n'est plus utilisé : chaque tâche a son modèle (voir CLAUDE_MODELES dans .env.example)")
     threading.Thread(target=notifications.boucle, daemon=True, name="notifications").start()
     threading.Thread(target=battement, daemon=True, name="battement").start()
-    prochaine_synchro, dernier_nettoyage = 0.0, 0.0
+    prochaine_synchro, dernier_nettoyage = 0.0, float("-inf")
     while not ARRET.is_set():
         prochaine_synchro = synchro_pronote(prochaine_synchro)
         dernier_nettoyage = tour(kd, dernier_nettoyage)
