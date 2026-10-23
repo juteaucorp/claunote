@@ -104,3 +104,53 @@ def test_flashcards_enregistrees(worker, monkeypatch):
 
     worker.traiter_revision(FauxKD(), {"id": 4, "genre": "cartes", "sujet": "VLAN", "doc_ids": [3], "date_eval": None})
     assert vu["cartes"] == (4, cartes) and vu["statut"] == "pret" and "### 1. VLAN ?" in vu["md"]
+
+
+def test_statut_et_note(worker):
+    a = Analyse(transcription="", niveau="BTS1", matiere="Réseaux", type="TP", confiance=0.9)
+    assert worker.statut_et_note(a, None) == ("classe", None)
+    assert worker.statut_et_note(Analyse(transcription="", hors_cours=True, confiance=0.9), None) == ("hors_cours", None)
+    statut, note = worker.statut_et_note(Analyse(transcription="", hors_cours=True, confiance=0.5), None)
+    assert statut == "a_verifier" and "hors cours" in note
+    statut, note = worker.statut_et_note(Analyse(transcription="", niveau="BTS1", confiance=0.4), "conflit")
+    assert (statut, note) == ("a_verifier", "conflit")
+
+
+def test_reclasser_puis_ranger(worker, monkeypatch):
+    from claunote import db
+    maj, ranges, moves = [], [], []
+    doc = {"id": 3, "nom": "a.pdf", "titre": "VLAN", "chapitre": None, "niveau": "BTS2", "transcription": "x"}
+    monkeypatch.setattr(worker.agent, "reclasser", lambda d, m: Analyse(
+        transcription="", niveau="BTS2", matiere="Réseaux", type="Cours", confiance=0.9))
+    monkeypatch.setattr(db, "maj", lambda i, **k: maj.append((i, k)))
+    monkeypatch.setattr(db, "marquer_a_ranger", lambda ids, v=True: ranges.append((ids, v)))
+    worker.reclasser(doc, ["Réseaux"])
+    assert maj[-1][1]["statut"] == "classe" and maj[-1][1]["matiere"] == "Réseaux" and maj[-1][1]["titre"] == "VLAN"
+    assert ranges[-1] == ([3], True)
+
+    def echec(d, m):
+        raise worker.ErreurAgent("pas de transcription")
+    monkeypatch.setattr(worker.agent, "reclasser", echec)
+    worker.reclasser(doc, [])
+    assert maj[-1][1]["statut"] == "a_verifier" and "pas de transcription" in maj[-1][1]["note"]
+
+    class KD:
+        def ensure_path(self, parent, parts):
+            moves.append(("path", parts))
+            return {"hors-cours": 7}.get(parts[0], 8)
+
+        def move(self, fid, dest):
+            if fid == 99:
+                raise RuntimeError("introuvable")
+            moves.append((fid, dest))
+
+    monkeypatch.setattr(db, "a_ranger", lambda: [
+        {"id": 3, "nom": "a.pdf", "statut": "classe", "niveau": "BTS2", "matiere": "Réseaux", "type": "Cours",
+         "kdrive_id": 30, "kdrive_md_id": 31},
+        {"id": 4, "nom": "b.pdf", "statut": "hors_cours", "niveau": None, "matiere": None, "type": None,
+         "kdrive_id": 40, "kdrive_md_id": None},
+        {"id": 5, "nom": "c.pdf", "statut": "classe", "niveau": "BTS2", "matiere": "Réseaux", "type": "Cours",
+         "kdrive_id": 99, "kdrive_md_id": None}])
+    worker.ranger_en_attente(KD())
+    assert moves == [("path", ["archives", "BTS2", "Réseaux", "Cours"]), (30, 8), (31, 8), ("path", ["hors-cours"]), (40, 7)]
+    assert ranges[-3:] == [([3], False), ([4], False), ([5], False)]

@@ -82,6 +82,14 @@
   table.notes td, table.notes th { padding: 6px 8px; border-bottom: 1px solid var(--bord); text-align: left; }
   table.notes td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .sortie { margin: 0; }
+  .filtres { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; }
+  .filtres label { font-size: .9rem; color: var(--doux); }
+  .tableau { overflow-x: auto; }
+  .barre-masse select, .barre-masse input, .filtres input, .filtres select { max-width: 100%; }
+  .pastille-etat { display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px; background: var(--accent-pale); color: var(--accent-fonce); font-size: .78rem; }
+  [hidden] { display: none !important; }
+  .bouton-icone { padding: 8px 12px; border: 1px solid var(--bord); border-radius: 10px; color: var(--texte); text-decoration: none; background: var(--carte); line-height: 1.6; }
+  .bouton-icone:hover { border-color: var(--accent); }
   .connexion { max-width: 380px; margin: 8vh auto 0; text-align: center; }
   .connexion img { width: 72px; height: 72px; border-radius: 18px; border: 1px solid var(--bord); background: #fff; }
   .connexion form { text-align: left; }
@@ -115,12 +123,14 @@
       <a href="/cartes" class="{{ 'actif' if chemin.startswith('/cartes') }}">Cartes{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
       {% set evals = nb_evaluations_proches() %}
       <a href="/agenda" class="{{ 'actif' if chemin.startswith('/agenda') }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
+      <a href="/organiser" class="{{ 'actif' if chemin.startswith('/organiser') or chemin.startswith('/hors-cours') }}">Organiser</a>
       {% set attente = nb_a_verifier() %}
       <a href="/a-verifier" class="{{ 'actif' if chemin.startswith('/a-verifier') }}">À vérifier{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</a>
     </nav>
     <div class="outils">
       <form action="/recherche" class="recherche-entete"><input name="q" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
       <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" title="Vérifier l'inbox kDrive maintenant">Scanner</button>
+      <a href="/compte" class="bouton-icone" title="Compte et mot de passe" aria-label="Compte">⚙</a>
       <form method="post" action="/deconnexion" class="sortie"><button title="Se déconnecter" aria-label="Se déconnecter">⏻</button></form>
     </div>
   </div>
@@ -128,8 +138,8 @@
 {% endif %}
 <main>
   {% if not sans_nav %}<p id="retour-scan" class="carte accent"></p>
-  {% if mdp_par_defaut() %}<p class="carte accent">⚠️ Mot de passe par défaut (<code>admin</code> / <code>claunote</code>) :
-    change <code>CLAUNOTE_MOT_DE_PASSE</code> dans le <code>.env</code>, puis <code>docker compose up -d</code>.</p>{% endif %}
+  {% if mdp_par_defaut() and not chemin.startswith('/compte') %}<p class="carte accent">⚠️ Tu utilises le mot de passe par défaut
+    (<code>admin</code> / <code>claunote</code>). <a href="/compte">Change-le maintenant</a>.</p>{% endif %}
   {% endif %}
   {% block contenu %}{% endblock %}
 </main>

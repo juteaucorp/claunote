@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block titre %}Compte{% endblock %}
+{% block contenu %}
+<h1>Compte</h1>
+<p class="doux">Connecté en tant que <strong>{{ utilisateur }}</strong>.</p>
+<form method="post" action="/compte" class="carte" style="max-width: 420px">
+  <strong>Changer le mot de passe</strong>
+  {% if erreur %}<p class="alerte">{{ erreur }}</p>{% endif %}
+  {% if message %}<p style="color: var(--ok)">{{ message }}</p>{% endif %}
+  <input type="text" name="utilisateur" value="{{ utilisateur }}" autocomplete="username" hidden>
+  <p><label>Mot de passe actuel<br><input type="password" name="actuel" autocomplete="current-password" required style="width: 100%"></label></p>
+  <p><label>Nouveau mot de passe (8 caractères minimum)<br><input type="password" name="nouveau" minlength="8" autocomplete="new-password" required style="width: 100%"></label></p>
+  <p><label>Encore une fois<br><input type="password" name="confirmation" minlength="8" autocomplete="new-password" required style="width: 100%"></label></p>
+  <button class="principal">Changer</button>
+  <p class="doux">Les autres appareils seront déconnectés. Mot de passe oublié :
+    <code>docker compose exec web python -m claunote.auth reinitialiser</code> puis
+    <code>docker compose restart web</code> (le mot de passe du <code>.env</code> revient).</p>
+</form>
+{% endblock %}

@@ -9,7 +9,8 @@
 <p class="doux">
   {{ doc.chapitre or '' }}{% if doc.date_doc %} · {{ doc.date_doc.strftime('%d/%m/%Y') }}{% endif %}
   · <a href="/doc/{{ doc.id }}/fichier" target="_blank">scan original</a>
-  {% if doc.statut != 'classe' %} · <span class="alerte">{{ doc.statut|replace('_', ' ') }}</span>{% endif %}
+  {% if doc.statut == 'hors_cours' %} · <a href="/hors-cours">hors cours</a>
+  {% elif doc.statut != 'classe' %} · <span class="alerte">{{ doc.statut|replace('_', ' ') }}</span>{% endif %}
 </p>
 {% if doc.statut == 'classe' %}
 <form method="post" action="/reviser" class="carte">
@@ -18,6 +19,26 @@
   <button name="genre" value="fiche" class="principal">Fiche de révision</button>
   <button name="genre" value="quiz">Quiz</button>
 </form>
+{% endif %}
+{% if doc.statut not in ('nouveau', 'erreur', 'reclasser') %}
+<details class="carte">
+  <summary>Modifier le classement</summary>
+  <datalist id="matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>
+  <form method="post" action="/doc/{{ doc.id }}/classer" class="actions">
+    <input type="hidden" name="retour" value="/doc/{{ doc.id }}">
+    <select name="niveau" aria-label="Année">{% for n in niveaux %}<option {{ 'selected' if n == doc.niveau }}>{{ n }}</option>{% endfor %}</select>
+    <input name="matiere" list="matieres" value="{{ doc.matiere or '' }}" placeholder="Matière" required aria-label="Matière">
+    <select name="type" aria-label="Type">{% for t in types %}<option {{ 'selected' if t == doc.type }}>{{ t }}</option>{% endfor %}</select>
+    <button class="principal">Enregistrer</button>
+  </form>
+  {% if doc.statut != 'hors_cours' %}
+  <form method="post" action="/doc/{{ doc.id }}/hors-cours" class="actions" style="margin-top: 10px">
+    <input type="hidden" name="retour" value="/doc/{{ doc.id }}">
+    <button>Mettre hors cours</button> <span class="doux">administratif, sans intérêt pour réviser</span>
+  </form>
+  {% endif %}
+  <p class="doux">Le fichier est déplacé dans le bon dossier kDrive. Pour plusieurs documents d'un coup : <a href="/organiser">Organiser</a>.</p>
+</details>
 {% endif %}
 {% if doc.resume %}<div class="carte"><strong>Résumé</strong><p>{{ doc.resume }}</p></div>{% endif %}
 {% if doc.mots_cles %}<p class="doux">Mots-clés : {{ doc.mots_cles|join(', ') }}</p>{% endif %}

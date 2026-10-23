@@ -1,6 +1,7 @@
 """Connexion au site : un seul compte, défini dans le .env.
 
 CLAUNOTE_UTILISATEUR (défaut « admin ») et CLAUNOTE_MOT_DE_PASSE (défaut « claunote »).
+Un mot de passe changé sur la page Compte est gardé haché en base et passe avant le .env.
 Le mot de passe peut être écrit en clair ou haché (`python -m claunote.auth`) ;
 il n'est gardé en mémoire que haché (scrypt).
 
@@ -31,7 +32,7 @@ def hacher(mot_de_passe: str, sel: bytes | None = None) -> str:
 
 def verifier_hash(mot_de_passe: str, hache: str) -> bool:
     try:
-        _, sel, attendu = hache.split(":")
+        _, sel, _ = hache.split(":")
         return hmac.compare_digest(hacher(mot_de_passe, bytes.fromhex(sel)), hache)
     except ValueError:
         return False
@@ -46,9 +47,10 @@ class Compte:
         self._echecs: dict[str, list[float]] = {}
 
     @classmethod
-    def from_env(cls, secret: bytes) -> "Compte":
+    def from_env(cls, secret: bytes, mot_de_passe_site: str | None = None) -> "Compte":
+        """`mot_de_passe_site` : hash choisi sur la page Compte, prioritaire sur le .env."""
         return cls(os.environ.get("CLAUNOTE_UTILISATEUR") or DEFAUT_UTILISATEUR,
-                   os.environ.get("CLAUNOTE_MOT_DE_PASSE") or DEFAUT_MOT_DE_PASSE, secret)
+                   mot_de_passe_site or os.environ.get("CLAUNOTE_MOT_DE_PASSE") or DEFAUT_MOT_DE_PASSE, secret)
 
     # --- Mot de passe, avec blocage après trop d'échecs -----------------------
 
@@ -92,6 +94,12 @@ class Compte:
 
 
 if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] == ["reinitialiser"]:
+        # Mot de passe oublié : on oublie celui choisi sur le site, le .env reprend la main
+        from claunote import db
+        db.etat_ecrire("mot_de_passe", None)
+        raise SystemExit("Mot de passe du site effacé : celui du .env s'applique au prochain démarrage du site.")
     # Génère la valeur à mettre dans CLAUNOTE_MOT_DE_PASSE pour ne pas l'écrire en clair
     mdp = getpass.getpass("Nouveau mot de passe : ")
     if mdp != getpass.getpass("Encore une fois : "):

@@ -214,8 +214,8 @@ Logs : `docker compose logs -f pronote worker`.
 
 ## 9. Connexion au site
 
-Le site demande un identifiant et un mot de passe. **Par défaut : `admin` / `claunote`** — à changer dans
-le `.env` :
+Le site demande un identifiant et un mot de passe. **Par défaut : `admin` / `claunote`** — à changer sur la
+page **Compte** (⚙), ou dans le `.env` :
 
 ```
 CLAUNOTE_UTILISATEUR=admin
@@ -230,7 +230,10 @@ docker compose run --rm web python -m claunote.auth   # affiche scrypt:…:…
 
 - Mot de passe haché en **scrypt**, cookie de session **signé** (HMAC), `HttpOnly`, `SameSite=Lax`,
   `Secure` dès que le site passe en HTTPS. Une connexion dure **30 jours**.
-- Changer le mot de passe **déconnecte tous les appareils**.
+- **Changer le mot de passe depuis le site** : bouton **⚙** (page Compte). Il est gardé haché en base et
+  passe avant celui du `.env`. Mot de passe oublié :
+  `docker compose exec web python -m claunote.auth reinitialiser` puis `docker compose restart web`.
+- Changer le mot de passe **déconnecte les autres appareils**.
 - 5 essais ratés depuis une même adresse → blocage **5 minutes**.
 - Bouton **⏻** en haut à droite pour se déconnecter.
 
@@ -260,3 +263,22 @@ Réviser ─► « Flashcards » ─► Claude tire ~20 cartes de tes cours ─�
   l'IP VPN). Le proxy doit envoyer `X-Forwarded-Proto: https` pour que le cookie soit `Secure`.
 - Puis sur Android (Chrome) : menu **⋮ → Installer l'application** ; sur iPhone (Safari) :
   **Partager → Sur l'écran d'accueil**.
+
+## 11. Organiser : reclasser, actions de masse, hors cours
+
+```
+Organiser ─► filtres (ajouté du … au …, année, matière, type, état, dossier)
+          ─► coche ─► action : année / matière / type / Ranger par l'IA / hors cours / remettre en cours
+                              └─► le worker déplace les fichiers dans kDrive (quelques secondes)
+```
+
+- **Un document** : sur sa page, **Modifier le classement** (année, matière, type) ou **Mettre hors cours**.
+- **En masse** (page **Organiser**) : par exemple « tout ce que j'ai ajouté aujourd'hui entre 14 h et 16 h » →
+  tout cocher → **Changer l'année : BTS2** → puis **Ranger par l'IA** : Claude relit la **transcription**
+  (pas le scan, donc rapide et peu coûteux), **garde l'année choisie** et trouve matière + type en
+  réutilisant tes matières existantes. S'il hésite, le document part dans **À vérifier**.
+- **Hors cours** : bulletins, convocations, attestations, emplois du temps, pages vides… L'IA les repère
+  dès l'analyse des nouveaux scans. Ils vont dans `Etudes/hors-cours/` sur kDrive, sont listés sur la page
+  **Hors cours** (lien depuis la Bibliothèque) et ne servent jamais aux fiches, quiz ni flashcards.
+  Bouton **Remettre dans les cours** si l'IA s'est trompée.
+- Les documents en erreur ou encore en analyse ne sont pas modifiés par les actions de masse.

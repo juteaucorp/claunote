@@ -21,6 +21,10 @@ def anonyme(monkeypatch):
     monkeypatch.delenv("CLAUNOTE_SECRET", raising=False)
     monkeypatch.setattr(db, "init", lambda: None)
     monkeypatch.setattr(db, "secret_session", lambda: "secret-de-test")
+    etat = {}
+    monkeypatch.setattr(db, "etat_valeur", lambda k: etat.get(k))
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
+    monkeypatch.setattr(db, "nb_hors_cours", lambda: 2)
     monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: 0)
     monkeypatch.setattr(db, "bibliotheque", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "type": "TP", "n": 3}])
     monkeypatch.setattr(db, "a_verifier", lambda: [{**DOC, "id": 2, "statut": "a_verifier", "confiance": 0.4,
@@ -40,6 +44,7 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "documents", lambda ids: [DOC] if 1 in ids else [])
     with TestClient(main.app) as c:
         c.appels = appels
+        c.etat = etat
         yield c
 
 
@@ -323,7 +328,7 @@ def test_connexion_et_deconnexion(anonyme):
     assert r.status_code == 303 and r.headers["location"] == "/cartes"
     cookie = r.headers["set-cookie"]
     assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Max-Age=2592000" in cookie
-    assert "Mot de passe par défaut" in anonyme.get("/", follow_redirects=False).text
+    assert "Tu utilises le mot de passe par défaut" in anonyme.get("/", follow_redirects=False).text
     anonyme.post("/deconnexion")
     assert anonyme.get("/", follow_redirects=False).status_code == 303
 
@@ -343,7 +348,7 @@ def test_identifiants_du_env(monkeypatch, anonyme):
         assert c.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}).status_code == 401
         r = c.post("/connexion", data={"utilisateur": "anto", "mot_de_passe": "s3cret"}, follow_redirects=False)
         assert r.status_code == 303
-        assert "Mot de passe par défaut" not in c.get("/").text
+        assert "Tu utilises le mot de passe par défaut" not in c.get("/").text
 
 
 def test_blocage_apres_5_echecs(anonyme):
@@ -422,3 +427,118 @@ def test_pwa(anonyme):
     assert m.json()["start_url"] == "/" and len(m.json()["icons"]) == 3
     assert "serviceWorker" in anonyme.get("/connexion").text and 'rel="manifest"' in anonyme.get("/connexion").text
     assert anonyme.get("/static/icone-512.png").status_code == 200
+
+
+# --- Compte, reclassement, hors cours, actions de masse -------------------------
+
+def test_changer_mot_de_passe(client):
+    assert "Change-le maintenant" in client.get("/").text
+    r = client.post("/compte", data={"actuel": "faux", "nouveau": "nouveau-mdp", "confirmation": "nouveau-mdp"})
+    assert r.status_code == 400 and "actuel incorrect" in r.text
+    r = client.post("/compte", data={"actuel": "claunote", "nouveau": "court", "confirmation": "court"})
+    assert "8 caractères" in r.text
+    r = client.post("/compte", data={"actuel": "claunote", "nouveau": "nouveau-mdp", "confirmation": "autre-mdp"})
+    assert "différents" in r.text
+    r = client.post("/compte", data={"actuel": "claunote", "nouveau": "nouveau-mdp", "confirmation": "nouveau-mdp"})
+    assert r.status_code == 200 and "Mot de passe changé" in r.text
+    assert client.etat["mot_de_passe"].startswith("scrypt:")
+    # Cet appareil reste connecté, l'ancien mot de passe ne marche plus
+    page = client.get("/", follow_redirects=False)
+    assert page.status_code == 200 and "Change-le maintenant" not in page.text
+    client.post("/deconnexion")
+    assert client.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}).status_code == 401
+    r = client.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "nouveau-mdp"}, follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_mot_de_passe_du_site_prioritaire(anonyme):
+    from claunote import auth
+    anonyme.etat["mot_de_passe"] = auth.hacher("choisi-sur-le-site")
+    with TestClient(main.app) as c:
+        assert c.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}).status_code == 401
+        assert c.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "choisi-sur-le-site"},
+                      follow_redirects=False).status_code == 303
+
+
+class FauxKD:
+    def __init__(self):
+        self.moves = []
+
+    def ensure_path(self, parent, parts):
+        self.moves.append(("path", parts))
+        return 500
+
+    def move(self, fid, dest):
+        self.moves.append(("move", fid, dest))
+
+
+def test_reclasser_depuis_la_page_du_document(client, monkeypatch):
+    kd = FauxKD()
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: kd))
+    r = client.get("/doc/1")
+    assert "Modifier le classement" in r.text and 'name="retour" value="/doc/1"' in r.text
+    r = client.post("/doc/1/classer", data={"niveau": "BTS2", "matiere": "Réseaux", "type": "Cours", "retour": "/doc/1"},
+                    follow_redirects=False)
+    assert r.headers["location"] == "/doc/1"
+    r = client.post("/doc/1/hors-cours", data={"retour": "/doc/1"}, follow_redirects=False)
+    assert r.headers["location"] == "/doc/1" and ("path", ["hors-cours"]) in kd.moves
+    assert client.appels[-1] == ("maj", 1, {"statut": "hors_cours", "note": None})
+    r = client.post("/doc/1/classer", data={"niveau": "BTS2", "matiere": "x", "type": "Cours",
+                                            "retour": "https://ailleurs.example"}, follow_redirects=False)
+    assert r.headers["location"] == "/"
+
+
+def test_page_hors_cours(client, monkeypatch):
+    import datetime as dt
+    monkeypatch.setattr(db, "hors_cours", lambda: [{"id": 4, "nom": "bulletin.pdf", "titre": "Bulletin T1",
+                                                    "resume": "Notes du 1er trimestre", "date_doc": None,
+                                                    "cree_le": dt.datetime(2026, 10, 23, 12, 0, tzinfo=dt.timezone.utc),
+                                                    "origine": None}])
+    r = client.get("/hors-cours")
+    assert "Bulletin T1" in r.text and "23/10/2026 14:00" in r.text and "Remettre dans les cours" in r.text
+    assert "2 documents" in client.get("/").text
+
+
+@pytest.fixture
+def organiser(client, monkeypatch):
+    import datetime as dt
+    vu = {}
+    monkeypatch.setattr(db, "organiser", lambda *a: vu.update(filtres=a) or [
+        {"id": 1, "nom": "a.pdf", "titre": "Les VLAN", "statut": "a_verifier", "niveau": None, "matiere": "Réseaux",
+         "type": "TP", "origine": "Scans/lot 3", "cree_le": dt.datetime(2026, 10, 23, 13, 5, tzinfo=dt.timezone.utc),
+         "a_ranger": False}])
+    monkeypatch.setattr(db, "maj_masse", lambda ids, **k: vu.setdefault("masse", []).append((ids, k)) or len(ids))
+    monkeypatch.setattr(db, "completer_classement", lambda ids: vu.setdefault("completer", []).append(ids))
+    client.vu = vu
+    return client
+
+
+def test_page_organiser_filtre_par_heure_d_ajout(organiser):
+    import datetime as dt
+    r = organiser.get("/organiser", params={"du": "2026-10-23T14:00", "au": "2026-10-23T16:00", "niveau": "-"})
+    assert r.status_code == 200 and "Les VLAN" in r.text and "Scans/lot 3" in r.text and "23/10/2026 15:05" in r.text
+    du, au, niveau = organiser.vu["filtres"][:3]
+    assert du.isoformat() == "2026-10-23T14:00:00+02:00" and au.hour == 16 and niveau == "-"
+    assert du.utcoffset() == dt.timedelta(hours=2)
+    assert organiser.get("/organiser", params={"du": "hier"}).status_code == 400
+
+
+def test_actions_de_masse(organiser):
+    requete = "du=2026-10-23T14%3A00&au=&niveau=&matiere=&type=&statut=&texte="
+    r = organiser.post("/organiser", data={"ids": ["1", "2"], "action": "niveau", "nouveau_niveau": "BTS2",
+                                           "nouveau_type": "TP", "requete": requete}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/organiser?du=2026-10-23T14%3A00")
+    assert "2+documents+modifi" in r.headers["location"]
+    assert organiser.vu["masse"][-1] == ([1, 2], {"niveau": "BTS2"}) and organiser.vu["completer"][-1] == [1, 2]
+    assert "scan" in organiser.appels
+    organiser.post("/organiser", data={"ids": ["1"], "action": "ia"})
+    assert organiser.vu["masse"][-1] == ([1], {"statut": "reclasser"})
+    organiser.post("/organiser", data={"ids": ["1"], "action": "matiere", "nouvelle_matiere": " Maths "})
+    assert organiser.vu["masse"][-1] == ([1], {"matiere": "Maths"})
+    organiser.post("/organiser", data={"ids": ["1"], "action": "hors_cours"})
+    assert organiser.vu["masse"][-1] == ([1], {"statut": "hors_cours"})
+    organiser.post("/organiser", data={"ids": ["1"], "action": "cours"})
+    assert organiser.vu["masse"][-1] == ([1], {"statut": "a_verifier"})
+    assert organiser.post("/organiser", data={"ids": ["1"], "action": "niveau", "nouveau_niveau": "Master"}).status_code == 400
+    assert organiser.post("/organiser", data={"ids": ["1"], "action": "matiere"}).status_code == 400
+    assert organiser.post("/organiser", data={"ids": ["1"], "action": "supprimer"}).status_code == 400

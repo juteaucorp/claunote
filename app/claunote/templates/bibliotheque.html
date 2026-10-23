@@ -11,6 +11,10 @@
 <div class="carte">Aucun document classé pour l'instant. <a href="/deposer">Dépose des scans</a> ici,
   ou dans <code>Etudes/inbox</code> sur kDrive.</div>
 {% endif %}
+{% if nb_hors_cours %}
+<p class="doux">📁 <a href="/hors-cours">Hors cours</a> : {{ nb_hors_cours }} document{{ 's' if nb_hors_cours > 1 }}
+  administratif{{ 's' if nb_hors_cours > 1 }} ou sans intérêt pour réviser, rangé{{ 's' if nb_hors_cours > 1 }} à part.</p>
+{% endif %}
 {% for niveau in niveaux %}
 <h2>{{ niveau }}</h2>
 <div class="grille">

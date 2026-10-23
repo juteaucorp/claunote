@@ -12,7 +12,7 @@ import shutil
 import time
 from pathlib import Path, PurePosixPath
 
-from claunote import db, pronote, rangement, revision
+from claunote import agent, db, pronote, rangement, revision
 from claunote.agent import ErreurAgent, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive
 
@@ -62,10 +62,8 @@ def traiter(kd: KDrive, item: dict):
         shutil.rmtree(dossier_local, ignore_errors=True)
 
     note = appliquer_dossier(a, dossiers)
-    if note is None and not rangement.est_classe(a):
-        note = f"L'agent n'est pas sûr du classement (confiance {a.confiance:.0%})."
-    classe = rangement.est_classe(a)
-    parts = rangement.dossier(a.niveau, a.matiere, a.type) if classe else rangement.A_VERIFIER
+    statut, note = statut_et_note(a, note)
+    parts = rangement.dossier_doc({"statut": statut, "niveau": a.niveau, "matiere": a.matiere, "type": a.type})
     dest_id = kd.ensure_path(ETUDES_ID, parts)
     nom = rangement.nouveau_nom(a, item["name"])
     kd.move(item["id"], dest_id)  # en cas d'échec ici, le scan reste dans l'inbox et sera repris
@@ -81,12 +79,55 @@ def traiter(kd: KDrive, item: dict):
         md = kd.upload(dest_id, f"{PurePosixPath(nom).stem}.md", a.transcription.encode())
     except Exception as e:
         log(f"envoi de la transcription impossible : {e}")
-    db.maj(doc_id, nom=nom, statut="classe" if classe else "a_verifier", titre=a.titre,
+    db.maj(doc_id, nom=nom, statut=statut, titre=a.titre,
            niveau=a.niveau, matiere=a.matiere, type=a.type, chapitre=a.chapitre, date_doc=a.date,
            mots_cles=a.mots_cles, resume=a.resume, transcription=a.transcription,
            confiance=a.confiance, erreur=None, kdrive_md_id=md.get("id"),
-           origine="/".join(dossiers) or None, note=None if classe else note)
-    log(f"{'classé' if classe else 'à vérifier'} : {item['name']} → {'/'.join(parts)}/{nom}")
+           origine="/".join(dossiers) or None, note=note)
+    log(f"{statut.replace('_', ' ')} : {item['name']} → {'/'.join(parts)}/{nom}")
+
+
+def statut_et_note(a, note: str | None) -> tuple[str, str | None]:
+    """classe, hors_cours ou a_verifier, avec la raison du doute à afficher."""
+    sur = a.confiance >= rangement.SEUIL_CONFIANCE
+    if a.hors_cours:
+        return ("hors_cours", None) if sur else (
+            "a_verifier", note or "L'agent pense que ce document est hors cours (administratif…), sans en être sûr.")
+    if rangement.est_classe(a):
+        return "classe", None
+    return "a_verifier", note or f"L'agent n'est pas sûr du classement (confiance {a.confiance:.0%})."
+
+
+def reclasser(doc: dict, matieres: list[str]):
+    """Reclassement demandé depuis la page Organiser : relit la transcription, pas le scan."""
+    try:
+        a = agent.reclasser(doc, matieres)
+    except ErreurAgent as e:
+        db.maj(doc["id"], statut="a_verifier", note=f"Reclassement impossible : {e}")
+        db.marquer_a_ranger([doc["id"]])
+        log(f"reclassement impossible : {doc['nom']} : {e}")
+        return
+    statut, note = statut_et_note(a, None)
+    db.maj(doc["id"], statut=statut, niveau=a.niveau, matiere=a.matiere, type=a.type,
+           chapitre=a.chapitre or doc["chapitre"], titre=a.titre or doc["titre"], confiance=a.confiance, note=note)
+    db.marquer_a_ranger([doc["id"]])
+    log(f"reclassé : {doc['nom']} → {statut} {a.niveau} / {a.matiere} / {a.type}")
+
+
+def ranger_en_attente(kd: KDrive):
+    """Déplace dans kDrive les documents modifiés sur le site (actions de masse, reclassements)."""
+    dossiers: dict[tuple, int] = {}
+    for doc in db.a_ranger():
+        parts = tuple(rangement.dossier_doc(doc))
+        try:
+            if parts not in dossiers:
+                dossiers[parts] = kd.ensure_path(ETUDES_ID, list(parts))
+            kd.move(doc["kdrive_id"], dossiers[parts])
+            if doc["kdrive_md_id"]:
+                kd.move(doc["kdrive_md_id"], dossiers[parts])
+        except Exception as e:
+            log(f"déplacement kDrive impossible : {doc['nom']} : {e}")
+        db.marquer_a_ranger([doc["id"]], False)
 
 
 def traiter_revision(kd: KDrive, rev: dict):
@@ -192,6 +233,11 @@ def main():
             for rev in db.revisions_en_attente():
                 log(f"révision : {rev['genre']} « {rev['sujet']} »")
                 traiter_revision(kd, rev)
+            a_reclasser = db.a_reclasser(LOT * 4)  # peu coûteux : seulement du texte
+            matieres = db.matieres() if a_reclasser else []
+            for doc in a_reclasser:
+                reclasser(doc, matieres)
+            ranger_en_attente(kd)
             items = a_traiter(kd)
             for item in items[:LOT]:
                 log(f"analyse : {'/'.join(item['dossiers'] + [item['name']])}")

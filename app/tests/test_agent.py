@@ -103,3 +103,28 @@ def test_analyser_office_et_pronote(tmp_path, monkeypatch):
     casse.write_bytes(b"pas un zip")
     with pytest.raises(agent.ErreurAgent, match="illisible"):
         agent.analyser(casse)
+
+
+def test_hors_cours_sans_matiere_reste_sur():
+    a = agent.parse_reponse('{"transcription": "Bulletin", "hors_cours": true, "confiance": 0.9}')
+    assert a.hors_cours and a.confiance == 0.9
+    assert not agent.parse_reponse('{"transcription": "x", "hors_cours": "oui", "confiance": 0.9}').hors_cours
+
+
+def test_reclasser_garde_l_annee_choisie(monkeypatch):
+    vu = {}
+
+    def faux(prompt, cwd, outils=None, entree=None, timeout=0):
+        vu.update(prompt=prompt, entree=entree, outils=outils)
+        return '{"niveau": "BTS1", "matiere": "Réseaux", "type": "Cours", "confiance": 0.9}'
+
+    monkeypatch.setattr(agent, "appeler_claude", faux)
+    doc = {"nom": "a.pdf", "titre": "VLAN", "niveau": "BTS2", "transcription": "Les VLAN " * 10_000}
+    a = agent.reclasser(doc, ["Réseaux", "CEJM"])
+    assert (a.niveau, a.matiere, a.type) == ("BTS2", "Réseaux", "Cours") and a.transcription == ""
+    assert "BTS2. Garde-la" in vu["prompt"] and "Réseaux, CEJM" in vu["prompt"] and len(vu["entree"]) == 30_000
+    assert vu["outils"] is None
+    a = agent.reclasser({**doc, "niveau": None}, [])
+    assert a.niveau == "BTS1" and "Garde-la" not in vu["prompt"]
+    with pytest.raises(agent.ErreurAgent):
+        agent.reclasser({**doc, "transcription": ""}, [])
