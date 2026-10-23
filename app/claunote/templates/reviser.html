@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block titre %}Réviser{% endblock %}
+{% block contenu %}
+<h1>Réviser</h1>
+{% if not choix %}
+<div class="carte">Il faut d'abord des documents classés : dépose des scans dans <code>Etudes/inbox</code>.</div>
+{% else %}
+<form method="post" action="/reviser" class="carte">
+  <p><label>Matière<br>
+    <select name="niveau_matiere" required>
+      {% for c in choix %}<option value="{{ c.niveau }}|{{ c.matiere }}">{{ c.niveau }} · {{ c.matiere }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>Sujet ou chapitre (facultatif)<br>
+    <input name="sujet" size="40" placeholder="ex. VLAN et routage inter-VLAN"></label></p>
+  <div class="choix">
+    {% for g, libelle in genres.items() %}
+    <label><input type="radio" name="genre" value="{{ g }}" {{ 'checked' if loop.first }}> {{ libelle }}</label>
+    {% endfor %}
+  </div>
+  <p><label>Date de l'évaluation (pour un plan de révision)<br>
+    <input type="date" name="date_eval" min="{{ demain.isoformat() }}"></label></p>
+  <button class="principal">Générer</button>
+  <p class="doux">L'agent utilise uniquement tes cours de cette matière, les plus proches du sujet d'abord.</p>
+</form>
+{% endif %}
+{% if revisions %}
+<h2>Dernières révisions</h2>
+{% for r in revisions %}
+<div class="carte">
+  <a href="/revision/{{ r.id }}"><strong>{{ genres[r.genre] }} : {{ r.sujet }}</strong></a>
+  <div class="doux">{{ r.cree_le.strftime('%d/%m/%Y %H:%M') }}{% if r.date_eval %} · éval le {{ r.date_eval.strftime('%d/%m') }}{% endif %}
+    {% if r.statut == 'en_attente' %} · en préparation{% elif r.statut == 'erreur' %} · <span class="alerte">erreur</span>{% endif %}</div>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

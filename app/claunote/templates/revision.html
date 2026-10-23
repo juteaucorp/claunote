@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block titre %}{{ genres[rev.genre] }} : {{ rev.sujet }}{% endblock %}
+{% block tete %}{% if rev.statut == 'en_attente' %}<meta http-equiv="refresh" content="8">{% endif %}{% endblock %}
+{% block contenu %}
+<p class="doux"><a href="/reviser">Réviser</a> › {{ genres[rev.genre] }}</p>
+<h1>{{ rev.sujet }}</h1>
+{% if rev.date_eval %}<p class="doux">Évaluation le {{ rev.date_eval.strftime('%d/%m/%Y') }}</p>{% endif %}
+
+{% if rev.statut == 'en_attente' %}
+<div class="carte">L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).</div>
+{% elif rev.statut == 'erreur' %}
+<div class="carte alerte">Erreur : {{ rev.erreur }}</div>
+{% elif rev.genre == 'quiz' %}
+<ol class="quiz">
+  {% for q in questions %}
+  <li class="carte">
+    <strong>{{ q.question }}</strong>
+    <ol type="A">{% for c in q.choix %}<li>{{ c }}</li>{% endfor %}</ol>
+    <details><summary>Voir la réponse</summary>
+      <p><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse] }}</strong></p>
+      <p>{{ q.explication }}
+      {% if q.source in reperes %}<a href="/doc/{{ reperes[q.source] }}">[{{ q.source }}]</a>{% endif %}</p>
+    </details>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<div class="carte transcription">{{ contenu }}</div>
+{% endif %}
+
+{% if sources %}
+<h2>Sources</h2>
+<ul>
+  {% for repere, doc_id in reperes.items() %}
+    {% for d in sources if d.id == doc_id %}
+    <li>[{{ repere }}] <a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a> <span class="doux">{{ d.type }}</span></li>
+    {% endfor %}
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

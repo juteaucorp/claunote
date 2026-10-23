@@ -9,7 +9,10 @@ import shutil
 import time
 from pathlib import Path, PurePosixPath
 
-from claunote import db, rangement
+import datetime as dt
+import json
+
+from claunote import db, rangement, revision
 from claunote.agent import ErreurAgent, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive
 
@@ -62,6 +65,27 @@ def traiter(kd: KDrive, item: dict):
     log(f"{'classé' if classe else 'à vérifier'} : {item['name']} → {'/'.join(parts)}/{nom}")
 
 
+def traiter_revision(kd: KDrive, rev: dict):
+    """Génère une fiche, un quiz ou un plan, puis en dépose une copie dans Etudes/fiches/."""
+    try:
+        contenu, reperes = revision.generer(rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]),
+                                            rev["date_eval"])
+    except ErreurAgent as e:
+        db.maj_revision(rev["id"], "erreur", erreur=str(e))
+        log(f"erreur de révision {rev['id']} : {e}")
+        return
+    texte = revision.quiz_en_markdown(json.loads(contenu)) if rev["genre"] == "quiz" else contenu
+    kdrive_id = None
+    try:
+        dossier = kd.ensure_path(ETUDES_ID, ["fiches"])
+        nom = revision.nom_fichier(rev["genre"], rev["sujet"], dt.date.today())
+        kdrive_id = kd.upload(dossier, nom, f"# {rev['sujet']}\n\n{texte}".encode()).get("id")
+    except Exception as e:
+        log(f"copie kDrive de la révision impossible : {e}")
+    db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, kdrive_id=kdrive_id)
+    log(f"révision prête : {rev['genre']} « {rev['sujet']} »")
+
+
 def a_traiter(kd: KDrive) -> list[dict]:
     """Fichiers de l'inbox jamais vus, ou restés 'nouveau' (ex. limite atteinte)."""
     items = []
@@ -91,6 +115,10 @@ def main():
     while True:
         pause = INTERVALLE
         try:
+            # Les révisions passent avant les scans : tu attends le résultat sur le site
+            for rev in db.revisions_en_attente():
+                log(f"révision : {rev['genre']} « {rev['sujet']} »")
+                traiter_revision(kd, rev)
             for item in a_traiter(kd)[:LOT]:
                 log(f"analyse : {item['name']}")
                 traiter(kd, item)

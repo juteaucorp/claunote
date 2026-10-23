@@ -3,6 +3,7 @@ import os
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
@@ -32,6 +33,19 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS documents_recherche ON documents USING GIN (recherche);
 CREATE TABLE IF NOT EXISTS etat (cle TEXT PRIMARY KEY, valeur TEXT);
+CREATE TABLE IF NOT EXISTS revisions (
+    id         SERIAL PRIMARY KEY,
+    genre      TEXT NOT NULL,                        -- fiche, quiz, plan
+    sujet      TEXT NOT NULL,
+    doc_ids    INT[] NOT NULL,
+    date_eval  DATE,
+    statut     TEXT NOT NULL DEFAULT 'en_attente',   -- en_attente, pret, erreur
+    contenu    TEXT,                                 -- Markdown, ou JSON pour un quiz
+    reperes    JSONB NOT NULL DEFAULT '{}',          -- {"D1": id du document, …}
+    erreur     TEXT,
+    kdrive_id  BIGINT,
+    cree_le    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -122,3 +136,64 @@ def scan_demande() -> bool:
     """Vrai si le site a demandé un scan ; consomme la demande."""
     with connect() as c:
         return c.execute("DELETE FROM etat WHERE cle = 'scan' RETURNING cle").fetchone() is not None
+
+
+# --- Révisions -------------------------------------------------------------
+
+def documents(ids: list[int]):
+    """Documents dans l'ordre des ids donnés."""
+    with connect() as c:
+        rows = c.execute("SELECT * FROM documents WHERE id = ANY(%s)", (ids,)).fetchall()
+    par_id = {r["id"]: r for r in rows}
+    return [par_id[i] for i in ids if i in par_id]
+
+
+def choisir_documents(niveau: str, matiere: str, q: str = "", limite: int = 15) -> list[int]:
+    """Cours classés d'une matière ; si `q` est donné, les plus pertinents d'abord."""
+    with connect() as c:
+        if q.strip():
+            rows = c.execute(
+                """SELECT id FROM documents, websearch_to_tsquery('french', %s) AS requete
+                   WHERE statut = 'classe' AND niveau = %s AND matiere = %s AND recherche @@ requete
+                   ORDER BY ts_rank(recherche, requete) DESC LIMIT %s""",
+                (q, niveau, matiere, limite)).fetchall()
+        else:
+            rows = c.execute(
+                """SELECT id FROM documents WHERE statut = 'classe' AND niveau = %s AND matiere = %s
+                   ORDER BY date_doc DESC NULLS LAST LIMIT %s""", (niveau, matiere, limite)).fetchall()
+        return [r["id"] for r in rows]
+
+
+def niveaux_matieres():
+    """Couples (niveau, matière) qui ont des documents classés."""
+    with connect() as c:
+        return c.execute("SELECT DISTINCT niveau, matiere FROM documents WHERE statut = 'classe' "
+                         "ORDER BY niveau, matiere").fetchall()
+
+
+def creer_revision(genre: str, sujet: str, doc_ids: list[int], date_eval=None) -> int:
+    with connect() as c:
+        return c.execute("INSERT INTO revisions (genre, sujet, doc_ids, date_eval) VALUES (%s, %s, %s, %s) "
+                         "RETURNING id", (genre, sujet, doc_ids, date_eval)).fetchone()["id"]
+
+
+def revision(rev_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM revisions WHERE id = %s", (rev_id,)).fetchone()
+
+
+def revisions(limite: int = 30):
+    with connect() as c:
+        return c.execute("SELECT id, genre, sujet, statut, date_eval, cree_le FROM revisions "
+                         "ORDER BY cree_le DESC LIMIT %s", (limite,)).fetchall()
+
+
+def revisions_en_attente():
+    with connect() as c:
+        return c.execute("SELECT * FROM revisions WHERE statut = 'en_attente' ORDER BY cree_le").fetchall()
+
+
+def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=None, kdrive_id=None):
+    with connect() as c:
+        c.execute("UPDATE revisions SET statut = %s, contenu = %s, reperes = %s, erreur = %s, kdrive_id = %s "
+                  "WHERE id = %s", (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, rev_id))
