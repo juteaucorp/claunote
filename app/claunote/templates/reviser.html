@@ -1,42 +1,130 @@
 {% extends "base.html" %}
+{% from "_icones.html" import icone %}
 {% block titre %}Réviser{% endblock %}
 {% block contenu %}
+{% include "_reviser.html" %}
 <h1>Réviser</h1>
-{% set dues = nb_cartes_a_revoir() %}
-<div class="carte {{ 'accent' if dues }} actions" style="justify-content: space-between">
-  <span>{% if dues %}<strong>{{ dues }} flashcard{{ 's' if dues > 1 }}</strong> à revoir aujourd'hui{% else %}Flashcards à jour ✓{% endif %}</span>
-  <span class="actions">{% if dues %}<a class="bouton principal" href="/cartes/session">Réviser</a>{% endif %}<a class="bouton" href="/cartes">Mes paquets</a></span>
+
+<div class="lancer">
+  <a class="carte tuile" href="/reviser/nouvelle">
+    <span class="pastille-genre">{{ icone('nouveau') }}</span>
+    <span><strong>Une révision</strong><span class="doux">Fiche, quiz, flashcards, épreuve blanche ou plan sur un chapitre</span></span>
+  </a>
+  <a class="carte tuile tuile-campagne" href="/campagne/nouvelle">
+    <span class="pastille-genre">{{ icone('campagne') }}</span>
+    <span><strong>Une campagne</strong><span class="doux">Plusieurs matières d'un coup + un programme jour par jour (ex. semaine de BTS blanc)</span></span>
+  </a>
 </div>
-<h2>Générer depuis tes cours</h2>
-{% if not choix %}
-<div class="carte">Il faut d'abord des documents classés : dépose des scans dans <code>Etudes/inbox</code>.</div>
-{% else %}
-<form method="post" action="/reviser" class="carte">
-  <p><label>Matière<br>
-    <select name="niveau_matiere" required style="width: 100%">
-      {% for c in choix %}<option value="{{ c.niveau }}|{{ c.matiere }}" {{ 'selected' if c.matiere == pre.matiere }}>{{ c.niveau }} · {{ c.matiere }}</option>{% endfor %}
-    </select></label></p>
-  <p><label>Sujet ou chapitre (facultatif)<br>
-    <input name="sujet" style="width: 100%" placeholder="ex. VLAN et routage inter-VLAN" value="{{ pre.sujet }}"></label></p>
-  <div class="choix">
-    {% for g, libelle in genres.items() %}
-    <label><input type="radio" name="genre" value="{{ g }}" {{ 'checked' if g == pre.genre or (not pre.genre and loop.first) }}> {{ libelle }}</label>
+
+{% set dues = nb_cartes_a_revoir() %}
+{% if dues %}
+<div class="carte accent rangee">
+  <span class="pastille-genre g-cartes">{{ icone('cartes') }}</span>
+  <div class="corps"><strong>{{ dues }} flashcard{{ 's' if dues > 1 }} à revoir</strong>
+    <div class="doux">environ {{ ((dues * 12) / 60)|round(0, 'ceil')|int }} min</div></div>
+  <a class="bouton principal" href="/cartes/session">C'est parti</a>
+</div>
+{% endif %}
+
+{% if du_jour %}
+<h2>Au programme</h2>
+<div class="carte programme-jour">
+  <div class="rangee">
+    <div class="corps"><a href="/campagne/{{ du_jour.id }}"><strong>{{ du_jour.titre }}</strong></a>
+      <div class="doux">{% if jour %}{{ 'Aujourd\'hui' if jour.date == aujourdhui else jour.libelle|capitalize }} · {{ jour.minutes // 60 }} h {{ '%02d'|format(jour.minutes % 60) }}{% if jour.titre %} · {{ jour.titre }}{% endif %}{% else %}Programme terminé{% endif %}</div></div>
+    <a class="bouton" href="/campagne/{{ du_jour.id }}">Programme {{ icone('fleche', 16) }}</a>
+  </div>
+  {% if jour %}
+  <ul class="taches">
+    {% for t in jour.taches %}
+    <li class="{{ 'fait' if t.fait }}"><span class="etiquette">{{ t.matiere }}</span> {{ t.quoi }} <span class="doux">· {{ t.duree }} min</span>
+      {% if t.revision %}<a href="/revision/{{ t.revision.id }}">ouvrir</a>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if campagnes %}
+<h2>Campagnes</h2>
+<div class="defile">
+  {% for k in campagnes %}
+  <a class="carte campagne" href="/campagne/{{ k.id }}">
+    <strong>{{ k.titre }}</strong>
+    <span class="doux">{{ k.debut.strftime('%d/%m') }} → {{ k.fin.strftime('%d/%m') }} · {{ k.nb }} support{{ 's' if k.nb > 1 }}</span>
+    {% if k.statut == 'en_attente' or k.pretes < k.nb %}
+      <span class="etat attente">En préparation · {{ k.pretes }}/{{ k.nb }}</span>
+    {% elif k.statut == 'erreur' %}<span class="etat erreur">Programme en erreur</span>
+    {% elif k.fin < aujourdhui %}<span class="etat">Terminée</span>
+    {% else %}<span class="etat ok">Prête</span>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2 id="deja">Déjà fait <span class="doux">· {{ compte.total }} révision{{ 's' if compte.total > 1 }}{% if compte.attente %}, {{ compte.attente }} en préparation{% endif %}</span></h2>
+{% if not a_choisir and not compte.total %}
+<div class="carte">Il faut d'abord des cours classés : dépose des scans depuis <a href="/deposer">Déposer</a>.</div>
+{% endif %}
+<form class="filtres-histo" hx-get="/reviser" hx-target="#historique" hx-swap="outerHTML"
+      hx-push-url="true" hx-trigger="change, input changed delay:350ms from:input[name=q]">
+  <div class="puces" role="radiogroup" aria-label="Type">
+    <label><input type="radio" name="filtre" value="" {{ 'checked' if not filtre }}>Tout</label>
+    {% for g, libelle in courts.items() %}
+    <label class="g-{{ g }}"><input type="radio" name="filtre" value="{{ g }}" {{ 'checked' if filtre == g }}>{{ icone(g, 16) }}{{ libelle }}</label>
     {% endfor %}
   </div>
-  <p><label>Date de l'évaluation (pour un plan de révision)<br>
-    <input type="date" name="date_eval" min="{{ demain.isoformat() }}" value="{{ pre.date_eval }}"></label></p>
-  <button class="principal">Générer</button>
-  <p class="doux">L'agent utilise uniquement tes cours de cette matière, les plus proches du sujet d'abord.</p>
+  <div class="cherche">
+    {% if matieres %}
+    <select name="m" aria-label="Matière">
+      <option value="">Toutes les matières</option>
+      {% for x in matieres %}<option {{ 'selected' if x == m }}>{{ x }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    <input type="search" name="q" value="{{ q }}" placeholder="Chercher un sujet…" aria-label="Chercher un sujet" enterkeyhint="search">
+  </div>
 </form>
-{% endif %}
-{% if revisions %}
-<h2>Dernières révisions</h2>
-{% for r in revisions %}
-<div class="carte">
-  <a href="/revision/{{ r.id }}"><strong>{{ genres[r.genre] }} : {{ r.sujet }}</strong></a>
-  <div class="doux">{{ r.cree_le.strftime('%d/%m/%Y %H:%M') }}{% if r.date_eval %} · éval le {{ r.date_eval.strftime('%d/%m') }}{% endif %}
-    {% if r.statut == 'en_attente' %} · en préparation{% elif r.statut == 'erreur' %} · <span class="alerte">erreur</span>{% endif %}</div>
-</div>
-{% endfor %}
-{% endif %}
+{% include "_historique.html" %}
+<style>
+  .filtres-histo { margin-bottom: 12px; }
+  .puces { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; scrollbar-width: none; }
+  .puces::-webkit-scrollbar { display: none; }
+  .puces label { position: relative; flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 6px 13px; border-radius: 999px; border: 1px solid var(--bord);
+    background: var(--carte); font-size: .9rem; font-weight: 500; cursor: pointer; color: var(--texte); }
+  .puces label svg { color: var(--g, var(--doux)); }
+  .puces label:has(input:checked) { border-color: var(--g, var(--accent)); color: var(--g, var(--accent-fonce));
+    background: color-mix(in srgb, var(--g, var(--accent)) 12%, var(--carte)); }
+  .puces input { position: absolute; opacity: 0; pointer-events: none; }
+  .cherche { display: flex; gap: 8px; }
+  .cherche select { flex: 0 1 220px; min-width: 0; }
+  .cherche input { flex: 1; min-width: 0; }
+  .histo .fin { align-self: center; }
+  .histo .meta a { color: var(--doux); display: inline-flex; align-items: center; gap: 3px; }
+  .pagination { justify-content: center; }
+  @media (max-width: 760px) { .puces label { min-height: 40px; } .puces { margin: 0 -12px; padding-left: 12px; padding-right: 12px; } }
+</style>
+
+
+<style>
+  .lancer { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .tuile { display: flex; gap: 12px; align-items: flex-start; margin: 0; text-decoration: none; color: var(--texte); transition: border-color .15s, transform .15s; }
+  .tuile:hover { border-color: var(--accent); }
+  .tuile:active { transform: scale(.98); }
+  .tuile > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+  .tuile strong { font-size: 1.05rem; }
+  .tuile-campagne { --g: var(--g-examen); }
+  .rangee { display: flex; align-items: center; gap: 12px; }
+  .rangee .corps { flex: 1; min-width: 0; }
+  .taches { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+  .taches li { padding: 8px 12px; border-radius: 12px; background: var(--fond-doux); line-height: 1.45; }
+  .taches li.fait { opacity: .55; text-decoration: line-through; }
+  .defile { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x mandatory; }
+  .campagne { margin: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; text-decoration: none; color: var(--texte); scroll-snap-align: start; }
+  .campagne:hover { border-color: var(--accent); }
+  @media (max-width: 640px) {
+    .lancer { grid-template-columns: 1fr; gap: 8px; }
+    .tuile { padding: 12px 16px; align-items: center; }
+    .defile { grid-auto-columns: 78%; margin: 0 -12px; padding: 0 12px 4px; scroll-padding: 12px; }
+  }
+</style>
 {% endblock %}

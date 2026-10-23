@@ -31,6 +31,13 @@
   {% endif %}
 </div>
 
+{% if campagne and jour %}
+<a class="carte ligne-lien" href="/campagne/{{ campagne.id }}">{{ icone('campagne') }}
+  <span><strong>{{ campagne.titre }}</strong><br>
+  <span class="doux">{% if jour.date == aujourdhui %}Aujourd'hui{% else %}{{ jour.libelle|capitalize }}{% endif %} :
+    {{ jour.taches|rejectattr('fait')|map(attribute='matiere')|unique|join(', ') or 'tout est fait ✓' }}</span></span>{{ icone('fleche', 18) }}</a>
+{% endif %}
+
 <h2>Évaluations à venir</h2>
 {% if not synchro %}
 <div class="carte">Relie Pronote pour voir ici tes contrôles et devoirs. <a href="/agenda">Connecter Pronote</a></div>
@@ -96,7 +103,7 @@
   {% for r in revisions %}
   <li>{{ icone('cartes' if r.genre == 'cartes' else 'reviser', 20) }}
     <div class="corps"><a href="/revision/{{ r.id }}">{{ r.sujet }}</a>
-      <div class="doux">{{ {'fiche': 'Fiche', 'quiz': 'Quiz', 'cartes': 'Flashcards', 'plan': 'Plan'}[r.genre] }}
+      <div class="doux">{{ courts.get(r.genre, r.genre) }}
         {% if r.statut == 'en_attente' %} · en préparation…{% elif r.statut == 'erreur' %} · <span class="alerte">erreur</span>{% endif %}</div></div>
   </li>
   {% endfor %}

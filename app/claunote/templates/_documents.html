@@ -1,0 +1,13 @@
+{# Cours d'une matière à cocher ; rien de coché = l'agent choisit les plus proches du sujet #}
+{% if docs %}
+<div class="liste-cours">
+  <div class="doux">{{ docs|length }} cours · rien de coché = choix automatique</div>
+  {% for d in docs %}
+  <label><input type="checkbox" name="{{ nom }}" value="{{ d.id }}">
+    <span><strong>{{ d.titre or d.nom }}</strong>
+      <span class="doux">{{ d.type or '' }}{% if d.chapitre %} · {{ d.chapitre }}{% endif %}{% if d.date_doc %} · {{ d.date_doc.strftime('%d/%m/%Y') }}{% endif %}</span></span></label>
+  {% endfor %}
+</div>
+{% else %}
+<p class="doux">Choisis d'abord une matière.</p>
+{% endif %}

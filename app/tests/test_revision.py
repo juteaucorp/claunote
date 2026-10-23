@@ -84,3 +84,46 @@ def test_repetition_espacee():
     assert revision.repetition(2.5, 0, 0, 5, j)[1] > revision.repetition(2.5, 0, 0, 4, j)[1]
     with pytest.raises(ValueError):
         revision.repetition(2.5, 0, 0, 2, j)
+
+
+def test_consigne_et_epreuve_blanche():
+    p = revision.prompt("examen", "Suites", consigne="Insiste sur les suites géométriques\nPas de calculatrice")
+    assert "Suites" in p and "## Corrigé" in p and "> Pas de calculatrice" in p and "2 heures" in p
+    assert "Consigne" not in revision.prompt("fiche", "VLAN")
+    sujet, corrige = revision.separer_corrige("# Sujet\n## Exercice 1\nQ\n\n## Corrigé\nR")
+    assert sujet == "# Sujet\n## Exercice 1\nQ" and corrige == "## Corrigé\nR"
+    assert revision.separer_corrige("sans corrigé") == ("sans corrigé", "")
+
+
+def test_parse_programme_garde_la_periode():
+    debut, fin = dt.date(2026, 11, 2), dt.date(2026, 11, 4)
+    texte = 'Voici : {"conseil": "Courage", "jours": [' \
+            '{"date": "2026-11-03", "titre": "CEJM", "taches": [{"matiere": "CEJM", "quoi": "Épreuve", "duree": "240", "support": "examen"}]},' \
+            '{"date": "2026-11-02", "titre": "Maths", "taches": [{"matiere": "Maths", "quoi": "Fiche", "duree": 999, "support": "inconnu"}, {"quoi": ""}]},' \
+            '{"date": "2026-11-09", "titre": "hors période", "taches": []}, {"date": "pas une date"}]}'
+    p = revision.parse_programme(texte, debut, fin)
+    assert p["conseil"] == "Courage" and [j["date"] for j in p["jours"]] == ["2026-11-02", "2026-11-03"]
+    assert p["jours"][0]["taches"] == [{"matiere": "Maths", "quoi": "Fiche", "duree": 300, "support": ""}]
+    assert p["jours"][1]["taches"][0]["support"] == "examen" and p["jours"][1]["taches"][0]["duree"] == 240
+    with pytest.raises(revision.ErreurAgent):
+        revision.parse_programme('{"jours": [{"date": "2030-01-01"}]}', debut, fin)
+
+
+def test_jours_programme_relie_les_supports():
+    programme = {"jours": [{"date": "2026-11-02", "titre": "", "taches": [
+        {"matiere": "Mathématiques", "quoi": "Épreuve", "duree": 120, "support": "examen"},
+        {"matiere": "CEJM", "quoi": "Relire", "duree": 30, "support": ""}]}]}
+    revs = [{"id": 7, "genre": "examen", "matiere": "Maths"}, {"id": 8, "genre": "examen", "matiere": "Mathématiques"}]
+    jours = revision.jours_programme(programme, ["2026-11-02:1"], revs)
+    assert jours[0]["libelle"] == "lundi 02/11" and jours[0]["minutes"] == 150
+    t0, t1 = jours[0]["taches"]
+    assert t0["revision"]["id"] == 8 and not t0["fait"] and t0["cle"] == "2026-11-02:0"
+    assert t1["revision"] is None and t1["fait"]
+
+
+def test_entree_programme():
+    e = revision.entree_programme("BTS blanc lundi", [
+        {"matiere": "Maths", "niveau": "BTS2", "sujet": "suites", "supports": ["examen", "fiche"], "cours": ["Suites"]}],
+        [{"le": dt.datetime(2026, 11, 3, 8), "matiere": "MATHS", "genre": "evaluation", "titre": "DS"}])
+    assert "BTS blanc lundi" in e and "Maths (BTS2) sur « suites » : supports préparés : Épreuve blanche, Fiche" in e
+    assert "mardi 03/11/2026 : MATHS (evaluation) DS" in e

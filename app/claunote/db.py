@@ -53,6 +53,28 @@ CREATE TABLE IF NOT EXISTS revisions (
     kdrive_id  BIGINT,
     cree_le    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS campagnes (
+    id         SERIAL PRIMARY KEY,
+    titre      TEXT NOT NULL,                        -- ex. « Semaine de BTS blanc »
+    consigne   TEXT NOT NULL DEFAULT '',             -- contexte donné à l'IA
+    debut      DATE NOT NULL,
+    fin        DATE NOT NULL,
+    statut     TEXT NOT NULL DEFAULT 'en_attente',   -- programme jour par jour : en_attente, pret, erreur
+    programme  JSONB,                                -- {"jours": [{"date", "titre", "taches": […]}]}
+    faits      TEXT[] NOT NULL DEFAULT '{}',         -- tâches cochées : « 2026-11-03:0 »
+    erreur     TEXT,
+    cree_le    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS campagne_id INT REFERENCES campagnes(id) ON DELETE SET NULL;
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS consigne TEXT NOT NULL DEFAULT '';
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS niveau TEXT;
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS matiere TEXT;
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS fait_le TIMESTAMPTZ;   -- « déjà fait » dans l'historique
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS score JSONB;           -- dernier quiz : {"bonnes": 7, "total": 10}
+-- Révisions d'avant l'historique : matière du premier cours utilisé
+UPDATE revisions r SET niveau = d.niveau, matiere = d.matiere FROM documents d
+ WHERE r.matiere IS NULL AND d.id = r.doc_ids[1] AND d.matiere IS NOT NULL;
+CREATE INDEX IF NOT EXISTS revisions_cree_le ON revisions (cree_le);
 CREATE TABLE IF NOT EXISTS pronote_evenements (
     id           TEXT PRIMARY KEY,                     -- cours:<id> ou devoir:<id> (ids Pronote)
     genre        TEXT NOT NULL,                        -- evaluation, devoir
@@ -398,15 +420,22 @@ def niveaux_matieres():
                          "ORDER BY niveau, matiere").fetchall()
 
 
-def creer_revision(genre: str, sujet: str, doc_ids: list[int], date_eval=None) -> int:
+def creer_revision(genre: str, sujet: str, doc_ids: list[int], date_eval=None, consigne: str = "",
+                   campagne_id: int | None = None) -> int:
+    """La matière de la révision est celle de son premier cours (filtre de l'historique)."""
     with connect() as c:
-        return c.execute("INSERT INTO revisions (genre, sujet, doc_ids, date_eval) VALUES (%s, %s, %s, %s) "
-                         "RETURNING id", (genre, sujet, doc_ids, date_eval)).fetchone()["id"]
+        return c.execute(
+            """INSERT INTO revisions (genre, sujet, doc_ids, date_eval, consigne, campagne_id, niveau, matiere)
+               SELECT %s, %s, %s, %s, %s, %s, d.niveau, d.matiere
+               FROM (SELECT 1) AS x LEFT JOIN documents d ON d.id = %s RETURNING id""",
+            (genre, sujet, doc_ids, date_eval, consigne, campagne_id, doc_ids[0] if doc_ids else None)
+        ).fetchone()["id"]
 
 
 def revision(rev_id: int):
     with connect() as c:
-        return c.execute("SELECT * FROM revisions WHERE id = %s", (rev_id,)).fetchone()
+        return c.execute("SELECT r.*, k.titre AS campagne_titre FROM revisions r "
+                         "LEFT JOIN campagnes k ON k.id = r.campagne_id WHERE r.id = %s", (rev_id,)).fetchone()
 
 
 def revisions(limite: int = 30):
@@ -415,15 +444,151 @@ def revisions(limite: int = 30):
                          "ORDER BY cree_le DESC LIMIT %s", (limite,)).fetchall()
 
 
-def revisions_en_attente():
+def historique(genre: str = "", matiere: str = "", q: str = "", limite: int = 20, decalage: int = 0):
+    """Révisions déjà générées, filtrées ; renvoie (lignes, total)."""
+    where = "WHERE (%(genre)s = '' OR r.genre = %(genre)s) AND (%(matiere)s = '' OR r.matiere = %(matiere)s) " \
+            "AND (%(q)s = '' OR r.sujet ILIKE '%%' || %(q)s || '%%' OR k.titre ILIKE '%%' || %(q)s || '%%')"
+    p = {"genre": genre, "matiere": matiere, "q": q.strip(), "limite": limite, "decalage": decalage}
     with connect() as c:
-        return c.execute("SELECT * FROM revisions WHERE statut = 'en_attente' ORDER BY cree_le").fetchall()
+        total = c.execute(f"SELECT count(*) AS n FROM revisions r LEFT JOIN campagnes k ON k.id = r.campagne_id "
+                          f"{where}", p).fetchone()["n"]
+        lignes = c.execute(
+            f"""SELECT r.id, r.genre, r.sujet, r.statut, r.date_eval, r.cree_le, r.niveau, r.matiere, r.fait_le,
+                       r.score, r.campagne_id, k.titre AS campagne_titre
+                FROM revisions r LEFT JOIN campagnes k ON k.id = r.campagne_id {where}
+                ORDER BY r.cree_le DESC, r.id DESC LIMIT %(limite)s OFFSET %(decalage)s""", p).fetchall()
+    return lignes, total
+
+
+def compte_revisions() -> dict:
+    """Nombre de révisions par genre, et combien sont en préparation."""
+    with connect() as c:
+        rows = c.execute("SELECT genre, count(*) AS n, count(*) FILTER (WHERE statut = 'en_attente') AS attente "
+                         "FROM revisions GROUP BY genre").fetchall()
+    return {"genres": {r["genre"]: r["n"] for r in rows}, "attente": sum(r["attente"] for r in rows),
+            "total": sum(r["n"] for r in rows)}
+
+
+def matieres_revisions() -> list[str]:
+    with connect() as c:
+        return [r["matiere"] for r in c.execute(
+            "SELECT DISTINCT matiere FROM revisions WHERE matiere IS NOT NULL ORDER BY matiere").fetchall()]
+
+
+def revisions_en_attente():
+    """Révisions à générer ; dans une campagne, dans l'ordre où elles ont été demandées."""
+    with connect() as c:
+        return c.execute("SELECT * FROM revisions WHERE statut = 'en_attente' ORDER BY cree_le, id").fetchall()
 
 
 def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=None, kdrive_id=None):
     with connect() as c:
         c.execute("UPDATE revisions SET statut = %s, contenu = %s, reperes = %s, erreur = %s, kdrive_id = %s "
                   "WHERE id = %s", (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, rev_id))
+
+
+def relancer_revision(rev_id: int):
+    with connect() as c:
+        c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL WHERE id = %s", (rev_id,))
+
+
+def marquer_fait(rev_id: int, fait: bool = True, score: dict | None = None):
+    with connect() as c:
+        c.execute("UPDATE revisions SET fait_le = CASE WHEN %s THEN now() END, "
+                  "score = coalesce(%s, score) WHERE id = %s", (fait, Jsonb(score) if score else None, rev_id))
+
+
+def supprimer_revision(rev_id: int):
+    with connect() as c:
+        c.execute("DELETE FROM revisions WHERE id = %s", (rev_id,))
+
+
+def documents_matiere(niveau: str, matiere: str):
+    """Cours classés d'une matière, pour les choisir un par un."""
+    with connect() as c:
+        return c.execute("SELECT id, nom, titre, type, chapitre, date_doc FROM documents "
+                         "WHERE statut = 'classe' AND niveau = %s AND matiere = %s "
+                         "ORDER BY date_doc DESC NULLS LAST, id DESC", (niveau, matiere)).fetchall()
+
+
+def niveaux_matieres_comptes():
+    """Couples (niveau, matière) avec leur nombre de cours classés."""
+    with connect() as c:
+        return c.execute("SELECT niveau, matiere, count(*) AS n FROM documents WHERE statut = 'classe' "
+                         "AND niveau IS NOT NULL AND matiere IS NOT NULL GROUP BY niveau, matiere "
+                         "ORDER BY niveau, matiere").fetchall()
+
+
+# --- Campagnes (plusieurs révisions d'un coup, avec un programme jour par jour) --
+
+def creer_campagne(titre: str, consigne: str, debut, fin) -> int:
+    with connect() as c:
+        return c.execute("INSERT INTO campagnes (titre, consigne, debut, fin) VALUES (%s, %s, %s, %s) RETURNING id",
+                         (titre, consigne, debut, fin)).fetchone()["id"]
+
+
+def campagne(campagne_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM campagnes WHERE id = %s", (campagne_id,)).fetchone()
+
+
+def campagnes(limite: int = 20):
+    """Campagnes récentes avec l'avancement de leurs révisions."""
+    with connect() as c:
+        return c.execute(
+            """SELECT k.*, count(r.id) AS nb, count(r.id) FILTER (WHERE r.statut = 'pret') AS pretes,
+                      count(r.id) FILTER (WHERE r.fait_le IS NOT NULL) AS faites
+               FROM campagnes k LEFT JOIN revisions r ON r.campagne_id = k.id
+               GROUP BY k.id ORDER BY k.fin >= current_date DESC, k.debut DESC, k.id DESC LIMIT %s""",
+            (limite,)).fetchall()
+
+
+def campagne_du_jour(jour):
+    """Campagne en cours (ou qui commence bientôt) dont le programme est prêt."""
+    with connect() as c:
+        return c.execute("SELECT * FROM campagnes WHERE statut = 'pret' AND fin >= %s AND debut <= %s + 7 "
+                         "ORDER BY debut, id LIMIT 1", (jour, jour)).fetchone()
+
+
+def revisions_campagne(campagne_id: int):
+    with connect() as c:
+        return c.execute("SELECT id, genre, sujet, statut, niveau, matiere, fait_le, score, erreur, doc_ids "
+                         "FROM revisions WHERE campagne_id = %s ORDER BY matiere, id", (campagne_id,)).fetchall()
+
+
+def campagnes_en_attente():
+    with connect() as c:
+        return c.execute("SELECT * FROM campagnes WHERE statut = 'en_attente' ORDER BY cree_le").fetchall()
+
+
+def maj_campagne(campagne_id: int, statut: str, programme=None, erreur=None):
+    with connect() as c:
+        c.execute("UPDATE campagnes SET statut = %s, programme = %s, erreur = %s WHERE id = %s",
+                  (statut, Jsonb(programme) if programme is not None else None, erreur, campagne_id))
+
+
+def relancer_campagne(campagne_id: int):
+    with connect() as c:
+        c.execute("UPDATE campagnes SET statut = 'en_attente', erreur = NULL WHERE id = %s", (campagne_id,))
+        c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL "
+                  "WHERE campagne_id = %s AND statut = 'erreur'", (campagne_id,))
+
+
+def basculer_tache(campagne_id: int, cle: str) -> bool:
+    """Coche ou décoche une tâche du programme ; renvoie vrai si elle est maintenant faite."""
+    with connect() as c:
+        r = c.execute(
+            """UPDATE campagnes SET faits = CASE WHEN %(cle)s = ANY(faits) THEN array_remove(faits, %(cle)s)
+                                                 ELSE array_append(faits, %(cle)s) END
+               WHERE id = %(id)s RETURNING %(cle)s = ANY(faits) AS fait""", {"cle": cle, "id": campagne_id}).fetchone()
+        return bool(r and r["fait"])
+
+
+def supprimer_campagne(campagne_id: int, avec_revisions: bool = True):
+    with connect() as c, c.transaction():
+        if avec_revisions:
+            c.execute("DELETE FROM revisions WHERE campagne_id = %s", (campagne_id,))
+        c.execute("DELETE FROM campagnes WHERE id = %s", (campagne_id,))
 
 
 # --- Flashcards -------------------------------------------------------------
@@ -664,3 +829,10 @@ def nouveaux_cours_sans_revision(jours: int = 7, minimum: int = 3):
                  AND NOT EXISTS (SELECT 1 FROM revisions r WHERE d.id = ANY(r.doc_ids))
                GROUP BY d.niveau, d.matiere HAVING count(*) >= %s
                ORDER BY n DESC LIMIT 1""", (jours, minimum)).fetchone()
+
+
+def evenements_entre(debut, fin):
+    """Évaluations et devoirs Pronote entre deux dates (incluses), pour le programme d'une campagne."""
+    with connect() as c:
+        return c.execute("SELECT genre, matiere, titre, le FROM pronote_evenements "
+                         "WHERE le >= %s AND le < %s::date + 1 ORDER BY le", (debut, fin)).fetchall()

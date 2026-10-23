@@ -1,0 +1,41 @@
+{% from "_icones.html" import icone %}
+<div id="historique">
+
+  {% if lignes %}
+  <ul class="carte lignes histo">
+    {% for r in lignes %}
+    <li class="g-{{ r.genre }}">
+      <span class="pastille-genre">{{ icone(r.genre, 20) }}</span>
+      <div class="corps">
+        <a href="/revision/{{ r.id }}"><strong>{{ r.sujet }}</strong></a>
+        <div class="doux meta">
+          <span>{{ courts[r.genre] }}</span>
+          {% if r.matiere and r.matiere not in r.sujet %}<span>{{ r.matiere }}</span>{% endif %}
+          <span>{{ (r.cree_le|paris)[:10] }}</span>
+          {% if r.campagne_titre %}<a href="/campagne/{{ r.campagne_id }}">{{ icone('campagne', 14) }} {{ r.campagne_titre }}</a>{% endif %}
+        </div>
+      </div>
+      <div class="fin">
+        {% if r.statut == 'en_attente' %}<span class="etat attente">En préparation</span>
+        {% elif r.statut == 'erreur' %}<span class="etat erreur">Erreur</span>
+        {% elif r.score %}<span class="etat ok">{{ r.score.bonnes }}/{{ r.score.total }}</span>
+        {% elif r.fait_le %}<span class="etat ok">Fait ✓</span>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if pages > 1 %}
+  {% set params = {'filtre': filtre, 'm': m, 'q': q} %}
+  <nav class="pagination actions">
+    {% if page > 1 %}<a class="bouton" href="/reviser?{{ dict(params, page=page - 1)|urlencode }}#deja">‹ Plus récentes</a>{% endif %}
+    <span class="doux">Page {{ page }} / {{ pages }}</span>
+    {% if page < pages %}<a class="bouton" href="/reviser?{{ dict(params, page=page + 1)|urlencode }}#deja">Plus anciennes ›</a>{% endif %}
+  </nav>
+  {% endif %}
+  {% elif filtre or m or q %}
+  <div class="carte doux">Rien ne correspond à ces filtres.</div>
+  {% else %}
+  <div class="carte doux">Tes fiches, quiz, flashcards et épreuves blanches apparaîtront ici.</div>
+  {% endif %}
+</div>

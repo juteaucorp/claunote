@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}{{ campagne.titre }}{% endblock %}
+{% block tete %}{% if en_attente %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
+{% block contenu %}
+{% include "_reviser.html" %}
+{% set COURT = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."] %}
+<p class="fil"><a href="/reviser">Réviser</a> › Campagne</p>
+<h1>{{ campagne.titre }}</h1>
+<p class="doux sous-titre">{{ icone('campagne', 16) }} Du {{ COURT[campagne.debut.weekday()] }} {{ campagne.debut.strftime('%d/%m') }}
+  au {{ COURT[campagne.fin.weekday()] }} {{ campagne.fin.strftime('%d/%m') }} · {{ revs|length }} support{{ 's' if revs|length > 1 }}
+  · {{ par_matiere|length }} matière{{ 's' if par_matiere|length > 1 }}</p>
+
+{% set pretes = revs|selectattr('statut', 'equalto', 'pret')|list|length %}
+<div class="barre-actions">
+  {% if pretes %}
+  <a class="bouton principal" href="/campagne/{{ campagne.id }}/pdf" target="_blank">{{ icone('pdf', 18) }}<span>Livret PDF</span></a>
+  <a class="bouton" href="#" data-partager data-pdf="/campagne/{{ campagne.id }}/pdf" data-nom="{{ campagne.titre|replace('/', '-') }}.pdf" data-titre="{{ campagne.titre }}">{{ icone('partager', 18) }}<span>Partager</span></a>
+  {% endif %}
+  <details class="menu-plus">
+    <summary aria-label="Plus d'actions">{{ icone('plus', 20) }}</summary>
+    <div class="feuille-menu">
+      {% if pretes %}<a href="/campagne/{{ campagne.id }}/pdf?corrige=0" target="_blank">{{ icone('examen', 18) }} Livret sans corrigés</a>{% endif %}
+      {% if erreurs or campagne.statut == 'erreur' %}
+      <form method="post" action="/campagne/{{ campagne.id }}/relancer"><button>{{ icone('relancer', 18) }} Relancer ce qui a échoué</button></form>
+      {% endif %}
+      <form method="post" action="/campagne/{{ campagne.id }}/supprimer" onsubmit="return confirm('Supprimer cette campagne et ses {{ revs|length }} supports ?')">
+        <button class="danger">{{ icone('corbeille', 18) }} Supprimer la campagne</button></form>
+      <form method="post" action="/campagne/{{ campagne.id }}/supprimer" onsubmit="return confirm('Supprimer seulement le programme ? Les supports restent dans l\'historique.')">
+        <input type="hidden" name="garder" value="true"><button>{{ icone('corbeille', 18) }} Supprimer, garder les supports</button></form>
+    </div>
+  </details>
+</div>
+
+{% if en_attente %}
+<div class="carte accent generation">
+  <strong>Génération en cours · {{ pretes }}/{{ revs|length }} supports prêts{% if campagne.statut == 'en_attente' %}, programme en préparation{% endif %}</strong>
+  <div class="barre-progres"><span style="width: {{ ((pretes + (0 if campagne.statut == 'en_attente' else 1)) * 100 / (revs|length + 1))|round|int }}%"></span></div>
+  <div class="doux">Les supports arrivent un par un (2 à 3 min chacun). Tu peux fermer l'appli : une notification te préviendra.</div>
+</div>
+{% endif %}
+{% if erreurs %}
+<div class="carte alerte-carte">{{ erreurs|length }} support{{ 's' if erreurs|length > 1 }} en erreur. <form method="post" action="/campagne/{{ campagne.id }}/relancer" class="enligne"><button>Relancer</button></form></div>
+{% endif %}
+
+{% if campagne.consigne %}
+<details class="carte contexte"><summary>Contexte donné à l'IA</summary><p>{{ campagne.consigne|e|replace('\n', '<br>'|safe) }}</p></details>
+{% endif %}
+
+<h2>Programme</h2>
+{% if campagne.statut == 'en_attente' %}
+<div class="carte doux">L'agent prépare ton programme jour par jour…</div>
+{% elif campagne.statut == 'erreur' %}
+<div class="carte"><span class="alerte">Le programme n'a pas pu être généré :</span> {{ campagne.erreur }}
+  <form method="post" action="/campagne/{{ campagne.id }}/relancer"><button>Réessayer</button></form></div>
+{% else %}
+{% if campagne.programme.conseil %}<p class="conseil">{{ campagne.programme.conseil }}</p>{% endif %}
+<div class="carte avancement">
+  <div><strong id="nb-faites">{{ faites }}</strong>/{{ nb_taches }} tâches faites</div>
+  <div class="barre-progres"><span id="progres" style="width: {{ (faites * 100 / nb_taches)|round|int if nb_taches else 0 }}%"></span></div>
+</div>
+<ol class="jours">
+  {% for j in jours %}
+  <li class="jour carte {{ 'aujourdhui' if j.date == aujourdhui }} {{ 'passe' if j.date < aujourdhui }}" {% if j.date == aujourdhui %}id="aujourdhui"{% endif %}>
+    <div class="date"><span>{{ COURT[j.date.weekday()] }}</span><strong>{{ j.date.day }}</strong></div>
+    <div class="contenu">
+      <div class="entete-jour"><strong>{{ j.titre or ('Aujourd\'hui' if j.date == aujourdhui else '') }}</strong>
+        <span class="doux">{% if j.date == aujourdhui %}aujourd'hui · {% endif %}{{ j.minutes // 60 }} h {{ '%02d'|format(j.minutes % 60) }}</span></div>
+      <ul class="taches">
+        {% for t in j.taches %}
+        <li class="{{ 'g-' ~ t.support if t.support }}">
+          <label><input type="checkbox" {{ 'checked' if t.fait }} hx-post="/campagne/{{ campagne.id }}/tache" hx-vals='{"cle": "{{ t.cle }}"}' hx-swap="none">
+            <span><span class="etiquette">{{ t.matiere or 'Général' }}</span> {{ t.quoi }} <span class="doux">· {{ t.duree }} min</span></span></label>
+          {% if t.revision %}<a class="ouvrir" href="/revision/{{ t.revision.id }}">{{ icone(t.revision.genre, 16) }} {{ courts[t.revision.genre] }}{% if t.revision.statut != 'pret' %} <span class="doux">(en préparation)</span>{% endif %}</a>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% endif %}
+
+<h2>Supports</h2>
+<div class="grille supports">
+  {% for matiere, rs in par_matiere.items() %}
+  <div class="carte">
+    <strong>{{ matiere }}</strong>{% if rs[0].niveau %} <span class="doux">{{ rs[0].niveau }}</span>{% endif %}
+    <ul class="lignes">
+      {% for r in rs %}
+      <li class="g-{{ r.genre }}">
+        <span class="pastille-genre">{{ icone(r.genre, 18) }}</span>
+        <div class="corps"><a href="/revision/{{ r.id }}">{{ genres[r.genre] }}</a></div>
+        <div class="fin">
+          {% if r.statut == 'en_attente' %}<span class="etat attente">En préparation</span>
+          {% elif r.statut == 'erreur' %}<span class="etat erreur">Erreur</span>
+          {% elif r.score %}<span class="etat ok">{{ r.score.bonnes }}/{{ r.score.total }}</span>
+          {% elif r.fait_le %}<span class="etat ok">Fait ✓</span>{% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+</div>
+
+<style>
+  .sous-titre { margin: -12px 0 16px; }
+  .sous-titre svg { vertical-align: -2px; margin-right: 2px; }
+  .generation { display: grid; gap: 8px; }
+  .alerte-carte { border-color: var(--alerte); display: flex; align-items: center; gap: 12px; justify-content: space-between; flex-wrap: wrap; }
+  .enligne { margin: 0; }
+  .contexte p { white-space: normal; }
+  .conseil { font-family: ui-serif, Georgia, serif; font-size: 1.05rem; font-style: italic; margin: -4px 0 12px; color: var(--doux); }
+  .avancement { display: grid; gap: 8px; }
+  .jours { list-style: none; margin: 0; padding: 0; }
+  .jour { display: flex; gap: 14px; align-items: flex-start; }
+  .jour .date { flex: none; width: 52px; text-align: center; border-radius: 12px; padding: 6px 0; background: var(--fond-doux); border: 1px solid var(--bord); line-height: 1.15; }
+  .jour .date span { display: block; font-size: .78rem; color: var(--doux); text-transform: uppercase; }
+  .jour .date strong { font-size: 1.35rem; font-family: ui-serif, Georgia, serif; }
+  .jour.aujourdhui { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-pale); }
+  .jour.aujourdhui .date { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .jour.aujourdhui .date span { color: #fff; }
+  .jour.passe { opacity: .8; }
+  .jour .contenu { flex: 1; min-width: 0; }
+  .entete-jour { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .taches { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .taches li { border-radius: 12px; background: var(--fond-doux); padding: 8px 10px; }
+  .taches label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; line-height: 1.45; }
+  .taches input { width: 20px; height: 20px; margin-top: 2px; flex: none; accent-color: var(--ok); }
+  .taches li:has(input:checked) > label > span { opacity: .5; text-decoration: line-through; }
+  .taches .ouvrir { display: inline-flex; align-items: center; gap: 4px; margin: 6px 0 0 30px; font-size: .9rem; font-weight: 600; color: var(--g, var(--accent-fonce)); }
+  .supports .lignes > li { padding: 8px 0; align-items: center; }
+  .supports .pastille-genre { width: 32px; height: 32px; border-radius: 10px; }
+  @media (max-width: 640px) {
+    .jour { gap: 10px; padding: 12px; }
+    .jour .date { width: 44px; }
+    .taches .ouvrir { margin-left: 30px; }
+  }
+</style>
+<script>
+  // Coche d'une tâche : la barre d'avancement suit sans recharger la page
+  document.addEventListener("htmx:afterRequest", (e) => {
+    if (!e.detail.elt.matches(".taches input")) return;
+    if (!e.detail.successful) { e.detail.elt.checked = !e.detail.elt.checked; return; }
+    const cases = document.querySelectorAll(".taches input");
+    const faites = [...cases].filter((c) => c.checked).length;
+    document.getElementById("nb-faites").textContent = faites;
+    document.getElementById("progres").style.width = `${Math.round(faites * 100 / cases.length)}%`;
+  });
+</script>
+{% endblock %}

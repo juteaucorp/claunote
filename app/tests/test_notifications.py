@@ -17,7 +17,7 @@ class Base:
 
     def __init__(self):
         self.etat, self.file, self.abos = {}, {}, []
-        self.evals, self.dues, self.nouveaux = [], 0, None
+        self.evals, self.dues, self.nouveaux, self.campagne = [], 0, None, None
 
     def notifier(self, cle, titre, corps="", url="/", statut="attente"):
         if cle in self.file:
@@ -52,6 +52,7 @@ def base(monkeypatch):
     monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: b.dues)
     monkeypatch.setattr(db, "nb_evaluations_proches", lambda jours=7: len(b.evals))
     monkeypatch.setattr(db, "nouveaux_cours_sans_revision", lambda: b.nouveaux)
+    monkeypatch.setattr(db, "campagne_du_jour", lambda jour: b.campagne)
     return b
 
 
@@ -179,3 +180,30 @@ def test_reglages(base):
     p = nt.preferences()
     assert p["heure"] == "19:15" and p["rappel"] is False and p["pronote"] is True and "inconnu" not in p
     assert json.loads(base.etat["notifications"]) == {"heure": "19:15", "rappel": False}
+
+
+def test_rappel_du_jour_campagne(base):
+    jour = LUNDI.date()
+    base.dues = 5
+    base.campagne = {"id": 3, "titre": "BTS blanc", "faits": [f"{jour}:1"], "programme": {"jours": [
+        {"date": jour.isoformat(), "titre": "", "taches": [
+            {"matiere": "Maths", "quoi": "Épreuve", "duree": 120, "support": "examen"},
+            {"matiere": "CEJM", "quoi": "Fiche", "duree": 30, "support": "fiche"}]}]}}
+    titre, corps, url = nt.rappel_du_jour(jour)
+    assert titre == "BTS blanc : programme du jour" and url == "/campagne/3"
+    assert "Maths (120 min)" in corps and "CEJM" not in corps and "5 flashcards" in corps
+    base.campagne["faits"].append(f"{jour}:0")  # tout est fait : on passe au rappel suivant
+    assert nt.rappel_du_jour(jour)[0] == "Réviser maintenant"
+
+
+def test_campagne_prete_une_seule_fois(base, monkeypatch):
+    base.abos = [abonnement()]
+    revs = [{"statut": "pret"}, {"statut": "en_attente"}]
+    monkeypatch.setattr(db, "campagne", lambda i: {"id": i, "titre": "BTS blanc", "statut": "pret"})
+    monkeypatch.setattr(db, "revisions_campagne", lambda i: revs)
+    nt.campagne_prete(3)
+    assert base.file == {}  # un support est encore en préparation
+    revs[1]["statut"] = "erreur"
+    nt.campagne_prete(3)
+    nt.campagne_prete(3)
+    assert list(base.file) == ["campagne:3"] and "1 en erreur" in base.file["campagne:3"]["corps"]

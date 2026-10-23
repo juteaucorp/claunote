@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Nouvelle révision{% endblock %}
+{% block contenu %}
+{% include "_reviser.html" %}
+<p class="fil"><a href="/reviser">Réviser</a> › Nouvelle révision</p>
+<h1>Nouvelle révision</h1>
+{% set DESCRIPTIONS = {"fiche": "L'essentiel, les définitions, les pièges", "quiz": "10 questions corrigées",
+  "cartes": "20 cartes à retenir en répétition espacée", "examen": "Un sujet type examen + son corrigé",
+  "plan": "Jour par jour jusqu'à l'évaluation"} %}
+{% if not choix and not document %}
+<div class="carte">Il faut d'abord des cours classés : dépose des scans depuis <a href="/deposer">Déposer</a>.</div>
+{% else %}
+<form method="post" action="/reviser" class="formulaire" id="nouvelle">
+  <section>
+    <h2><span class="num">1</span> Quoi ?</h2>
+    <div class="genres">
+      {% for g, libelle in genres.items() %}
+      <label class="genre g-{{ g }}"><input type="radio" name="genre" value="{{ g }}" {{ 'checked' if g == pre.genre }} required>
+        <span class="pastille-genre">{{ icone(g) }}</span>
+        <span><strong>{{ libelle }}</strong><span class="doux">{{ DESCRIPTIONS[g] }}</span></span></label>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">2</span> Sur quoi ?</h2>
+    <div class="carte">
+    {% if document %}
+      <input type="hidden" name="doc_id" value="{{ document.id }}">
+      <p>À partir du cours <a href="/doc/{{ document.id }}"><strong>{{ document.titre or document.nom }}</strong></a>
+        <span class="doux">· {{ document.matiere }} · {{ document.niveau }}</span></p>
+    {% else %}
+      <p><label>Matière<br>
+        <select name="niveau_matiere" required style="width: 100%" hx-get="/reviser/documents" hx-target="#cours" hx-trigger="change">
+          {% for c in choix %}<option value="{{ c.niveau }}|{{ c.matiere }}" {{ 'selected' if c.matiere == pre.matiere }}>{{ c.niveau }} · {{ c.matiere }} ({{ c.n }})</option>{% endfor %}
+        </select></label></p>
+      <details class="choix-cours" hx-get="/reviser/documents" hx-target="#cours" hx-trigger="toggle once" hx-include="[name=niveau_matiere]">
+        <summary>Choisir les cours moi-même</summary>
+        <div id="cours"><p class="doux">Chargement…</p></div>
+      </details>
+    {% endif %}
+      <p><label>Sujet ou chapitre <span class="doux">(facultatif)</span><br>
+        <input name="sujet" style="width: 100%" placeholder="ex. VLAN et routage inter-VLAN" value="{{ pre.sujet }}"></label></p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">3</span> Pour quand ? <span class="doux">(obligatoire pour un plan)</span></h2>
+    <div class="carte"><label>Date de l'évaluation<br>
+      <input type="date" name="date_eval" min="{{ demain.isoformat() }}" value="{{ pre.date_eval }}"></label></div>
+  </section>
+
+  <section>
+    <h2><span class="num">4</span> Un contexte pour l'IA ? <span class="doux">(facultatif)</span></h2>
+    <div class="carte"><textarea name="consigne" rows="3" style="width: 100%" placeholder="ex. Le prof a dit que l'éval porte surtout sur les masques de sous-réseau. Insiste sur les exercices."></textarea></div>
+  </section>
+
+  <button class="principal grand">Générer</button>
+  <p class="doux">L'agent n'utilise que tes cours. Compte 1 à 3 minutes ; tu peux quitter la page, une notification te préviendra.</p>
+</form>
+{% endif %}
+<style>
+  .formulaire section h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 1.1rem; margin: 24px 0 10px; }
+  .formulaire section:first-child h2 { margin-top: 0; }
+  .num { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font: 600 .85rem system-ui, sans-serif; }
+  .genres { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .genre { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1.5px solid var(--bord); border-radius: 16px; background: var(--carte); cursor: pointer; transition: border-color .15s, background .15s; }
+  .genre > span:last-child { display: flex; flex-direction: column; gap: 2px; line-height: 1.35; }
+  .genre input { position: absolute; opacity: 0; pointer-events: none; }
+  .genre:has(input:checked) { border-color: var(--g); background: color-mix(in srgb, var(--g) 8%, var(--carte)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--g) 18%, transparent); }
+  .genre:has(input:focus-visible) { outline: 2px solid var(--g); outline-offset: 2px; }
+  button.grand { width: 100%; max-width: 360px; padding: 12px 18px; font-size: 1.05rem; margin-top: 24px; }
+  .choix-cours summary { margin-bottom: 8px; }
+  .liste-cours { display: grid; gap: 4px; max-height: 340px; overflow-y: auto; padding-right: 4px; }
+  .liste-cours label { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+  .liste-cours label:hover, .liste-cours label:has(input:checked) { background: var(--fond-doux); }
+  .liste-cours input { margin-top: 5px; width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+  .liste-cours label > span { display: flex; flex-direction: column; line-height: 1.35; }
+  @media (max-width: 640px) { .genres { grid-template-columns: 1fr; gap: 8px; } .genre { padding: 12px 14px; align-items: center; } }
+</style>
+{% endblock %}

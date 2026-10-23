@@ -9,7 +9,7 @@ import tempfile
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, quote, urlencode
 
 import markdown
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -19,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import anki, auth, db, notifications, pronote, rangement, revision
+from claunote import anki, auth, db, notifications, pdf, pronote, rangement, revision
 from claunote.agent import NIVEAUX, TYPES
 from claunote.kdrive import KDrive
 
@@ -171,8 +171,13 @@ def accueil(request: Request):
     matieres = sorted({r["matiere"] for r in db.niveaux_matieres()})
     evaluations = [{**e, "cours": pronote.trouver_matiere(e["matiere"], matieres)}
                    for e in db.evenements_a_venir("evaluation", 21)]
+    aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    campagne = db.campagne_du_jour(aujourdhui)
+    jour = next((j for j in revision.jours_programme(campagne["programme"], campagne["faits"])
+                 if j["date"] >= aujourdhui), None) if campagne else None
     return templates.TemplateResponse(request, "accueil.html", {
-        "aujourdhui": dt.datetime.now(pronote.PARIS).date(), "paris": pronote.PARIS,
+        "aujourdhui": aujourdhui, "paris": pronote.PARIS, "campagne": campagne, "jour": jour,
+        "courts": revision.COURTS,
         "evaluations": evaluations[:6], "devoirs": [d for d in db.evenements_a_venir("devoir", 7) if not d["fait"]],
         "documents": db.documents_pronote(5), "revisions": db.revisions(4),
         "synchro": db.etat_valeur("pronote_synchro"), "nb_documents": db.nb_documents()})
@@ -459,42 +464,91 @@ def reessayer_tout():
     return RedirectResponse("/a-verifier", status_code=303)
 
 
+HISTORIQUE_PAR_PAGE = 20
+MAX_CAMPAGNE = 24  # révisions générées par campagne : le forfait Pro les passe l'une après l'autre
+
+
 @app.get("/reviser", response_class=HTMLResponse)
-def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str = "", genre: str = ""):
-    """Les paramètres préremplissent le formulaire (depuis l'agenda Pronote)."""
+def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str = "", genre: str = "",
+            filtre: str = "", m: str = "", q: str = "", page: int = 1):
+    """Accueil des révisions : à faire maintenant, campagnes, historique filtrable."""
+    if sujet or matiere or date_eval or genre:  # ancien lien prérempli (agenda, notifications)
+        params = {k: v for k, v in {"sujet": sujet, "matiere": matiere, "date_eval": date_eval,
+                                     "genre": genre}.items() if v}
+        return RedirectResponse(f"/reviser/nouvelle?{urlencode(params)}", status_code=303)
+    page = max(page, 1)
+    lignes, total = db.historique(filtre if filtre in revision.GENRES else "", m, q, HISTORIQUE_PAR_PAGE,
+                                  (page - 1) * HISTORIQUE_PAR_PAGE)
+    aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    contexte = {"genres": revision.GENRES, "courts": revision.COURTS, "lignes": lignes, "total": total,
+                "page": page, "pages": max(1, -(-total // HISTORIQUE_PAR_PAGE)), "filtre": filtre, "m": m, "q": q,
+                "matieres": db.matieres_revisions(), "aujourdhui": aujourdhui}
+    if request.headers.get("HX-Request") and request.headers.get("HX-Target") == "historique":
+        return templates.TemplateResponse(request, "_historique.html", contexte)
+    campagnes = db.campagnes(6)
+    du_jour = db.campagne_du_jour(aujourdhui)
+    jour = None
+    if du_jour:
+        jour = next((j for j in revision.jours_programme(du_jour["programme"], du_jour["faits"],
+                                                          db.revisions_campagne(du_jour["id"]))
+                     if j["date"] >= aujourdhui), None)
     return templates.TemplateResponse(request, "reviser.html", {
-        "choix": db.niveaux_matieres(), "genres": revision.GENRES, "revisions": db.revisions(),
+        **contexte, "campagnes": campagnes, "du_jour": du_jour, "jour": jour, "compte": db.compte_revisions(),
+        "a_choisir": bool(db.niveaux_matieres())})
+
+
+@app.get("/reviser/nouvelle", response_class=HTMLResponse)
+def nouvelle_revision(request: Request, sujet: str = "", matiere: str = "", date_eval: str = "", genre: str = "",
+                      doc: int | None = None):
+    """Formulaire d'une révision ; les paramètres le préremplissent (depuis l'agenda Pronote ou un cours)."""
+    document = db.document(doc) if doc else None
+    return templates.TemplateResponse(request, "reviser_nouvelle.html", {
+        "choix": db.niveaux_matieres_comptes(), "genres": revision.GENRES, "document": document,
         "demain": dt.date.today() + dt.timedelta(days=1),
-        "pre": {"sujet": sujet, "matiere": matiere, "date_eval": date_eval, "genre": genre}})
+        "pre": {"sujet": sujet, "matiere": matiere, "date_eval": date_eval, "genre": genre or "fiche"}})
+
+
+@app.get("/reviser/documents", response_class=HTMLResponse)
+def choisir_documents(request: Request, niveau_matiere: str = "", nom: str = "doc_ids"):
+    """Liste à cocher des cours d'une matière (chargée à la demande)."""
+    niveau, _, matiere = niveau_matiere.partition("|")
+    return templates.TemplateResponse(request, "_documents.html", {
+        "docs": db.documents_matiere(niveau, matiere) if matiere else [], "nom": nom})
 
 
 @app.post("/reviser")
-def demander_revision(genre: str = Form(...), sujet: str = Form(""), niveau_matiere: str = Form(""),
-                      date_eval: str = Form(""), doc_id: int | None = Form(None)):
+async def demander_revision(request: Request):
     """Crée une demande de révision ; le worker la traite en priorité."""
+    f = await request.form()
+    genre, sujet, consigne = f.get("genre", ""), (f.get("sujet") or "").strip(), (f.get("consigne") or "").strip()
+    date_eval, doc_id = f.get("date_eval") or "", f.get("doc_id")
     if genre not in revision.GENRES:
         raise HTTPException(400, "genre inconnu")
     eval_le = dt.date.fromisoformat(date_eval) if date_eval else None
     if genre == "plan" and (eval_le is None or eval_le <= dt.date.today()):
         raise HTTPException(400, "un plan de révision demande une date d'évaluation future")
-    sujet = sujet.strip()
-    if doc_id is not None:
-        doc = db.document(doc_id)
+    choisis = [int(i) for i in f.getlist("doc_ids") if str(i).isdigit()]
+    if doc_id:
+        doc = db.document(int(doc_id))
         if doc is None:
             raise HTTPException(404)
-        ids, sujet = [doc_id], sujet or doc["titre"] or doc["nom"]
+        ids, sujet = [int(doc_id)], sujet or doc["titre"] or doc["nom"]
     else:
-        niveau, _, matiere = niveau_matiere.partition("|")
+        niveau, _, matiere = (f.get("niveau_matiere") or "").partition("|")
         if not matiere:
             raise HTTPException(400, "choisis un niveau et une matière")
-        # Le sujet sert de recherche ; s'il ne trouve rien, on prend toute la matière
-        ids = db.choisir_documents(niveau, matiere, sujet) or db.choisir_documents(niveau, matiere)
+        # Les cours cochés, sinon le sujet sert de recherche ; s'il ne trouve rien, toute la matière
+        ids = choisis or db.choisir_documents(niveau, matiere, sujet) or db.choisir_documents(niveau, matiere)
         sujet = sujet or f"{matiere} ({niveau})"
     if not ids:
         raise HTTPException(400, "aucun document classé pour ce choix")
-    rev_id = db.creer_revision(genre, sujet, ids, eval_le)
+    rev_id = db.creer_revision(genre, sujet, ids, eval_le, consigne=consigne)
     db.demander_scan()
     return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+def _sources(reperes: dict) -> dict[int, str]:
+    return {d["id"]: d["titre"] or d["nom"] for d in db.documents(sorted(set((reperes or {}).values())))}
 
 
 @app.get("/revision/{rev_id}", response_class=HTMLResponse)
@@ -503,17 +557,189 @@ def voir_revision(request: Request, rev_id: int):
     if rev is None:
         raise HTTPException(404)
     reperes = rev["reperes"] or {}
-    contenu, questions, cartes = None, [], []
+    contenu, corrige, questions, cartes = None, None, [], []
     if rev["statut"] == "pret":
         if rev["genre"] == "quiz":
             questions = json.loads(rev["contenu"])
         elif rev["genre"] == "cartes":
             cartes = db.cartes(rev_id)
+        elif rev["genre"] == "examen":
+            sujet, corr = revision.separer_corrige(rev["contenu"])
+            contenu = avec_sources(rendu_markdown(sujet), reperes)
+            corrige = avec_sources(rendu_markdown(corr), reperes) if corr else None
         else:
             contenu = avec_sources(rendu_markdown(rev["contenu"]), reperes)
     return templates.TemplateResponse(request, "revision.html", {
-        "rev": rev, "genres": revision.GENRES, "contenu": contenu, "questions": questions, "cartes": cartes,
-        "reperes": reperes, "sources": db.documents(list(reperes.values()))})
+        "rev": rev, "genres": revision.GENRES, "contenu": contenu, "corrige": corrige, "questions": questions,
+        "cartes": cartes, "reperes": reperes, "sources": db.documents(list(reperes.values()))})
+
+
+def _pdf(contenu: bytes, nom: str, telecharger: bool) -> Response:
+    mode = "attachment" if telecharger else "inline"
+    return Response(contenu, media_type="application/pdf", headers={
+        "Content-Disposition": f"{mode}; filename*=UTF-8''{quote(nom)}", "Cache-Control": "private, max-age=60"})
+
+
+@app.get("/revision/{rev_id}/pdf")
+def revision_pdf(rev_id: int, corrige: int = 1, telecharger: int = 0):
+    rev = db.revision(rev_id)
+    if rev is None or rev["statut"] != "pret":
+        raise HTTPException(404, "révision pas encore prête")
+    cartes = db.cartes(rev_id) if rev["genre"] == "cartes" else None
+    contenu = pdf.revision_pdf(rev, _sources(rev["reperes"]), cartes, corrige=bool(corrige))
+    suffixe = "" if corrige or rev["genre"] not in ("quiz", "examen") else " (sujet)"
+    return _pdf(contenu, pdf.nom(f"{revision.COURTS[rev['genre']]} {rev['sujet']}{suffixe}"), bool(telecharger))
+
+
+@app.post("/revision/{rev_id}/fait")
+async def revision_faite(request: Request, rev_id: int):
+    """Marque une révision comme faite (et garde le score d'un quiz)."""
+    if db.revision(rev_id) is None:
+        raise HTTPException(404)
+    f = await request.form()
+    fait = f.get("fait", "1") == "1"
+    score = None
+    if f.get("bonnes") is not None and f.get("total"):
+        try:
+            score = {"bonnes": int(f["bonnes"]), "total": int(f["total"])}
+        except ValueError:
+            raise HTTPException(400, "score invalide")
+    db.marquer_fait(rev_id, fait, score)
+    if request.headers.get("HX-Request"):
+        return HTMLResponse("", headers={"HX-Refresh": "true"})
+    return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+@app.post("/revision/{rev_id}/relancer")
+def relancer_revision(rev_id: int):
+    if db.revision(rev_id) is None:
+        raise HTTPException(404)
+    db.relancer_revision(rev_id)
+    db.demander_scan()
+    return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+@app.post("/revision/{rev_id}/supprimer")
+def supprimer_revision(rev_id: int):
+    rev = db.revision(rev_id)
+    if rev is None:
+        raise HTTPException(404)
+    db.supprimer_revision(rev_id)
+    suite = f"/campagne/{rev['campagne_id']}" if rev["campagne_id"] else "/reviser"
+    return RedirectResponse(suite, status_code=303)
+
+
+# --- Campagnes ----------------------------------------------------------------
+
+@app.get("/campagne/nouvelle", response_class=HTMLResponse)
+def nouvelle_campagne(request: Request):
+    choix = db.niveaux_matieres_comptes()
+    par_niveau = defaultdict(list)
+    for c in choix:
+        par_niveau[c["niveau"]].append(c)
+    niveaux = [n for n in reversed(NIVEAUX) if n in par_niveau]  # l'année en cours d'abord
+    aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    lundi = aujourdhui + dt.timedelta(days=7 - aujourdhui.weekday())
+    return templates.TemplateResponse(request, "campagne_nouvelle.html", {
+        "par_niveau": par_niveau, "niveaux": niveaux, "genres": revision.GENRES, "max": MAX_CAMPAGNE,
+        "debut": aujourdhui, "fin": lundi + dt.timedelta(days=4)})
+
+
+@app.post("/campagne")
+async def creer_campagne(request: Request):
+    """Une révision par matière et par support coché, plus un programme jour par jour."""
+    f = await request.form()
+    titre = (f.get("titre") or "").strip() or "Campagne de révision"
+    consigne = (f.get("consigne") or "").strip()
+    try:
+        debut, fin = dt.date.fromisoformat(f.get("debut") or ""), dt.date.fromisoformat(f.get("fin") or "")
+    except ValueError:
+        raise HTTPException(400, "dates invalides")
+    if fin < debut or (fin - debut).days > 60:
+        raise HTTPException(400, "la période doit aller de 1 à 60 jours")
+    genres = [g for g in f.getlist("genres") if g in revision.GENRES and g != "plan"]
+    matieres = [m for m in f.getlist("matieres") if "|" in m]
+    if not genres or not matieres:
+        raise HTTPException(400, "choisis au moins une matière et un type de support")
+    if len(genres) * len(matieres) > MAX_CAMPAGNE:
+        raise HTTPException(400, f"{MAX_CAMPAGNE} supports au maximum par campagne")
+    demandes = []
+    for nm in matieres:
+        niveau, _, matiere = nm.partition("|")
+        sujet = (f.get(f"sujet:{nm}") or "").strip()
+        choisis = [int(i) for i in f.getlist(f"docs:{nm}") if str(i).isdigit()]
+        ids = choisis or db.choisir_documents(niveau, matiere, sujet) or db.choisir_documents(niveau, matiere)
+        if not ids:
+            raise HTTPException(400, f"aucun cours classé en {matiere} ({niveau})")
+        demandes.append((matiere, sujet, ids))
+    campagne_id = db.creer_campagne(titre, consigne, debut, fin)
+    for matiere, sujet, ids in demandes:
+        for g in genres:
+            db.creer_revision(g, f"{matiere} : {sujet}" if sujet else matiere, ids, fin if g == "examen" else None,
+                              consigne=consigne, campagne_id=campagne_id)
+    db.demander_scan()
+    return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
+
+
+@app.get("/campagne/{campagne_id}", response_class=HTMLResponse)
+def voir_campagne(request: Request, campagne_id: int):
+    campagne = db.campagne(campagne_id)
+    if campagne is None:
+        raise HTTPException(404)
+    revs = db.revisions_campagne(campagne_id)
+    par_matiere = defaultdict(list)
+    for r in revs:
+        par_matiere[r["matiere"] or "Autres"].append(r)
+    jours = revision.jours_programme(campagne["programme"], campagne["faits"], revs)
+    taches = [t for j in jours for t in j["taches"]]
+    aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    return templates.TemplateResponse(request, "campagne.html", {
+        "campagne": campagne, "par_matiere": dict(par_matiere), "revs": revs, "jours": jours,
+        "genres": revision.GENRES, "courts": revision.COURTS, "aujourdhui": aujourdhui,
+        "faites": sum(t["fait"] for t in taches), "nb_taches": len(taches),
+        "en_attente": campagne["statut"] == "en_attente" or any(r["statut"] == "en_attente" for r in revs),
+        "erreurs": [r for r in revs if r["statut"] == "erreur"]})
+
+
+@app.post("/campagne/{campagne_id}/tache", response_class=HTMLResponse)
+def cocher_tache(request: Request, campagne_id: int, cle: str = Form(...)):
+    if db.campagne(campagne_id) is None or not re.fullmatch(r"\d{4}-\d{2}-\d{2}:\d{1,2}", cle):
+        raise HTTPException(400)
+    fait = db.basculer_tache(campagne_id, cle)
+    if request.headers.get("HX-Request"):
+        return HTMLResponse("", headers={"HX-Trigger": json.dumps({"tache": {"cle": cle, "fait": fait}})})
+    return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
+
+
+@app.post("/campagne/{campagne_id}/relancer")
+def relancer_campagne(campagne_id: int):
+    if db.campagne(campagne_id) is None:
+        raise HTTPException(404)
+    db.relancer_campagne(campagne_id)
+    db.demander_scan()
+    return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
+
+
+@app.post("/campagne/{campagne_id}/supprimer")
+def supprimer_campagne(campagne_id: int, garder: bool = Form(False)):
+    if db.campagne(campagne_id) is None:
+        raise HTTPException(404)
+    db.supprimer_campagne(campagne_id, avec_revisions=not garder)
+    return RedirectResponse("/reviser", status_code=303)
+
+
+@app.get("/campagne/{campagne_id}/pdf")
+def campagne_pdf(campagne_id: int, corrige: int = 1, telecharger: int = 0):
+    """Livret : programme jour par jour puis tous les supports prêts."""
+    campagne = db.campagne(campagne_id)
+    if campagne is None:
+        raise HTTPException(404)
+    revs = [db.revision(r["id"]) for r in db.revisions_campagne(campagne_id) if r["statut"] == "pret"]
+    reperes = {}
+    for r in revs:
+        reperes.update({f"{r['id']}:{k}": v for k, v in (r["reperes"] or {}).items()})
+    contenu = pdf.campagne_pdf(campagne, revs, _sources(reperes), corrige=bool(corrige))
+    return _pdf(contenu, pdf.nom(campagne["titre"]), bool(telecharger))
 
 
 # --- Flashcards --------------------------------------------------------------
@@ -763,7 +989,7 @@ def agenda_preparer(ev_id: str = Form(...)):
     plan = (le - dt.date.today()).days >= pronote.JOURS_PLAN
     params = {"sujet": ev["titre"] if ev["id"].startswith("devoir:") else "",
               "genre": "plan" if plan else "fiche", "date_eval": le.isoformat() if plan else ""}
-    return RedirectResponse(f"/reviser?{urlencode(params)}", status_code=303)
+    return RedirectResponse(f"/reviser/nouvelle?{urlencode(params)}", status_code=303)
 
 
 @app.post("/scan", response_class=HTMLResponse)

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>{{ titre }}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm;
+    @bottom-left { content: "Claunote · {{ titre|replace('"', '') }}"; font: 8pt sans-serif; color: #8a857c; }
+    @bottom-right { content: counter(page) " / " counter(pages); font: 8pt sans-serif; color: #8a857c; } }
+  body { font: 10.5pt/1.5 "DejaVu Sans", "Liberation Sans", sans-serif; color: #1f1e1d; }
+  h1, h2, h3 { font-family: "DejaVu Serif", "Liberation Serif", Georgia, serif; line-height: 1.25; }
+  h1 { font-size: 20pt; margin: 0 0 4pt; }
+  h2 { font-size: 13.5pt; margin: 16pt 0 6pt; color: #b5583a; }
+  h3 { font-size: 11.5pt; margin: 12pt 0 4pt; }
+  .entete { display: flex; align-items: center; gap: 10pt; border-bottom: 2pt solid #d97757; padding-bottom: 8pt; margin-bottom: 14pt; }
+  .entete img { width: 30pt; height: 30pt; }
+  .entete .marque { font: 600 9pt sans-serif; color: #b5583a; letter-spacing: .05em; text-transform: uppercase; }
+  .doux { color: #6f6b63; font-size: 9.5pt; }
+  .section + .section, .programme + .section { break-before: page; }
+  .titre-section { border-left: 4pt solid #d97757; padding-left: 8pt; margin-bottom: 10pt; }
+  .titre-section .genre { font: 600 8.5pt sans-serif; color: #b5583a; text-transform: uppercase; letter-spacing: .05em; }
+  .titre-section h1 { font-size: 16pt; }
+  .corrige { break-before: page; }
+  .corrige > h2:first-child { margin-top: 0; }
+  ol.questions > li { margin-bottom: 10pt; break-inside: avoid; }
+  ol.choix { list-style: upper-alpha; margin: 4pt 0; }
+  ol.choix li::marker { font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: 6pt 0; }
+  th, td { border: .6pt solid #d8d3c8; padding: 4pt 6pt; text-align: left; vertical-align: top; }
+  th { background: #faf3ee; }
+  table.cartes td { width: 50%; }
+  pre, code { font: 9pt "DejaVu Sans Mono", monospace; }
+  pre { background: #f6f4ef; padding: 6pt 8pt; border-radius: 4pt; white-space: pre-wrap; }
+  .sources { margin-top: 14pt; font-size: 9pt; color: #6f6b63; }
+  .jour { break-inside: avoid; border: .6pt solid #e4ddd2; border-radius: 6pt; padding: 6pt 10pt; margin: 0 0 6pt; }
+  .jour h3 { margin: 0 0 3pt; }
+  .jour ul { margin: 0; padding-left: 14pt; }
+  .case { display: inline-block; width: 8pt; height: 8pt; border: .8pt solid #8a857c; margin-right: 4pt; }
+  blockquote { margin: 6pt 0; padding: 4pt 10pt; border-left: 3pt solid #e4ddd2; color: #4a4741; }
+</style>
+</head>
+<body>
+<div class="entete">
+  <img src="{{ logo }}" alt="">
+  <div><div class="marque">Claunote</div>
+    <h1>{{ titre }}</h1>
+    <div class="doux">{{ sous_titre }} · créé le {{ le.strftime('%d/%m/%Y') }}</div></div>
+</div>
+
+{% if programme %}
+<div class="programme">
+  {% if consigne %}<blockquote>{{ consigne }}</blockquote>{% endif %}
+  {% if programme.conseil %}<p><strong>{{ programme.conseil }}</strong></p>{% endif %}
+  <h2>Programme jour par jour</h2>
+  {% for j in jours %}
+  <div class="jour">
+    <h3>{{ j.libelle|capitalize }}{% if j.titre %} · {{ j.titre }}{% endif %}</h3>
+    <ul>{% for t in j.taches %}<li style="list-style: none; margin-left: -14pt"><span class="case"></span><strong>{{ t.matiere }}</strong> — {{ t.quoi }} <span class="doux">({{ t.duree }} min)</span></li>{% endfor %}</ul>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% for s in sections %}
+<div class="section">
+  {% if sections|length > 1 or programme %}
+  <div class="titre-section"><div class="genre">{{ s.genre }}{% if s.rev.matiere %} · {{ s.rev.matiere }}{% endif %}</div><h1>{{ s.titre }}</h1></div>
+  {% endif %}
+  {{ s.corps }}
+  {% if s.questions %}
+  <ol class="questions">
+    {% for q in s.questions %}
+    <li><strong>{{ q.question }}</strong>
+      <ol class="choix">{% for c in q.choix %}<li>{{ c }}</li>{% endfor %}</ol></li>
+    {% endfor %}
+  </ol>
+  {% if s.avec_corrige %}
+  <div class="corrige"><h2>Corrigé</h2>
+    <ol>{% for q in s.questions %}<li><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse] }}</strong>
+      {% if q.explication %}<br><span class="doux">{{ q.explication }}{% if q.source %} [{{ q.source }}]{% endif %}</span>{% endif %}</li>{% endfor %}</ol>
+  </div>
+  {% endif %}
+  {% endif %}
+  {% if s.cartes %}
+  <table class="cartes"><tr><th>Question</th><th>Réponse</th></tr>
+    {% for k in s.cartes %}<tr><td>{{ k.recto }}</td><td>{{ k.verso }}</td></tr>{% endfor %}</table>
+  {% endif %}
+  {% if s.corrige %}<div class="corrige">{{ s.corrige }}</div>{% endif %}
+  {% if s.sources %}
+  <div class="sources"><strong>Sources :</strong>
+    {% for r, t in s.sources %}[{{ r }}] {{ t }}{{ ' · ' if not loop.last }}{% endfor %}</div>
+  {% endif %}
+</div>
+{% endfor %}
+</body>
+</html>
