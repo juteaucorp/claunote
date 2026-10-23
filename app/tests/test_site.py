@@ -24,6 +24,11 @@ def client(monkeypatch):
     monkeypatch.setattr(db, "recherche", lambda q: [{**DOC, "extrait": "les <b>VLAN</b> <i>x</i>"}])
     monkeypatch.setattr(db, "demander_scan", lambda: appels.append("scan"))
     monkeypatch.setattr(db, "maj", lambda i, **k: appels.append(("maj", i, k)))
+    monkeypatch.setattr(db, "niveaux_matieres", lambda: [{"niveau": "BTS1", "matiere": "Réseaux"}])
+    monkeypatch.setattr(db, "revisions", lambda: [])
+    monkeypatch.setattr(db, "choisir_documents", lambda n, m, q="": [1] if q == "" or q == "vlan" else [])
+    monkeypatch.setattr(db, "creer_revision", lambda *a: appels.append(("rev",) + a) or 5)
+    monkeypatch.setattr(db, "documents", lambda ids: [DOC] if 1 in ids else [])
     with TestClient(main.app) as c:
         c.appels = appels
         yield c
@@ -73,3 +78,41 @@ def test_classer_deplace_dans_kdrive(client, monkeypatch):
     assert client.appels[-1] == ("maj", 1, {"statut": "classe", "niveau": "BTS2", "matiere": "Réseaux",
                                             "type": "Cours", "confiance": 1.0})
     assert client.post("/doc/1/classer", data={"niveau": "Master", "matiere": "x", "type": "TP"}).status_code == 400
+
+
+def test_page_reviser(client):
+    r = client.get("/reviser")
+    assert r.status_code == 200 and 'value="BTS1|Réseaux"' in r.text and "Plan de révision" in r.text
+
+
+def test_demander_une_fiche_depuis_un_document(client):
+    r = client.post("/reviser", data={"genre": "fiche", "doc_id": "1"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/revision/5"
+    assert ("rev", "fiche", "Les VLAN", [1], None) in client.appels and "scan" in client.appels
+
+
+def test_demander_par_matiere_avec_repli(client):
+    r = client.post("/reviser", data={"genre": "quiz", "niveau_matiere": "BTS1|Réseaux", "sujet": "ospf"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert ("rev", "quiz", "ospf", [1], None) in client.appels
+
+
+def test_plan_sans_date_refuse(client):
+    r = client.post("/reviser", data={"genre": "plan", "niveau_matiere": "BTS1|Réseaux"})
+    assert r.status_code == 400
+
+
+def test_voir_revision(client, monkeypatch):
+    base = {"id": 5, "genre": "fiche", "sujet": "VLAN", "date_eval": None, "erreur": None,
+            "reperes": {"D1": 1}, "statut": "pret", "contenu": "## L'essentiel\nUn VLAN [D1] <b>x</b>"}
+    revs = {5: base, 6: {**base, "id": 6, "statut": "en_attente", "contenu": None},
+            7: {**base, "id": 7, "genre": "quiz", "contenu": '[{"question": "Q?", "choix": ["a", "b"], '
+                '"reponse": 1, "explication": "car", "source": "D1"}]'}}
+    monkeypatch.setattr(db, "revision", lambda i: revs.get(i))
+    r = client.get("/revision/5")
+    assert '<a href="/doc/1">[D1]</a>' in r.text and "<b>x</b>" not in r.text and "Les VLAN" in r.text
+    assert 'http-equiv="refresh"' in client.get("/revision/6").text
+    r = client.get("/revision/7")
+    assert "Voir la réponse" in r.text and "B. b" in r.text
+    assert client.get("/revision/99").status_code == 404

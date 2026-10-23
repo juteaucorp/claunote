@@ -106,13 +106,20 @@ def parse_reponse(texte: str) -> Analyse:
     )
 
 
-def analyser(chemin: Path) -> Analyse:
-    prompt = PROMPT.format(nom=chemin.name, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--allowedTools", "Read", "--model", MODELE]
+def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
+                   entree: str | None = None, timeout: int = 1800) -> str:
+    """Lance `claude -p` et renvoie le texte de la réponse.
+
+    `entree` est passé sur l'entrée standard (Claude Code l'ajoute au prompt).
+    Lève LimiteAtteinte si la limite d'usage du forfait est atteinte.
+    """
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", MODELE]
+    if outils:
+        cmd += ["--allowedTools", ",".join(outils)]
     try:
-        p = subprocess.run(cmd, cwd=chemin.parent, capture_output=True, text=True, timeout=1800)
+        p = subprocess.run(cmd, cwd=cwd, input=entree, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as e:
-        raise ErreurAgent("analyse trop longue (30 min)") from e
+        raise ErreurAgent(f"Claude Code trop long ({timeout // 60} min)") from e
     try:
         sortie = json.loads(p.stdout)
     except json.JSONDecodeError:
@@ -123,4 +130,9 @@ def analyser(chemin: Path) -> Analyse:
         if LIMITE.search(message):
             raise LimiteAtteinte(message[:300])
         raise ErreurAgent(message[:500] or f"code de sortie {p.returncode}")
-    return parse_reponse(texte)
+    return texte
+
+
+def analyser(chemin: Path) -> Analyse:
+    prompt = PROMPT.format(nom=chemin.name, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
+    return parse_reponse(appeler_claude(prompt, chemin.parent, outils=["Read"]))

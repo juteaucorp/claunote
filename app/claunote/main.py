@@ -1,5 +1,8 @@
+import datetime as dt
 import html
+import json
 import mimetypes
+import re
 import os
 import tempfile
 from collections import defaultdict
@@ -13,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import db, rangement
+from claunote import db, rangement, revision
 from claunote.agent import NIVEAUX, TYPES
 from claunote.kdrive import KDrive
 
@@ -45,6 +48,14 @@ def rendu_markdown(texte: str | None) -> str:
     # Le HTML brut éventuel de la transcription est neutralisé avant le rendu
     texte = (texte or "").replace("&", "&amp;").replace("<", "&lt;")
     return markdown.markdown(texte, extensions=["tables", "fenced_code"])
+
+
+def avec_sources(rendu: str, reperes: dict) -> Markup:
+    """Transforme les repères [D1] du texte en liens vers le cours d'origine."""
+    def lien(m):
+        doc_id = reperes.get(m.group(1))
+        return f'<a href="/doc/{doc_id}">[{m.group(1)}]</a>' if doc_id else m.group(0)
+    return Markup(re.sub(r"\[(D\d+)\]", lien, rendu))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -125,6 +136,59 @@ def reessayer(doc_id: int):
     db.maj(doc_id, statut="nouveau", erreur=None)
     db.demander_scan()
     return RedirectResponse("/a-verifier", status_code=303)
+
+
+@app.get("/reviser", response_class=HTMLResponse)
+def reviser(request: Request):
+    return templates.TemplateResponse(request, "reviser.html", {
+        "choix": db.niveaux_matieres(), "genres": revision.GENRES, "revisions": db.revisions(),
+        "demain": dt.date.today() + dt.timedelta(days=1)})
+
+
+@app.post("/reviser")
+def demander_revision(genre: str = Form(...), sujet: str = Form(""), niveau_matiere: str = Form(""),
+                      date_eval: str = Form(""), doc_id: int | None = Form(None)):
+    """Crée une demande de révision ; le worker la traite en priorité."""
+    if genre not in revision.GENRES:
+        raise HTTPException(400, "genre inconnu")
+    eval_le = dt.date.fromisoformat(date_eval) if date_eval else None
+    if genre == "plan" and (eval_le is None or eval_le <= dt.date.today()):
+        raise HTTPException(400, "un plan de révision demande une date d'évaluation future")
+    sujet = sujet.strip()
+    if doc_id is not None:
+        doc = db.document(doc_id)
+        if doc is None:
+            raise HTTPException(404)
+        ids, sujet = [doc_id], sujet or doc["titre"] or doc["nom"]
+    else:
+        niveau, _, matiere = niveau_matiere.partition("|")
+        if not matiere:
+            raise HTTPException(400, "choisis un niveau et une matière")
+        # Le sujet sert de recherche ; s'il ne trouve rien, on prend toute la matière
+        ids = db.choisir_documents(niveau, matiere, sujet) or db.choisir_documents(niveau, matiere)
+        sujet = sujet or f"{matiere} ({niveau})"
+    if not ids:
+        raise HTTPException(400, "aucun document classé pour ce choix")
+    rev_id = db.creer_revision(genre, sujet, ids, eval_le)
+    db.demander_scan()
+    return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+@app.get("/revision/{rev_id}", response_class=HTMLResponse)
+def voir_revision(request: Request, rev_id: int):
+    rev = db.revision(rev_id)
+    if rev is None:
+        raise HTTPException(404)
+    reperes = rev["reperes"] or {}
+    contenu, questions = None, []
+    if rev["statut"] == "pret":
+        if rev["genre"] == "quiz":
+            questions = json.loads(rev["contenu"])
+        else:
+            contenu = avec_sources(rendu_markdown(rev["contenu"]), reperes)
+    return templates.TemplateResponse(request, "revision.html", {
+        "rev": rev, "genres": revision.GENRES, "contenu": contenu, "questions": questions,
+        "reperes": reperes, "sources": db.documents(list(reperes.values()))})
 
 
 @app.post("/scan", response_class=HTMLResponse)

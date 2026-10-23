@@ -114,3 +114,19 @@ stock prendra donc plusieurs jours en tâche de fond, sans rien te coûter de pl
    classement, il part dans `Etudes/a-verifier/` et apparaît sur la page **À vérifier**.
 
 Après une mise à jour du code : `git pull && docker compose up -d --build`.
+
+## 7. Réviser (phase 3)
+
+Page **Réviser** du site : choisis une matière, un sujet (facultatif) et le type de support.
+
+| Support | Ce que tu obtiens |
+| --- | --- |
+| **Fiche de révision** | l'essentiel, définitions, formules/commandes, méthodes, pièges, 3 exercices corrigés |
+| **Quiz** | 10 QCM, réponse et explication cachées sous chaque question |
+| **Plan de révision** | un programme jour par jour jusqu'à la date de l'évaluation |
+
+- L'agent n'utilise **que tes cours** : chaque point renvoie au document source (`[D1]`, cliquable).
+- Le sujet sert de recherche dans la matière ; s'il ne trouve rien, toute la matière est utilisée.
+- Depuis la page d'un document : boutons **Fiche** et **Quiz** sur ce seul document.
+- Chaque support est aussi copié dans `Etudes/fiches/` sur kDrive (en Markdown).
+- Les révisions passent **avant** les scans dans la file du worker.

@@ -26,7 +26,7 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] **Phase 0** : VM, accès kDrive par API, Docker Compose
 - [x] Phase 1 : pipeline d'ingestion (transcription + classement par Claude Code)
 - [x] Phase 2 : site MVP (bibliothèque, recherche, « à vérifier »)
-- [ ] Phase 3 : agent de révision
+- [x] Phase 3 : agent de révision (fiches, quiz, plans, sources citées)
 - [ ] Phase 4 : Pronote
 - [ ] Phase 5 : flashcards, Anki, PWA
 
