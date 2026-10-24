@@ -173,6 +173,29 @@ est facultatif : il range le dépôt dans un dossier à ce nom. Les fichiers par
 
 Après une mise à jour du code : `git pull && docker compose up -d --build`.
 
+### Documents personnels oubliés (RIB, carte d'identité…)
+
+Avant toute analyse, chaque fichier est vérifié **sur la VM, sans IA** : nom, dossier, texte du PDF
+ou OCR local (Tesseract). Ce qui est repéré **n'est jamais envoyé à Claude** :
+
+- **sûr** (IBAN valide, bande MRZ d'une pièce d'identité, n° de sécu avec sa clé, carte bancaire,
+  fichier nommé `RIB`, `passeport`, `avis d'imposition`, `fiche de paie`, `mots de passe`…) :
+  **corbeille kDrive tout de suite** (récupérable 30 jours), notification, liste sur la page **Import** ;
+- **doute** (une expression comme « avis d'imposition » en en-tête, un dossier `Banque`…) : ni
+  analysé ni supprimé, tu choisis sur **Import** : *Supprimer* ou *Ce sont des cours : analyser*.
+
+Les documents des profs (Pronote) ne passent pas par ce contrôle.
+
+### Très gros scan (une année entière, toutes matières)
+
+Un PDF de plus de `DECOUPAGE_PAGES` pages (40 par défaut) est **découpé automatiquement** :
+lecture locale de chaque page (pages blanches, en-têtes « Chapitre », « TP n° »…, pages
+personnelles retirées), puis Claude repère les débuts de documents sur de petites images, par
+paquets de 24 pages. Chaque document repart dans l'inbox et est analysé normalement. L'original
+va dans `Etudes/import/scans-decoupes/` (ou à la corbeille s'il contenait des pages personnelles).
+Compter ~1 s par page pour la lecture locale. Pour un fichier de plus de 1 Go, copie-le plutôt
+directement dans l'inbox avec l'appli kDrive.
+
 ## 7. Réviser (phase 3)
 
 Page **Réviser** du site : deux boutons en haut, **Une révision** et **Une campagne**, puis ce qui
