@@ -230,7 +230,7 @@ def connect():
     if _pool is None:
         with _verrou:
             if _pool is None:
-                _pool = ConnectionPool(os.environ["DATABASE_URL"], min_size=1, max_size=8, open=True,
+                _pool = ConnectionPool(os.environ["DATABASE_URL"], min_size=1, max_size=12, open=True,
                                        kwargs={"row_factory": dict_row, "autocommit": True},
                                        check=ConnectionPool.check_connection)
     return _pool.connection()

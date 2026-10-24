@@ -21,7 +21,7 @@ ECHELLE = ["haiku", "sonnet", "opus"]  # du plus léger au plus fort
 
 TACHES = {
     "scan": "sonnet",        # lire un scan manuscrit : la qualité de lecture compte
-    "texte": "haiku",        # texte déjà extrait d'un Word/PowerPoint : mise en forme et classement
+    "texte": "haiku",        # texte déjà extrait (Word, PowerPoint, PDF numérique, long scan transcrit) : classement
     "classement": "haiku",   # reclasser une transcription (Organiser) : monte si l'agent doute
     "dossiers": "haiku",     # comprendre les noms de dossiers d'un import
     "condense": "haiku",     # condenser un groupe de cours quand il y en a trop pour une seule lecture
@@ -33,7 +33,7 @@ TACHES = {
     "examen": "opus",        # sujet + corrigé d'épreuve blanche : long raisonnement
 }
 LIBELLES = {
-    "scan": "Lecture d'un scan", "texte": "Lecture d'un Word/PowerPoint", "classement": "Reclassement",
+    "scan": "Lecture d'un scan", "texte": "Classement d'un texte (Word, PDF numérique…)", "classement": "Reclassement",
     "dossiers": "Noms de dossiers d'un import", "fiche": "Fiche de révision", "quiz": "Quiz",
     "cartes": "Flashcards", "plan": "Plan de révision", "programme": "Programme de campagne",
     "condense": "Cours condensés",

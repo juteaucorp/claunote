@@ -23,6 +23,7 @@ import shutil
 import signal
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
 import httpx
@@ -35,12 +36,15 @@ INBOX_ID = int(os.environ["KDRIVE_INBOX_ID"])
 ETUDES_ID = int(os.environ["KDRIVE_ETUDES_ID"])
 CACHE_DIR = Path(os.environ.get("CACHE_DIR", "/cache"))
 INTERVALLE = 60          # secondes entre deux vérifications de l'inbox
-LOT = int(os.environ.get("WORKER_LOT", "5"))  # documents analysés par passage
+PARALLELE = agent.PARALLELE  # analyses menées en même temps (CLAUDE_PARALLELE, 3 par défaut)
+# documents analysés par passage ; au moins 2 par fil (un ancien WORKER_LOT=5 briderait le parallélisme)
+LOT = max(int(os.environ.get("WORKER_LOT") or 4 * PARALLELE), 2 * PARALLELE)
 SYNCHRO_PRONOTE = int(os.environ.get("PRONOTE_INTERVALLE_H", "3")) * 3600
 REESSAI_PRONOTE = 15 * 60  # synchro Pronote ratée : nouvel essai dans 15 min, pas dans 3 h
 NETTOYAGE = 10 * 60        # dossiers vides de l'inbox : vérifiés toutes les 10 min
 ESSAIS_MAX = 3             # Claude plante 3 fois sur le même document : il passe en erreur
 ARRET = threading.Event()  # SIGTERM reçu : finir le travail en cours puis quitter
+KDRIVE_VERROU = threading.Lock()  # rangements des analyses parallèles : un dossier n'est pas créé deux fois
 
 
 def log(msg: str):
@@ -177,14 +181,22 @@ def indice(dossiers: list[str], nom: str) -> str:
     return importation.texte_indices(dossiers, nom, compris)
 
 
-def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None):
+def memoire(item: dict) -> Path:
+    """Morceaux déjà transcrits d'un long scan : gardés jusqu'à la fin de son analyse."""
+    return CACHE_DIR / "morceaux" / str(item["id"])
+
+
+def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dossiers: dict | None = None):
     dossiers = item.get("dossiers", [])
     doc_id = db.creer(item["id"], item["name"])
     dossier_local = CACHE_DIR / str(item["id"])
+    debut = time.monotonic()
     try:
         chemin = kd.download(item["id"], dossier_local / item["name"])
-        a = analyser(chemin, dossiers, indice(dossiers, item["name"]), matieres)
+        telecharge = time.monotonic()
+        a = analyser(chemin, dossiers, indice(dossiers, item["name"]), matieres, memoire(item))
     except ErreurAgent as e:
+        shutil.rmtree(memoire(item), ignore_errors=True)
         variantes = db.variantes_de(item["id"])
         if variantes:  # le même document existe dans un autre format : on essaie celui-là
             db.import_basculer(item["id"], variantes[0]["kdrive_id"])
@@ -215,6 +227,8 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None):
            note=note, essais=0, modele=a.modele or None, avis=a.avis or None)
     db.marquer_a_ranger([doc_id])
     db.import_marquer([item["id"]], "fait")
+    shutil.rmtree(memoire(item), ignore_errors=True)
+    analyse = time.monotonic()
     nom = rangement.nouveau_nom(a, item["name"])
     if nom != item["name"]:
         try:
@@ -224,9 +238,12 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None):
             log(f"renommage impossible ({e}), nom conservé : {item['name']}")
             nom = item["name"]
     doc = db.document(doc_id)
-    ranger_doc(kd, doc, {})
+    with KDRIVE_VERROU:
+        ranger_doc(kd, doc, {} if cache_dossiers is None else cache_dossiers)
+    fin = time.monotonic()
     log(f"{statut.replace('_', ' ')} ({modeles.NOMS.get(a.modele, a.modele)}{', second avis' if a.avis else ''}) : "
-        f"{item['name']} → {'/'.join(rangement.dossier_doc(doc))}/{nom}")
+        f"{item['name']} → {'/'.join(rangement.dossier_doc(doc))}/{nom} "
+        f"[téléchargement {telecharge - debut:.0f} s, IA {analyse - telecharge:.0f} s, rangement {fin - analyse:.0f} s]")
 
 
 def ranger_doc(kd: KDrive, doc: dict, dossiers: dict[tuple, int]):
@@ -296,7 +313,6 @@ def statut_et_note(a, note: str | None) -> tuple[str, str | None]:
 
 def reclasser(doc: dict, matieres: list[str]):
     """Reclassement demandé depuis la page Organiser : relit la transcription, pas le scan."""
-    activite(f"Reclassement de « {doc['titre'] or doc['nom']} »")
     try:
         a = agent.reclasser(doc, matieres)
     except ErreurAgent as e:
@@ -674,14 +690,46 @@ def etape(nom: str, faire, *args):
     return None
 
 
-def analyser_inbox(kd: KDrive, items: list[dict]):
-    matieres = db.matieres()
-    for item in items[:LOT]:
-        if ARRET.is_set() or not CLAUDE.disponible():
+def en_parallele(items: list, faire, libelle, fils: int = PARALLELE):
+    """Applique `faire` à chaque élément, `fils` à la fois.
+
+    Le premier qui tombe sur la limite du forfait, une panne de Claude ou de kDrive arrête la
+    distribution : ceux déjà lancés finissent, les autres restent pour le tour suivant, puis
+    l'erreur est relevée pour ouvrir le disjoncteur (etape).
+    """
+    en_cours, verrou, echec = [], threading.Lock(), []
+
+    def un(item):
+        if ARRET.is_set() or echec or not CLAUDE.disponible():
             return
-        activite(f"Analyse de « {item['name']} »")
+        with verrou:
+            en_cours.append(libelle(item))
+            activite(en_cours[0] + (f" (et {len(en_cours) - 1} autre(s) en même temps)" if len(en_cours) > 1 else ""))
+        try:
+            faire(item)
+        except (LimiteAtteinte, ClaudeIndisponible, KDriveIndisponible) as e:
+            echec.append(e)
+        except Exception as e:  # un fichier qui plante ne doit pas arrêter les autres
+            log(f"erreur ({libelle(item)}) : {e.__class__.__name__} : {e}")
+        finally:
+            with verrou:
+                en_cours.remove(libelle(item))
+
+    with ThreadPoolExecutor(fils, thread_name_prefix="ia") as ex:
+        list(ex.map(un, items))
+    if echec:
+        raise echec[0]
+
+
+def analyser_inbox(kd: KDrive, items: list[dict]):
+    """Jusqu'à LOT documents, PARALLELE lus par Claude à la fois, +1 qui se télécharge ou se range pendant ce temps."""
+    matieres, dossiers = db.matieres(), {}
+
+    def faire(item):
         log(f"analyse : {'/'.join(item['dossiers'] + [item['name']])}")
-        traiter(kd, item, matieres)
+        traiter(kd, item, matieres, dossiers)
+
+    en_parallele(items[:LOT], faire, lambda item: f"Analyse de « {item['name']} »", PARALLELE + 1)
     ETAT["reste"] = len(items) > LOT  # encore du travail : pas d'attente d'une minute avant le lot suivant
 
 
@@ -702,10 +750,8 @@ def revisions_en_attente(kd: KDrive):
 def reclasser_en_attente():
     a_reclasser = db.a_reclasser(LOT * 4)  # peu coûteux : seulement du texte
     matieres = db.matieres() if a_reclasser else []
-    for doc in a_reclasser:
-        if ARRET.is_set() or not CLAUDE.disponible():
-            return
-        reclasser(doc, matieres)
+    en_parallele(a_reclasser, lambda doc: reclasser(doc, matieres),
+                 lambda doc: f"Reclassement de « {doc['titre'] or doc['nom']} »")
 
 
 def pdf_manquants(kd: KDrive):
