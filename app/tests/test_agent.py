@@ -87,18 +87,19 @@ def test_analyser_office_et_pronote(tmp_path, monkeypatch):
     from claunote import agent
     vus = {}
 
-    def faux_claude(prompt, cwd, outils=None, *a, **k):
-        vus["prompt"], vus["fichiers"] = prompt, sorted(p.name for p in cwd.iterdir())
-        return ('{"transcription": "x", "titre": "VLAN", "niveau": "BTS2", "matiere": "Réseaux", "type": "Cours", '
+    def faux_claude(prompt, cwd, outils=None, *a, entree=None, **k):
+        vus.update(prompt=prompt, outils=outils, entree=entree)
+        return ('{"titre": "VLAN", "niveau": "BTS2", "matiere": "Réseaux", "type": "Cours", '
                 '"chapitre": "", "date": null, "mots_cles": [], "resume": "", "confiance": 0.9}')
     monkeypatch.setattr(agent, "appeler_claude", faux_claude)
     docx = _office(tmp_path / "cours.docx", {"word/document.xml":
         f'<w:document {W}><w:body><w:p><w:r><w:t>Les VLAN</w:t></w:r></w:p></w:body></w:document>'})
     a = agent.analyser(docx, ["BTS SIO 2", "Pronote", "SISR - RESEAUX"])
-    assert a.titre == "VLAN"
-    assert "`cours.docx.txt`" in vus["prompt"] and "fichier bureautique `cours.docx`" in vus["prompt"]
+    # le texte extrait est la transcription : Claude le reçoit sur l'entrée et ne fait que classer
+    assert a.titre == "VLAN" and a.transcription == "Les VLAN" and a.modele == "haiku"
+    assert "`cours.docx` (fichier bureautique" in vus["prompt"] and vus["entree"] == "Les VLAN"
+    assert vus["outils"] is None and "ne le recopie pas" in vus["prompt"]
     assert "déposé sur Pronote par un professeur" in vus["prompt"]
-    assert vus["fichiers"] == ["cours.docx", "cours.docx.txt"]
     vide = _office(tmp_path / "vide.docx", {"word/document.xml": f'<w:document {W}><w:body/></w:document>'})
     with pytest.raises(agent.ErreurAgent, match="aucun texte"):
         agent.analyser(vide)
@@ -237,3 +238,101 @@ def test_journal_des_appels(claude, monkeypatch, tmp_path):
     reponses.append((0, {"is_error": False, "result": "x", "usage": {"input_tokens": 10, "output_tokens": 5}}))
     agent.demander("cartes", "p", tmp_path)
     assert notes[0]["tache"] == "cartes" and notes[0]["resultat"] == "ok" and notes[0]["jetons_sortie"] == 5
+
+
+# --- Vitesse : réponse en clair, PDF numériques, longs scans par morceaux ----------------
+
+def test_transcription_en_clair_avant_le_json():
+    a = agent.parse_reponse('```markdown\n# Suites\n$u_{n+1} = q \\times u_n$ et "guillemets"\n```\n'
+                            '===CLASSEMENT===\n```json\n{"titre": "Suites", "niveau": "Terminale", '
+                            '"matiere": "Mathématiques", "type": "Cours", "confiance": 0.9}\n```')
+    assert a.transcription == '# Suites\n$u_{n+1} = q \\times u_n$ et "guillemets"'
+    assert (a.titre, a.niveau, a.confiance) == ("Suites", "Terminale", 0.9)
+    assert "===CLASSEMENT===" in agent.PROMPT and '"transcription"' not in agent.PROMPT
+
+
+def _pdf(chemin, pages, image=None):
+    """PDF de test : `pages` textes, et une image (largeur, hauteur) sur chaque page si demandé."""
+    from pypdf import PdfWriter
+    from pypdf.generic import (ArrayObject, DecodedStreamObject, DictionaryObject, NameObject,
+                               NumberObject)
+    w = PdfWriter()
+    for texte in pages:
+        page = w.add_blank_page(595, 842)
+        flux = DecodedStreamObject()
+        lignes = " ".join(f"({l}) Tj T*" for l in texte.split("\n"))
+        flux.set_data(f"BT /F1 10 Tf 12 TL 50 800 Td {lignes} ET".encode("latin-1"))
+        police = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+                                   NameObject("/BaseFont"): NameObject("/Helvetica")})
+        ressources = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): w._add_object(police)})})
+        if image:
+            img = DecodedStreamObject()
+            img.set_data(b"\0" * 3)
+            img.update({NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Image"),
+                        NameObject("/Width"): NumberObject(image[0]), NameObject("/Height"): NumberObject(image[1]),
+                        NameObject("/ColorSpace"): NameObject("/DeviceRGB"), NameObject("/BitsPerComponent"): NumberObject(8)})
+            ressources[NameObject("/XObject")] = DictionaryObject({NameObject("/Im1"): w._add_object(img)})
+        page[NameObject("/Resources")] = ressources
+        page[NameObject("/Contents")] = w._add_object(flux)
+    with open(chemin, "wb") as f:
+        w.write(f)
+    return chemin
+
+
+COURS = "\n".join(["Les reseaux locaux virtuels (VLAN) separent les domaines de diffusion."] * 5)
+
+
+def test_pdf_numerique_lu_en_texte(tmp_path):
+    texte = agent.texte_pdf(_pdf(tmp_path / "cours.pdf", [COURS, COURS]))
+    assert texte.count("VLAN") == 10 and "\n\n---\n\n" in texte and "  \n" in texte
+    # scan (même avec une couche OCR), document illustré, PDF sans texte : Claude lit le fichier
+    assert agent.texte_pdf(_pdf(tmp_path / "scan.pdf", [COURS], image=(1240, 1754))) is None
+    assert agent.texte_pdf(_pdf(tmp_path / "illustre.pdf", [COURS, COURS], image=(500, 400))) is None
+    assert agent.texte_pdf(_pdf(tmp_path / "vide.pdf", ["", ""])) is None
+    assert agent.texte_pdf(_pdf(tmp_path / "court.pdf", [COURS, "x"])) is None  # une page sans texte
+    casse = tmp_path / "casse.pdf"
+    casse.write_bytes(b"%PDF-1.4 pas vraiment")
+    assert agent.texte_pdf(casse) is None
+
+
+def test_long_scan_lu_par_morceaux_en_parallele(tmp_path, monkeypatch):
+    import threading
+    scan = _pdf(tmp_path / "annee.pdf", [f"page {i}" for i in range(1, 21)], image=(1240, 1754))
+    appels, en_meme_temps, verrou = [], [0, 0], threading.Lock()
+    barriere = threading.Barrier(3, timeout=5)
+
+    def faux(prompt, cwd, outils=None, entree=None, modele="sonnet", **k):
+        if entree is not None:  # classement du texte transcrit
+            appels.append(("classement", modele))
+            assert "Pages 1-8" in entree and "Pages 17-20" in entree
+            return '{"titre": "Année", "niveau": "BTS1", "matiere": "Réseaux", "type": "Cours", "confiance": 0.9}'
+        nom = prompt.split("`")[1]
+        assert (cwd / nom).exists() and outils == ["Read"]
+        with verrou:
+            en_meme_temps[0] += 1
+            en_meme_temps[1] = max(en_meme_temps)
+        barriere.wait()  # les trois morceaux sont lus en même temps
+        with verrou:
+            en_meme_temps[0] -= 1
+            appels.append((nom, modele))
+        debut, fin = nom.removesuffix(".pdf").split("-p")[1].split("-")
+        return f"```markdown\nPages {int(debut)}-{int(fin)}\n```"
+
+    monkeypatch.setattr(agent, "appeler_claude", faux)
+    memoire = tmp_path / "memoire"
+    a = agent.analyser(scan, ["BTS1"], memoire=memoire)
+    assert a.transcription == "Pages 1-8\n\nPages 9-16\n\nPages 17-20" and a.modele == "sonnet"
+    assert a.niveau == "BTS1" and en_meme_temps[1] == 3
+    assert sorted(n for n, _ in appels if n != "classement") == [
+        "annee-p001-008.pdf", "annee-p009-016.pdf", "annee-p017-020.pdf"]
+    assert ("classement", "haiku") in appels
+    # morceaux gardés : une nouvelle analyse (après une limite ou un redémarrage) ne relit rien
+    assert sorted(p.name for p in memoire.iterdir()) == ["001-008.md", "009-016.md", "017-020.md"]
+    appels.clear()
+    assert agent.analyser(scan, ["BTS1"], memoire=memoire).transcription == a.transcription
+    assert appels == [("classement", "haiku")]
+
+
+def test_decoupage_sans_petit_reste(tmp_path):
+    scan = _pdf(tmp_path / "s.pdf", ["p"] * 17)
+    assert [(d, f) for _, d, f in agent.decouper_pdf(scan)] == [(1, 8), (9, 17)]

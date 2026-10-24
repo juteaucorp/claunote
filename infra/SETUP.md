@@ -103,7 +103,7 @@ export $(grep CLAUDE_CODE_OAUTH_TOKEN .env) && claude -p "Réponds juste : ok"
 
 | Tâche | Modèle | Si l'agent doute |
 |---|---|---|
-| Noms de dossiers d'un import, reclassement, Word/PowerPoint | Haiku (rapide) | Sonnet, puis Opus |
+| Noms de dossiers d'un import, reclassement, Word/PowerPoint, PDF numérique | Haiku (rapide) | Sonnet, puis Opus |
 | Scan manuscrit, fiche, quiz, flashcards, plan, programme | Sonnet | Opus |
 | Épreuve blanche (sujet + corrigé) | Opus | – |
 
@@ -112,6 +112,17 @@ au-dessus** avant de finir dans « À vérifier » : moins de tri à faire à la
 refuse Opus, ou si sa limite propre est atteinte, Sonnet le remplace tout seul.
 Réglages : `CLAUDE_MODELES=examen=sonnet` (une tâche), `CLAUDE_MODELE_MAX=sonnet` (jamais Opus).
 L'ancienne ligne `CLAUDE_MODEL` ne sert plus.
+
+**Vitesse d'analyse** :
+- **3 documents analysés en même temps** (`CLAUDE_PARALLELE=3`, de 1 à 6) ; un 4e se télécharge ou se
+  range dans kDrive pendant ce temps. Le forfait compte les jetons, pas les appels : même quota, plus vite.
+- **Word, PowerPoint, PDF numérique** (export Word, supports des profs) : le texte est extrait
+  directement et devient la transcription, exacte ; Haiku ne fait que classer. Un PDF scanné ou
+  photographié (même avec une couche OCR) ou plein d'images reste lu par Claude.
+- **Scan de plus de 12 pages** : découpé en morceaux de 8 pages lus en parallèle, puis classé sur
+  le texte. Chaque morceau fini est gardé : après une limite ou un redémarrage, seuls les morceaux
+  manquants sont refaits.
+- Le journal du worker donne pour chaque document le temps de téléchargement, d'IA et de rangement.
 
 **Limites du forfait Pro** : quand la limite d'usage est atteinte, le worker lit **l'heure de
 reprise** annoncée par Claude Code, met **seulement l'IA** en pause jusque-là (Pronote, tri,

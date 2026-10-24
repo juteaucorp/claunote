@@ -1,8 +1,9 @@
 """Analyse d'un scan avec Claude Code en mode non interactif (`claude -p`).
 
 Utilise le forfait Claude Pro via CLAUDE_CODE_OAUTH_TOKEN : pas de clé API.
-Une passe par document : transcription Markdown + classement en JSON, avec le modèle
-de la tâche (modeles.py). Si l'agent doute, un modèle plus fort donne un second avis.
+Une passe par scan : transcription Markdown + classement en JSON, avec le modèle de la tâche
+(modeles.py) ; un fichier numérique (Word, PDF exporté) n'est que classé, son texte est extrait ici ;
+un long scan est lu par morceaux en parallèle. Si l'agent doute, un modèle plus fort donne un second avis.
 
 Les échecs sont triés pour que le worker sache quoi faire :
 - LimiteAtteinte : limite du forfait, pause jusqu'à l'heure de reprise annoncée ;
@@ -11,11 +12,14 @@ Les échecs sont triés pour que le worker sache quoi faire :
 - ErreurAgent : le document lui-même pose problème (illisible, réponse invalide).
 """
 import json
+import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import datetime as dt
 from pathlib import Path
@@ -27,18 +31,7 @@ SEUIL_CONFIANCE = 0.7
 NIVEAUX = ["6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale", "BTS1", "BTS2"]
 TYPES = ["Cours", "TP", "Exercices", "Évaluation", "Notes perso"]
 
-PROMPT = """Tu analyses un document scanné d'un élève (du collège au BTS SIO) : le fichier `{nom}`.
-Lis-le en entier avec l'outil Read (s'il a plus de 10 pages, lis-le par tranches de pages).
-
-Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte autour :
-{{"transcription": "...", "titre": "...", "niveau": "...", "matiere": "...", "type": "...",
-  "chapitre": "...", "date": "AAAA-MM-JJ ou null", "mots_cles": ["..."], "resume": "...",
-  "hors_cours": false, "confiance": 0.0}}
-
-Règles :
-- transcription : tout le texte, fidèlement, en Markdown. Formules en LaTeX ($...$), schémas
-  décrits entre [crochets], passages illisibles notés [illisible]. N'invente rien.
-- titre : court et parlant (ex. « Suites géométriques »).
+REGLES = """- titre : court et parlant (ex. « Suites géométriques »).
 - niveau : exactement un parmi {niveaux}.
 - matiere : nom court en français (Mathématiques, Français, Anglais, Histoire-Géographie, SVT,
   Physique-Chimie, Réseaux, Systèmes, Développement, Cybersécurité, CEJM, …).
@@ -51,6 +44,41 @@ Règles :
 - confiance : de 0 à 1, ta certitude sur niveau + matière + type (ou sur hors_cours).
   Mets moins de 0.7 si tu hésites.
 """
+REGLE_TRANSCRIPTION = """Transcription : tout le texte, fidèlement, en Markdown. Formules en LaTeX ($...$), schémas
+décrits entre [crochets], passages illisibles notés [illisible]. N'invente rien."""
+CLASSEMENT_JSON = """{{"titre": "...", "niveau": "...", "matiere": "...", "type": "...", "chapitre": "...",
+  "date": "AAAA-MM-JJ ou null", "mots_cles": ["..."], "resume": "...", "hors_cours": false, "confiance": 0.0}}"""
+MARQUE = "===CLASSEMENT==="
+
+# La transcription est écrite en clair avant le JSON, pas dedans : pas d'échappement à produire
+# (le LaTeX plein de \\ cassait souvent le JSON, et tout était relu par un modèle plus fort).
+PROMPT = """Tu analyses un document scanné d'un élève (du collège au BTS SIO) : le fichier `{nom}`.
+Lis-le en entier avec l'outil Read (s'il a plus de 10 pages, lis-le par tranches de pages).
+
+Réponds UNIQUEMENT dans ce format, sans aucun texte autour :
+1. la transcription complète en Markdown ;
+2. une ligne contenant exactement """ + MARQUE + """ ;
+3. un objet JSON valide :
+""" + CLASSEMENT_JSON + """
+
+""" + REGLE_TRANSCRIPTION + """
+Règles du JSON :
+""" + REGLES
+
+PROMPT_TEXTE = """Voici, sur l'entrée, le texte extrait du fichier `{nom}` ({origine}, mise en page perdue),
+un document d'un élève (du collège au BTS SIO). Ce texte est gardé tel quel : ne le recopie pas.
+Classe-le. Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte autour :
+""" + CLASSEMENT_JSON + """
+
+Règles :
+""" + REGLES
+
+PROMPT_MORCEAU = """Tu transcris une partie d'un long document scanné d'un élève (du collège au BTS SIO) :
+le fichier `{nom}` contient les pages {debut} à {fin} (sur {total}) de « {document} ».
+Lis-le en entier avec l'outil Read.
+
+Réponds UNIQUEMENT avec la transcription en Markdown de ces pages, sans aucun texte autour.
+""" + REGLE_TRANSCRIPTION + "\n"
 
 LIMITE = re.compile(r"usage limit|limit reached|hit your .{0,40}limit|(session|weekly|5-hour) limit|"
                     r"out of (extra )?usage|rate.?limit|too many requests|\b429\b", re.I)
@@ -62,6 +90,11 @@ PANNE = re.compile(r"overloaded|\b(500|502|503|504|529)\b|internal server error|
                    r"econn|etimedout|enotfound|eai_again|fetch failed|network|socket hang up|service unavailable|"
                    r"temporarily", re.I)
 ATTENTES_PANNE = (20, 90)  # secondes entre deux essais quand Claude ne répond pas
+
+# Nombre de `claude -p` lancés en même temps (analyses, morceaux d'un long scan, révisions).
+# Le forfait compte les jetons, pas les appels : en parallèle on va plus vite pour le même quota.
+PARALLELE = min(max(int(os.environ.get("CLAUDE_PARALLELE") or 3), 1), 6)
+_places = threading.BoundedSemaphore(PARALLELE)
 
 
 class LimiteAtteinte(Exception):
@@ -125,8 +158,23 @@ def _date(valeur):
         return None
 
 
+def _sans_cloture(texte: str) -> str:
+    """Retire les balises ```markdown … ``` qu'un modèle met parfois autour d'une transcription."""
+    texte = texte.strip()
+    if texte.startswith("```") and texte.endswith("```") and "\n" in texte:
+        texte = texte[texte.index("\n") + 1:-3].strip()
+    return texte
+
+
 def parse_reponse(texte: str) -> Analyse:
-    """Extrait le JSON de la réponse (tolère des balises ```json autour)."""
+    """Lit « transcription, ===CLASSEMENT===, JSON » ; accepte aussi l'ancien format tout en JSON.
+
+    Tolère des balises ```json autour du JSON.
+    """
+    transcription = None
+    if MARQUE in texte:
+        avant, _, texte = texte.rpartition(MARQUE)
+        transcription = _sans_cloture(avant)
     debut, fin = texte.find("{"), texte.rfind("}")
     if debut < 0 or fin < debut:
         raise ErreurAgent(f"pas de JSON dans la réponse : {texte[:200]!r}")
@@ -143,7 +191,7 @@ def parse_reponse(texte: str) -> Analyse:
     if not hors_cours and (niveau is None or type_ is None or not d.get("matiere")):
         confiance = min(confiance, 0.5)  # classement incomplet : à vérifier
     return Analyse(
-        transcription=str(d.get("transcription") or ""),
+        transcription=str(d.get("transcription") or "") if transcription is None else transcription,
         titre=d.get("titre") or None,
         niveau=niveau,
         matiere=(d.get("matiere") or "").strip() or None,
@@ -185,7 +233,9 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
     for attente in (*ATTENTES_PANNE, None):
         debut = time.monotonic()
         try:
-            p = subprocess.run(cmd, cwd=cwd, input=entree, capture_output=True, text=True, timeout=timeout)
+            with _places:
+                debut = time.monotonic()
+                p = subprocess.run(cmd, cwd=cwd, input=entree, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired as e:
             journal(tache=tache, modele=modele, duree=timeout, resultat="erreur", detail="trop long")
             raise ErreurAgent(f"Claude Code trop long ({timeout // 60} min)") from e
@@ -322,35 +372,173 @@ def illisible(transcription: str) -> bool:
     return n >= 4 or (n >= 2 and n / max(1, len(transcription.split())) > 0.02)
 
 
+def markdown_office(texte: str) -> str:
+    """Texte d'un fichier bureautique en Markdown : un paragraphe par ligne, une diapo par titre."""
+    lignes = []
+    for ligne in texte.splitlines():
+        m = re.fullmatch(r"--- slide(\d+) ---", ligne.strip())
+        lignes.append(f"## Diapo {m.group(1)}" if m else ligne.strip())
+    return "\n\n".join(l for l in lignes if l)
+
+
+# --- PDF : numérique (texte lisible directement) ou scanné ------------------------------
+
+GRANDE_IMAGE = 800_000    # pixels : une page scannée ou photographiée (même avec une couche OCR)
+IMAGE = 100_000           # illustration, capture d'écran, schéma en image
+SEUIL_MORCEAUX = 12       # un scan plus long est lu par morceaux, en parallèle
+PAGES_MORCEAU = 8
+
+
+def _images(objet, profondeur: int = 0):
+    """(largeur, hauteur) des images d'une page PDF, y compris dans ses sous-dessins (Form)."""
+    try:
+        xobjets = objet["/Resources"]["/XObject"]
+    except (KeyError, TypeError):
+        return
+    for o in xobjets.values():
+        o = o.get_object()
+        if o.get("/Subtype") == "/Image":
+            yield int(o.get("/Width") or 0), int(o.get("/Height") or 0)
+        elif o.get("/Subtype") == "/Form" and profondeur < 2:
+            yield from _images(o, profondeur + 1)
+
+
+def texte_pdf(chemin: Path) -> str | None:
+    """Texte d'un PDF numérique (export Word, support de prof, Pronote), en Markdown.
+
+    None si c'est un scan ou une photo (le texte d'un OCR n'est pas assez fiable pour du manuscrit),
+    s'il est illustré (Claude doit voir les images) ou si le texte extrait est inutilisable.
+    """
+    from pypdf import PdfReader
+    try:
+        pages = PdfReader(chemin).pages
+        textes, images = [], 0
+        for page in pages:
+            tailles = [l * h for l, h in _images(page)]
+            if any(t >= GRANDE_IMAGE for t in tailles):
+                return None
+            images += sum(t >= IMAGE for t in tailles)
+            textes.append(page.extract_text() or "")
+    except Exception:
+        return None
+    if not pages or images > len(pages) // 2:
+        return None
+    pleins = [t for t in textes if len(t.strip()) >= 30]
+    texte = "".join(textes)
+    signes = [c for c in texte if not c.isspace()]
+    lettres = sum(c.isalpha() for c in signes)
+    if (len(pleins) < 0.9 * len(pages) or len(signes) < 150 * len(pages) or lettres < 0.5 * len(signes)
+            or texte.count("\ufffd") + texte.count("(cid:") > 0.01 * len(signes)):
+        return None
+    return "\n\n---\n\n".join("  \n".join(l.strip() for l in t.splitlines() if l.strip()) for t in textes)
+
+
+def pages_pdf(chemin: Path) -> int:
+    from pypdf import PdfReader
+    try:
+        return len(PdfReader(chemin).pages)
+    except Exception:
+        return 0
+
+
+def decouper_pdf(chemin: Path, taille: int = PAGES_MORCEAU) -> list[tuple[Path, int, int]]:
+    """Morceaux de `taille` pages (le dernier absorbe un reste de moins de 3 pages)."""
+    from pypdf import PdfReader, PdfWriter
+    lecteur = PdfReader(chemin)
+    total = len(lecteur.pages)
+    bornes = list(range(0, total, taille))
+    if len(bornes) > 1 and total - bornes[-1] < 3:
+        bornes.pop()
+    morceaux = []
+    for i, debut in enumerate(bornes):
+        fin = bornes[i + 1] if i + 1 < len(bornes) else total
+        ecrivain = PdfWriter()
+        for page in lecteur.pages[debut:fin]:
+            ecrivain.add_page(page)
+        dest = chemin.with_name(f"{chemin.stem}-p{debut + 1:03d}-{fin:03d}.pdf")
+        with open(dest, "wb") as f:
+            ecrivain.write(f)
+        morceaux.append((dest, debut + 1, fin))
+    return morceaux
+
+
+def _transcription(texte: str) -> str:
+    texte = _sans_cloture(texte)
+    if not texte:
+        raise ErreurAgent("transcription vide")
+    return texte
+
+
+def transcrire_par_morceaux(chemin: Path, memoire: Path | None = None, contexte: str = "") -> tuple[str, str]:
+    """Long scan : chaque morceau de pages est transcrit en même temps que les autres.
+
+    Plus rapide, et plus sûr : une seule session sur 40 pages dépassait la durée ou la longueur
+    de réponse permises. Chaque morceau fini est gardé dans `memoire` : après une limite, une panne
+    ou un redémarrage, seuls les morceaux manquants sont refaits. Renvoie (transcription, modèle).
+    """
+    morceaux = decouper_pdf(chemin)
+    total = morceaux[-1][2]
+    if memoire:
+        memoire.mkdir(parents=True, exist_ok=True)
+
+    def un(morceau):
+        fichier, debut, fin = morceau
+        garde = memoire / f"{debut:03d}-{fin:03d}.md" if memoire else None
+        if garde and garde.exists():
+            return garde.read_text(), ""
+        prompt = PROMPT_MORCEAU.format(nom=fichier.name, debut=debut, fin=fin, total=total, document=chemin.name)
+        texte, modele = demander("scan", prompt + contexte, chemin.parent, lire=_transcription, outils=["Read"])
+        if garde:
+            garde.write_text(texte)
+        return texte, modele
+
+    with ThreadPoolExecutor(len(morceaux)) as ex:
+        resultats = list(ex.map(un, morceaux))
+    modeles_lus = [m for _, m in resultats if m]
+    return "\n\n".join(t for t, _ in resultats), max(modeles_lus, key=modeles.ECHELLE.index, default="")
+
+
+def classer_texte(texte: str, nom: str, origine: str, contexte: str = "") -> tuple[Analyse, str]:
+    """Classement d'un texte déjà lisible : modèle léger, une seule passe, sans relire de fichier."""
+    prompt = PROMPT_TEXTE.format(nom=nom, origine=origine, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
+    with tempfile.TemporaryDirectory() as vide:
+        return demander("texte", prompt + contexte, Path(vide), lire=parse_reponse, entree=texte[:60_000],
+                        timeout=600)
+
+
 def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
-             matieres: list[str] | None = None) -> Analyse:
-    nom, tache = chemin.name, "scan"
-    if chemin.suffix.lower() in (".heic", ".heif"):
+             matieres: list[str] | None = None, memoire: Path | None = None) -> Analyse:
+    """Transcription + classement d'un fichier, par le chemin le plus rapide qui ne perd rien :
+
+    - Word, PowerPoint, PDF numérique : le texte extrait est la transcription (exacte), un modèle
+      léger ne fait que le classer ;
+    - long scan : morceaux de pages transcrits en parallèle, puis classement du texte ;
+    - autre scan ou photo : une passe qui lit le fichier et le classe.
+    """
+    nom, texte, origine = chemin.name, None, ""
+    suffixe = chemin.suffix.lower()
+    if suffixe in (".heic", ".heif"):
         try:
             nom = heic_en_jpeg(chemin).name
         except Exception as e:
             raise ErreurAgent(f"photo HEIC illisible : {e}") from e
-    elif chemin.suffix.lower() in VIEUX_OFFICE:
-        texte = texte_vieux_office(chemin)
-        if not texte.strip():
-            raise ErreurAgent(f"aucun texte dans {nom}")
-        chemin.with_name(chemin.name + ".txt").write_text(texte)
-        nom, tache = chemin.name + ".txt", "texte"
-    elif chemin.suffix.lower() in OFFICE:
+    elif suffixe in VIEUX_OFFICE:
+        texte, origine = markdown_office(texte_vieux_office(chemin)), "fichier bureautique"
+    elif suffixe in OFFICE:
         try:
-            texte = texte_office(chemin)
+            texte, origine = markdown_office(texte_office(chemin)), "fichier bureautique"
         except (zipfile.BadZipFile, ElementTree.ParseError, KeyError) as e:
             raise ErreurAgent(f"fichier {chemin.suffix} illisible : {e}") from e
-        if not texte.strip():
-            raise ErreurAgent(f"aucun texte dans {nom}")
-        chemin.with_name(chemin.name + ".txt").write_text(texte)
-        nom, tache = chemin.name + ".txt", "texte"
-    prompt = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
-    if tache == "texte":
-        prompt += f"\nC'est le texte extrait du fichier bureautique `{chemin.name}` (mise en page perdue).\n"
+    elif suffixe == ".pdf":
+        texte, origine = texte_pdf(chemin), "PDF numérique"
+    elif suffixe in (".txt", ".md"):
+        texte, origine = chemin.read_text(errors="replace"), "fichier texte"
+    if texte is not None and not texte.strip():
+        raise ErreurAgent(f"aucun texte dans {nom}")
+    contexte = ""
     if dossiers and "Pronote" in dossiers:
-        prompt += ("\nCe document a été déposé sur Pronote par un professeur (cours, sujet, corrigé…) : "
-                   "ce n'est pas un scan, transcris son contenu de la même façon.\n")
+        contexte += ("\nCe document a été déposé sur Pronote par un professeur (cours, sujet, corrigé…) : ce n'est "
+                     + ("pas un scan.\n" if texte is not None else "pas un scan, transcris son contenu de la même façon.\n"))
     indices = ""
     if dossiers:
         indices += (f"Indice : l'élève a rangé ce fichier dans le dossier « {'/'.join(dossiers)} ». "
@@ -358,10 +546,22 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
     if indice:
         indices += f"D'après l'organisation de ses dossiers (imparfaite, à confirmer par le contenu) : {indice}.\n"
     if indices:
-        prompt += "\n" + indices
-    a, modele = demander(tache, prompt, chemin.parent, lire=parse_reponse, outils=["Read"])
-    a.modele = modele
-    if a.confiance >= SEUIL_CONFIANCE or (fort := modeles.plus_fort(modele)) is None:
+        contexte += "\n" + indices
+
+    prompt, tache = None, "texte"
+    if texte is not None:
+        a, classeur = classer_texte(texte, nom, origine, contexte)
+        a.transcription, lecteur = texte, classeur
+    elif suffixe == ".pdf" and pages_pdf(chemin) > SEUIL_MORCEAUX:
+        transcription, lecteur = transcrire_par_morceaux(chemin, memoire, contexte)
+        a, classeur = classer_texte(transcription, nom, "transcription d'un scan", contexte)
+        a.transcription, lecteur = transcription, lecteur or classeur
+    else:
+        prompt, tache = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES)) + contexte, "scan"
+        a, classeur = demander(tache, prompt, chemin.parent, lire=parse_reponse, outils=["Read"])
+        lecteur = classeur
+    a.modele = lecteur
+    if a.confiance >= SEUIL_CONFIANCE or (fort := modeles.plus_fort(classeur)) is None:
         return a
     # L'agent doute : un modèle plus fort relit le scan s'il était mal lisible,
     # sinon donne un second avis sur le classement à partir du texte (bien moins coûteux).
@@ -371,7 +571,7 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
         except ErreurAgent:
             return a
         if b.confiance >= a.confiance:
-            b.modele, b.avis = m, f"Relu par {modeles.NOMS[m]} (scan peu lisible pour {modeles.NOMS[modele]})."
+            b.modele, b.avis = m, f"Relu par {modeles.NOMS[m]} (scan peu lisible pour {modeles.NOMS[classeur]})."
             return b
         return a
     try:
@@ -379,7 +579,7 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
     except ErreurAgent:
         return a
     if c.confiance > a.confiance:
-        a.avis = (f"{modeles.NOMS[modele]} hésitait ({a.confiance:.0%}) ; second avis de {modeles.NOMS[c.modele]} : "
+        a.avis = (f"{modeles.NOMS[classeur]} hésitait ({a.confiance:.0%}) ; second avis de {modeles.NOMS[c.modele]} : "
                   f"{c.matiere or '?'} / {c.niveau or '?'} / {c.type or '?'} ({c.confiance:.0%}).")
         a.niveau, a.matiere, a.type = c.niveau, c.matiere, c.type
         a.chapitre, a.hors_cours, a.confiance = c.chapitre or a.chapitre, c.hors_cours, c.confiance

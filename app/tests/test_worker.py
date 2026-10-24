@@ -498,3 +498,25 @@ def test_tour_sans_claude_continue_le_reste(worker, monkeypatch):
     monkeypatch.setattr(worker, "lire_inbox", lambda kd: fait.append("inbox") or [])
     worker.tour(None, float("-inf"))
     assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "nettoyer_inbox"]
+
+
+def test_analyses_en_parallele_et_arret_a_la_limite(worker, monkeypatch):
+    import threading
+    from claunote.agent import LimiteAtteinte
+    monkeypatch.setattr(worker, "activite", lambda texte: None)
+    monkeypatch.setattr(worker.db, "matieres", lambda: [])
+    barriere, faits = threading.Barrier(worker.PARALLELE, timeout=5), []
+
+    def traiter(kd, item, matieres, dossiers):
+        if item["id"] < worker.PARALLELE:
+            barriere.wait()  # PARALLELE analyses tournent bien en même temps
+        if item["id"] == 1:
+            raise LimiteAtteinte("limit reached")
+        faits.append(item["id"])
+
+    monkeypatch.setattr(worker, "traiter", traiter)
+    items = [{"id": i, "name": f"{i}.pdf", "dossiers": []} for i in range(20)]
+    with pytest.raises(LimiteAtteinte):
+        worker.analyser_inbox(None, items)
+    # la limite arrête la distribution : les documents suivants attendent le tour d'après
+    assert 1 not in faits and len(faits) < len(items[:worker.LOT]) - 1
