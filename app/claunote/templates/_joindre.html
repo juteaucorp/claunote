@@ -1,0 +1,48 @@
+{# Champ « Joindre des fichiers » des formulaires Réviser (révision seule et campagne) #}
+<div class="joindre">
+  <label class="bouton joindre-bouton">{{ icone('trombone', 18) }}<span>Joindre un fichier</span>
+    <input type="file" name="pieces" multiple accept="image/*,.heic,.heif,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.rtf,.txt,.md,.csv"></label>
+  <ul class="joints" aria-live="polite"></ul>
+  <p class="doux">{{ exemple }} Photo, PDF, Word ou Excel : l'IA s'en sert comme contexte, <strong>ce n'est pas ajouté à tes cours</strong>.</p>
+</div>
+<style>
+  .joindre { margin-top: 10px; }
+  .joindre-bouton { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .joindre-bouton input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+  .joints { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .joints:empty { display: none; }
+  .joints li { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 6px 4px 12px; border-radius: 999px; background: var(--fond-doux); font-size: .9rem; }
+  .joints li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .joints button { border: 0; background: none; padding: 2px 6px; line-height: 1; font-size: 1.1rem; color: var(--doux, inherit); cursor: pointer; }
+  .joindre p { margin: 8px 0 0; }
+</style>
+<script>
+  (() => {
+    // Plusieurs ajouts successifs s'accumulent (iPhone : une photo à la fois) ; ✕ retire un fichier
+    const zone = document.currentScript.previousElementSibling.previousElementSibling;
+    const champ = zone.querySelector("input[type=file]"), liste = zone.querySelector(".joints");
+    const MAX = {{ max_pieces }}, MAX_MO = {{ max_mo }};
+    let fichiers = [];
+    const afficher = () => {
+      const dt = new DataTransfer();
+      fichiers.forEach((f) => dt.items.add(f));
+      champ.files = dt.files;
+      liste.replaceChildren(...fichiers.map((f, i) => {
+        const li = document.createElement("li"), nom = document.createElement("span"), x = document.createElement("button");
+        nom.textContent = `${f.name} · ${f.size < 1048576 ? Math.max(1, Math.round(f.size / 1024)) + " Ko" : (f.size / 1048576).toFixed(1) + " Mo"}`;
+        x.type = "button"; x.textContent = "×"; x.setAttribute("aria-label", `Retirer ${f.name}`);
+        x.addEventListener("click", () => { fichiers.splice(i, 1); afficher(); });
+        li.append(nom, x);
+        return li;
+      }));
+    };
+    champ.addEventListener("change", () => {
+      for (const f of champ.files) {
+        if (f.size > MAX_MO * 1048576) { alert(`« ${f.name} » dépasse ${MAX_MO} Mo.`); continue; }
+        if (fichiers.length >= MAX) { alert(`${MAX} fichiers au maximum.`); break; }
+        if (!fichiers.some((g) => g.name === f.name && g.size === f.size)) fichiers.push(f);
+      }
+      afficher();
+    });
+  })();
+</script>

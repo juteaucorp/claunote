@@ -121,23 +121,28 @@
 {% elif rev.genre == 'examen' %}<p class="doux">Pas de corrigé séparé dans ce sujet.</p>{% endif %}
 {% endif %}
 
-{% if rev.consigne %}
-<details class="carte"><summary>Contexte donné à l'IA</summary><p>{{ rev.consigne|e|replace('\n', '<br>'|safe) }}</p></details>
+{% if rev.consigne or pieces %}
+<details class="carte"{{ ' open' if pieces and not rev.consigne }}><summary>Contexte donné à l'IA{% if pieces %} · {{ pieces|length }} fichier{{ 's' if pieces|length > 1 }}{% endif %}</summary>
+  {% if rev.consigne %}<p>{{ rev.consigne|e|replace('\n', '<br>'|safe) }}</p>{% endif %}
+  {% include "_pieces.html" %}
+</details>
 {% endif %}
 
 {% if sources or web %}
 <h2 id="sources">Sources</h2>
+{% macro ligne_source(repere, d) %}<li><span class="etiquette">{{ repere }}</span><div class="corps"><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a> <span class="doux">{{ d.type }}</span></div></li>{% endmacro %}
 <ul class="carte lignes">
-  {% for repere, doc_id in reperes.items() %}
-    {% for d in sources if d.id == doc_id %}
-    <li><span class="etiquette">{{ repere }}</span><div class="corps"><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a> <span class="doux">{{ d.type }}</span></div></li>
-    {% endfor %}
-  {% endfor %}
+  {% for repere, d in cours[:12] %}{{ ligne_source(repere, d) }}{% endfor %}
   {% for w in web.values() %}
   <li><span class="etiquette etiquette-web">{{ w.repere }}</span><div class="corps"><a href="{{ w.url }}" target="_blank" rel="noopener noreferrer">{{ w.titre }} ↗</a>
     <div class="doux">{{ w.url.split('/')[2] }} · web</div></div></li>
   {% endfor %}
 </ul>
+{% if cours|length > 12 %}
+<details class="carte autres-sources"><summary>Les {{ cours|length - 12 }} autres cours utilisés</summary>
+  <ul class="lignes">{% for repere, d in cours[12:] %}{{ ligne_source(repere, d) }}{% endfor %}</ul>
+</details>
+{% endif %}
 {% if web %}<p class="doux">[D…] = tes cours, la base de ce support. [W…] = pages web consultées par l'agent pour compléter ou vérifier.</p>{% endif %}
 {% endif %}
 <style>

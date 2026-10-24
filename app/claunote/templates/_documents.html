@@ -1,13 +1,18 @@
 {# Cours d'une matière à cocher ; rien de coché = l'agent choisit les plus proches du sujet #}
 {% if docs %}
 <div class="liste-cours">
-  <div class="doux">{{ docs|length }} cours · rien de coché = choix automatique</div>
+  <div class="doux tete-liste">{{ docs|length }} cours · rien de coché = tous, ou ceux du sujet
+    <button type="button" class="lien" onclick="const l = this.closest('.liste-cours').querySelectorAll('input[type=checkbox]'); const tout = [...l].some((c) => !c.checked); l.forEach((c) => { c.checked = tout; }); this.textContent = tout ? 'Tout décocher' : 'Tout cocher'">Tout cocher</button></div>
   {% for d in docs %}
   <label><input type="checkbox" name="{{ nom }}" value="{{ d.id }}">
     <span><strong>{{ d.titre or d.nom }}</strong>
       <span class="doux">{{ d.type or '' }}{% if d.chapitre %} · {{ d.chapitre }}{% endif %}{% if d.date_doc %} · {{ d.date_doc.strftime('%d/%m/%Y') }}{% endif %}</span></span></label>
   {% endfor %}
 </div>
+<style>
+  .tete-liste { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tete-liste .lien { border: 0; background: none; padding: 4px 0; color: var(--accent-fonce); font-weight: 600; cursor: pointer; }
+</style>
 {% else %}
 <p class="doux">Choisis d'abord une matière.</p>
 {% endif %}

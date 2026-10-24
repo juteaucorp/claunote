@@ -96,7 +96,10 @@ def test_flashcards_enregistrees(worker, monkeypatch):
     import json
     vu = {}
     cartes = [{"recto": "VLAN ?", "verso": "Réseau virtuel", "source": "D1"}]
-    monkeypatch.setattr(worker.revision, "generer", lambda *a: (json.dumps(cartes), {"D1": 3}, []))
+    monkeypatch.setattr(worker.revision, "generer", lambda *a, **k: vu.update(pieces=k["pieces"]) or
+                        (json.dumps(cartes), {"D1": 3}, []))
+    monkeypatch.setattr(db, "pieces_jointes", lambda r=None, c=None, contenu=False: [{"nom": "edt.png", "contenu": b"x"}])
+    monkeypatch.setattr(db, "Condenses", dict)
     monkeypatch.setattr(db, "documents", lambda ids: [{"id": 3, "titre": "TP VLAN", "nom": "x.pdf"}])
     monkeypatch.setattr(db, "creer_cartes", lambda rev_id, k: vu.update(cartes=(rev_id, k)))
     monkeypatch.setattr(db, "maj_revision", lambda rev_id, statut, **k: vu.update(statut=statut))
@@ -118,6 +121,7 @@ def test_flashcards_enregistrees(worker, monkeypatch):
 
     worker.traiter_revision(FauxKD(), {"id": 4, "genre": "cartes", "sujet": "VLAN", "doc_ids": [3], "date_eval": None})
     assert vu["cartes"] == (4, cartes) and vu["statut"] == "pret" and vu["kdrive"] == 5 and vu["notif"] == 4
+    assert vu["pieces"] == [{"nom": "edt.png", "contenu": b"x"}]
     # Le PDF part dans Etudes/fiches/<matière>/
     assert vu["dossier"] == ["fiches", "Réseaux"] and vu["fichier"][0] == "2026-10-23_cartes_vlan.pdf"
     assert vu["fichier"][1] == b"%PDF-"
@@ -140,13 +144,16 @@ def test_programme_de_campagne(worker, monkeypatch):
                                                                                                     programme=programme))
     monkeypatch.setattr(notifications, "campagne_prete", lambda i: vu.update(notif=i))
 
-    def faux(campagne, matieres, evenements):
-        vu["matieres"] = matieres
+    monkeypatch.setattr(db, "pieces_jointes", lambda revision_id=None, campagne_id=None, contenu=False:
+                        [{"nom": "planning.pdf", "campagne_id": campagne_id}])
+
+    def faux(campagne, matieres, evenements, pieces):
+        vu["matieres"], vu["pieces"] = matieres, pieces
         return {"conseil": "", "jours": []}
     monkeypatch.setattr(worker.revision, "generer_programme", faux)
     worker.traiter_campagne({"id": 8, "titre": "BTS blanc", "consigne": "", "debut": dt.date(2026, 11, 2),
                              "fin": dt.date(2026, 11, 6)})
-    assert vu["statut"] == "pret" and vu["notif"] == 8
+    assert vu["statut"] == "pret" and vu["notif"] == 8 and vu["pieces"] == [{"nom": "planning.pdf", "campagne_id": 8}]
     assert vu["matieres"] == [
         {"niveau": "BTS2", "matiere": "Maths", "sujet": "suites", "supports": ["examen", "fiche"],
          "cours": ["Cours 3", "Cours 4"]},

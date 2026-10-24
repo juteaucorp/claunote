@@ -1,0 +1,16 @@
+{# Fichiers joints à une révision ou une campagne : du contexte pour l'IA, pas des cours #}
+{% if pieces %}
+<ul class="pieces">
+  {% for p in pieces %}
+  <li><a href="/piece/{{ p.id }}" target="_blank">{{ icone('trombone', 16) }}<span>{{ p.nom }}</span></a>
+    <span class="doux">{{ [(p.taille / 1024)|round|int, 1]|max if p.taille < 1048576 else (p.taille / 1048576)|round(1) }} {{ 'Ko' if p.taille < 1048576 else 'Mo' }}{% if p.campagne_id and not campagne %} · de la campagne{% endif %}</span></li>
+  {% endfor %}
+</ul>
+<style>
+  .pieces { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+  .pieces li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .pieces a { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+  .pieces a span { overflow-wrap: anywhere; }
+  .pieces svg { flex: none; }
+</style>
+{% endif %}

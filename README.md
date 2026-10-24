@@ -36,6 +36,7 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Ergonomie mobile : accueil « Aujourd'hui », onglets en bas, photo depuis le téléphone
 - [x] Appli iPhone (HTTPS local, style Liquid Glass) et notifications push (voir infra/SETUP.md §13)
 - [x] Réviser : historique, épreuves blanches, campagnes multi-matières avec programme jour par jour, PDF à partager
+- [x] Réviser : fichiers joints au contexte (emploi du temps, planning d'épreuves…), plus de limite de cours (condensés par groupes)
 
 ## Installation et utilisation
 
