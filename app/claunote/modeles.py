@@ -24,6 +24,7 @@ TACHES = {
     "texte": "haiku",        # texte déjà extrait d'un Word/PowerPoint : mise en forme et classement
     "classement": "haiku",   # reclasser une transcription (Organiser) : monte si l'agent doute
     "dossiers": "haiku",     # comprendre les noms de dossiers d'un import
+    "condense": "haiku",     # condenser un groupe de cours quand il y en a trop pour une seule lecture
     "fiche": "sonnet",
     "quiz": "sonnet",
     "cartes": "sonnet",
@@ -35,6 +36,7 @@ LIBELLES = {
     "scan": "Lecture d'un scan", "texte": "Lecture d'un Word/PowerPoint", "classement": "Reclassement",
     "dossiers": "Noms de dossiers d'un import", "fiche": "Fiche de révision", "quiz": "Quiz",
     "cartes": "Flashcards", "plan": "Plan de révision", "programme": "Programme de campagne",
+    "condense": "Cours condensés",
     "examen": "Épreuve blanche",
 }
 NOMS = {"haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus"}

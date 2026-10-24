@@ -193,6 +193,26 @@ CREATE TABLE IF NOT EXISTS notifications (
     cree_le      TIMESTAMPTZ NOT NULL DEFAULT now(),
     envoye_le    TIMESTAMPTZ
 );
+-- Fichiers joints à une révision ou une campagne (emploi du temps, dates d'épreuves…) :
+-- du contexte pour l'IA, jamais ajouté à la bibliothèque
+CREATE TABLE IF NOT EXISTS pieces_jointes (
+    id           SERIAL PRIMARY KEY,
+    revision_id  INT REFERENCES revisions(id) ON DELETE CASCADE,
+    campagne_id  INT REFERENCES campagnes(id) ON DELETE CASCADE,
+    nom          TEXT NOT NULL,
+    contenu      BYTEA NOT NULL,
+    taille       INT NOT NULL,
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pieces_jointes_revision ON pieces_jointes (revision_id);
+CREATE INDEX IF NOT EXISTS pieces_jointes_campagne ON pieces_jointes (campagne_id);
+-- Groupes de cours déjà condensés (beaucoup de cours) : rejoués sans rappeler l'IA
+CREATE TABLE IF NOT EXISTS condenses (
+    cle          TEXT PRIMARY KEY,                     -- sha256 du sujet et du texte condensé
+    texte        TEXT NOT NULL,
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+DELETE FROM condenses WHERE cree_le < now() - interval '90 days';
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -447,8 +467,11 @@ def documents(ids: list[int]):
     return [par_id[i] for i in ids if i in par_id]
 
 
-def choisir_documents(niveau: str, matiere: str, q: str = "", limite: int = 15) -> list[int]:
-    """Cours classés d'une matière ; si `q` est donné, les plus pertinents d'abord."""
+def choisir_documents(niveau: str, matiere: str, q: str = "", limite: int | None = None) -> list[int]:
+    """Cours classés d'une matière, tous par défaut ; si `q` est donné, ceux qui en parlent, les plus pertinents d'abord.
+
+    Pas de limite : au-delà de ce que l'IA lit d'un coup, les cours sont condensés par groupes (revision.generer).
+    """
     with connect() as c:
         if q.strip():
             rows = c.execute(
@@ -552,6 +575,41 @@ def marquer_fait(rev_id: int, fait: bool = True, score: dict | None = None):
 def supprimer_revision(rev_id: int):
     with connect() as c:
         c.execute("DELETE FROM revisions WHERE id = %s", (rev_id,))
+
+
+def ajouter_pieces(fichiers: list[tuple[str, bytes]], revision_id: int | None = None,
+                   campagne_id: int | None = None):
+    with connect() as c:
+        for nom, contenu in fichiers:
+            c.execute("INSERT INTO pieces_jointes (revision_id, campagne_id, nom, contenu, taille) "
+                      "VALUES (%s, %s, %s, %s, %s)", (revision_id, campagne_id, nom, contenu, len(contenu)))
+
+
+def pieces_jointes(revision_id: int | None = None, campagne_id: int | None = None, contenu: bool = False):
+    """Pièces d'une révision (et de sa campagne) ou d'une campagne ; `contenu` ajoute les octets."""
+    colonnes = "id, nom, taille, revision_id, campagne_id" + (", contenu" if contenu else "")
+    with connect() as c:
+        return c.execute(f"SELECT {colonnes} FROM pieces_jointes WHERE revision_id = %s OR campagne_id = %s "
+                         "ORDER BY id", (revision_id, campagne_id)).fetchall()
+
+
+def piece_jointe(piece_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM pieces_jointes WHERE id = %s", (piece_id,)).fetchone()
+
+
+class Condenses:
+    """Mémoire des groupes de cours condensés, partagée par les supports d'une même campagne."""
+
+    def get(self, cle: str) -> str | None:
+        with connect() as c:
+            ligne = c.execute("SELECT texte FROM condenses WHERE cle = %s", (cle,)).fetchone()
+        return ligne["texte"] if ligne else None
+
+    def set(self, cle: str, texte: str):
+        with connect() as c:
+            c.execute("INSERT INTO condenses (cle, texte) VALUES (%s, %s) ON CONFLICT (cle) DO UPDATE "
+                      "SET texte = excluded.texte, cree_le = now()", (cle, texte))
 
 
 def documents_matiere(niveau: str, matiere: str):

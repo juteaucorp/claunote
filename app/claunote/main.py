@@ -679,6 +679,46 @@ HISTORIQUE_PAR_PAGE = 20
 MAX_CAMPAGNE = 24  # révisions générées par campagne : le forfait Pro les passe l'une après l'autre
 
 
+MAX_PIECES = 8                      # fichiers joints à une révision ou une campagne
+MAX_PIECE = 20 * 1024 * 1024        # par fichier
+MAX_PIECES_TOTAL = 40 * 1024 * 1024
+templates.env.globals.update(max_pieces=MAX_PIECES, max_mo=MAX_PIECE // 1024 // 1024)
+
+
+async def _pieces(f) -> list[tuple[str, bytes]]:
+    """Fichiers joints au formulaire (emploi du temps, dates d'épreuves…), vérifiés : du contexte, pas des cours."""
+    fichiers = [p for p in f.getlist("pieces") if getattr(p, "filename", "")]
+    if len(fichiers) > MAX_PIECES:
+        raise HTTPException(400, f"{MAX_PIECES} fichiers joints au maximum")
+    pieces, total = [], 0
+    for p in fichiers:
+        nom = PurePosixPath(p.filename.replace("\\", "/")).name[:120]
+        if PurePosixPath(nom).suffix.lower() not in revision.EXTENSIONS_PJ:
+            raise HTTPException(400, f"« {nom} » : joins une image, un PDF, un Word, un Excel ou un texte")
+        contenu = await p.read()
+        if len(contenu) > MAX_PIECE:
+            raise HTTPException(400, f"« {nom} » dépasse {MAX_PIECE // 1024 // 1024} Mo")
+        total += len(contenu)
+        if total > MAX_PIECES_TOTAL:
+            raise HTTPException(400, f"{MAX_PIECES_TOTAL // 1024 // 1024} Mo de fichiers joints au maximum")
+        if contenu:
+            pieces.append((nom, contenu))
+    return pieces
+
+
+@app.get("/piece/{piece_id}")
+def voir_piece(piece_id: int):
+    piece = db.piece_jointe(piece_id)
+    if piece is None:
+        raise HTTPException(404)
+    nom = piece["nom"]
+    media = mimetypes.guess_type(nom)[0] or "application/octet-stream"
+    lisible = media == "application/pdf" or (media.startswith("image/") and not nom.lower().endswith((".heic", ".heif")))
+    return Response(bytes(piece["contenu"]), media_type=media, headers={
+        "Content-Disposition": f"{'inline' if lisible else 'attachment'}; filename*=UTF-8''{quote(nom)}",
+        "Cache-Control": "private, max-age=3600"})
+
+
 @app.get("/reviser", response_class=HTMLResponse)
 def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str = "", genre: str = "",
             filtre: str = "", m: str = "", q: str = "", page: int = 1):
@@ -753,7 +793,10 @@ async def demander_revision(request: Request):
         sujet = sujet or f"{matiere} ({niveau})"
     if not ids:
         raise HTTPException(400, "aucun document classé pour ce choix")
+    pieces = await _pieces(f)
     rev_id = db.creer_revision(genre, sujet, ids, eval_le, consigne=consigne)
+    if pieces:
+        db.ajouter_pieces(pieces, revision_id=rev_id)
     db.demander_scan()
     return RedirectResponse(f"/revision/{rev_id}", status_code=303)
 
@@ -781,9 +824,13 @@ def voir_revision(request: Request, rev_id: int):
             corrige = avec_sources(rendu_markdown(corr), reperes, web) if corr else None
         else:
             contenu = avec_sources(rendu_markdown(rev["contenu"]), reperes, web)
+    sources = db.documents(list(reperes.values()))
+    par_id = {d["id"]: d for d in sources}
     return templates.TemplateResponse(request, "revision.html", {
         "rev": rev, "genres": revision.GENRES, "contenu": contenu, "corrige": corrige, "questions": questions,
-        "cartes": cartes, "reperes": reperes, "sources": db.documents(list(reperes.values())),
+        "cartes": cartes, "reperes": reperes, "sources": sources,
+        "cours": [(r, par_id[i]) for r, i in reperes.items() if i in par_id],
+        "pieces": db.pieces_jointes(rev_id, rev.get("campagne_id")),
         "web": {w["repere"]: w for w in web}})
 
 
@@ -885,7 +932,10 @@ async def creer_campagne(request: Request):
         if not ids:
             raise HTTPException(400, f"aucun cours classé en {matiere} ({niveau})")
         demandes.append((matiere, sujet, ids))
+    pieces = await _pieces(f)
     campagne_id = db.creer_campagne(titre, consigne, debut, fin)
+    if pieces:
+        db.ajouter_pieces(pieces, campagne_id=campagne_id)
     for matiere, sujet, ids in demandes:
         for g in genres:
             db.creer_revision(g, f"{matiere} : {sujet}" if sujet else matiere, ids, fin if g == "examen" else None,
@@ -911,7 +961,7 @@ def voir_campagne(request: Request, campagne_id: int):
         "genres": revision.GENRES, "courts": revision.COURTS, "aujourdhui": aujourdhui,
         "faites": sum(t["fait"] for t in taches), "nb_taches": len(taches),
         "en_attente": campagne["statut"] == "en_attente" or any(r["statut"] == "en_attente" for r in revs),
-        "erreurs": [r for r in revs if r["statut"] == "erreur"]})
+        "erreurs": [r for r in revs if r["statut"] == "erreur"], "pieces": db.pieces_jointes(campagne_id=campagne_id)})
 
 
 @app.post("/campagne/{campagne_id}/tache", response_class=HTMLResponse)

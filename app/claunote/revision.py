@@ -5,13 +5,25 @@ et plan de révision jusqu'à une évaluation. Une campagne regroupe plusieurs r
 (ex. une semaine d'épreuves blanches) et un programme jour par jour. Les flashcards se révisent ensuite en répétition espacée (SM-2) ou dans Anki.
 Les documents sont numérotés [D1], [D2]… dans le prompt ; Claude doit citer ces
 repères pour que le site puisse renvoyer vers le cours d'origine.
+
+Pas de limite de cours : au-delà de BUDGET caractères, les cours sont condensés par groupes
+(une passe IA par groupe, mémorisée), puis le support est fait à partir de tous les résumés :
+
+    cours D1…D80 ──► groupe 1 ─► condensé 1 ─┐
+                 ──► groupe 2 ─► condensé 2 ─┼─► fiche / quiz / épreuve…
+                 ──► groupe 3 ─► condensé 3 ─┘
+
+Des pièces jointes (emploi du temps, dates d'épreuves…) peuvent accompagner la consigne :
+c'est du contexte, pas des cours.
 """
 import datetime as dt
+import hashlib
 import json
 import re
 import tempfile
 from pathlib import Path
 
+from claunote import agent
 from claunote.agent import ErreurAgent, demander
 from claunote.rangement import slug
 
@@ -19,7 +31,9 @@ GENRES = {"fiche": "Fiche de révision", "quiz": "Quiz", "cartes": "Flashcards",
           "plan": "Plan de révision"}
 COURTS = {"fiche": "Fiche", "quiz": "Quiz", "cartes": "Flashcards", "examen": "Épreuve blanche", "plan": "Plan"}
 CORRIGE = "## Corrigé"  # sépare le sujet d'une épreuve blanche de son corrigé
-BUDGET = 120_000  # caractères de cours envoyés au maximum
+BUDGET = 120_000  # caractères de cours lus d'un coup ; au-delà, les cours sont condensés par groupes
+GROUPE = 90_000   # caractères de cours par passe de condensation
+NIVEAUX_CONDENSATION = 3  # condensés de condensés au plus, puis on coupe
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 SOURCES_WEB = "## Sources web"  # fin d'un support Markdown : les pages web consultées
@@ -86,19 +100,154 @@ globale. Termine par une liste des 5 notions les plus probables à l'évaluation
 }
 
 
-def contexte(docs: list[dict]) -> tuple[str, dict[str, int]]:
-    """Texte des cours numérotés [D1]… et correspondance repère → id du document."""
-    parties, reperes, reste = [], {}, BUDGET
+def blocs_cours(docs: list[dict]) -> tuple[list[str], dict[str, int]]:
+    """Un bloc par cours, numéroté [D1]…, et correspondance repère → id du document."""
+    blocs, reperes = [], {}
     for i, d in enumerate(docs, start=1):
-        if reste <= 0:
-            break
         repere = f"D{i}"
         reperes[repere] = d["id"]
         entete = f"[{repere}] {d.get('titre') or d['nom']} ({d.get('niveau')}, {d.get('matiere')}, {d.get('type')})"
-        corps = (d.get("transcription") or "")[:reste]
-        reste -= len(corps)
-        parties.append(f"{entete}\n{corps}")
-    return "\n\n---\n\n".join(parties), reperes
+        blocs.append(f"{entete}\n{d.get('transcription') or ''}")
+    return blocs, reperes
+
+
+SEPARATEUR = "\n\n---\n\n"
+
+
+def grouper(blocs: list[str], taille: int | None = None) -> list[str]:
+    """Regroupe les blocs en paquets d'au plus `taille` caractères ; un bloc trop long est coupé en suites."""
+    taille, morceaux = taille or GROUPE, []
+    for bloc in blocs:
+        entete = bloc.split("\n", 1)[0]
+        if len(bloc) <= taille:
+            morceaux.append(bloc)
+            continue
+        corps, pas = bloc[len(entete) + 1:], taille - len(entete) - 20
+        for n, debut in enumerate(range(0, len(corps), pas), start=1):
+            morceaux.append(f"{entete} (partie {n})\n{corps[debut:debut + pas]}")
+    groupes, courant = [], []
+    for m in morceaux:
+        if courant and len(SEPARATEUR.join(courant + [m])) > taille:
+            groupes.append(SEPARATEUR.join(courant))
+            courant = []
+        courant.append(m)
+    if courant:
+        groupes.append(SEPARATEUR.join(courant))
+    return groupes
+
+
+PROMPT_CONDENSE = """Tu condenses une partie des cours d'un élève (du collège au BTS SIO), fournis ci-dessous,
+pour qu'un autre agent en fasse ensuite un support de révision sur « {sujet} ». C'est la partie
+{n} sur {total} : d'autres parties sont condensées à côté.
+Règles :
+- Pour chaque document, une section qui commence par sa ligne d'en-tête exacte, ex. « ### [D3] Titre (…) ».
+  Un document sans rien d'utile : seulement son en-tête et « (rien d'utile) ».
+- Garde tout ce qui sert à réviser : définitions, formules, commandes, règles, méthodes, exemples
+  et exercices types (énoncé court + résultat), pièges signalés. Priorité à ce qui touche au sujet.
+- Supprime les répétitions, les bavardages, la mise en page et ce qui est hors sujet.
+- Vise environ un quart de la longueur d'origine. N'invente rien, n'ajoute rien.
+{consigne}Réponds uniquement avec le texte condensé, en Markdown simple, sans HTML ni LaTeX.
+"""
+
+
+class Memoire:
+    """Condensés déjà faits (en mémoire) ; le worker passe db.Condenses() pour les garder entre deux essais."""
+
+    def __init__(self):
+        self._d = {}
+
+    def get(self, cle: str) -> str | None:
+        return self._d.get(cle)
+
+    def set(self, cle: str, texte: str):
+        self._d[cle] = texte
+
+
+def condenser(groupe: str, sujet: str, n: int, total: int, consigne: str = "", memoire=None) -> str:
+    memoire = memoire if memoire is not None else Memoire()
+    cle = hashlib.sha256(f"{sujet}\n{consigne}\n{groupe}".encode()).hexdigest()
+    deja = memoire.get(cle)
+    if deja:
+        return deja
+
+    def lire(texte: str) -> str:
+        texte = texte.strip()
+        if "[D" not in texte:  # sans repère, le support ne pourrait plus citer ses sources
+            raise ErreurAgent(f"condensé inutilisable : {texte[:200]!r}")
+        return texte
+
+    with tempfile.TemporaryDirectory() as vide:
+        texte, _ = demander("condense", PROMPT_CONDENSE.format(sujet=sujet, n=n, total=total,
+                                                               consigne=bloc_consigne(consigne)),
+                            Path(vide), lire=lire, entree=groupe, timeout=900)
+    memoire.set(cle, texte)
+    return texte
+
+
+def contexte(docs: list[dict], sujet: str = "", consigne: str = "", memoire=None,
+             progres=lambda texte: None) -> tuple[str, dict[str, int], int]:
+    """Texte des cours numérotés [D1]…, repères, et nombre de groupes condensés (0 si tout tient d'un coup)."""
+    blocs, reperes = blocs_cours(docs)
+    texte, condenses = SEPARATEUR.join(blocs), 0
+    for niveau in range(NIVEAUX_CONDENSATION):
+        if len(texte) <= BUDGET:
+            break
+        groupes = grouper(blocs)
+        blocs = []
+        for n, g in enumerate(groupes, start=1):
+            progres(f"cours condensés {n}/{len(groupes)}" + (f" (passe {niveau + 1})" if niveau else ""))
+            blocs.append(condenser(g, sujet, n, len(groupes), consigne, memoire))
+        condenses += len(groupes)
+        texte = SEPARATEUR.join(blocs)
+    return texte[:BUDGET], reperes, condenses
+
+
+# --- Pièces jointes (contexte donné par l'élève) ----------------------------------
+
+IMAGES_PJ = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+HEIC_PJ = {".heic", ".heif"}
+TEXTES_PJ = {".txt", ".md", ".csv"}
+EXTENSIONS_PJ = IMAGES_PJ | HEIC_PJ | TEXTES_PJ | {".pdf"} | set(agent.OFFICE) | set(agent.VIEUX_OFFICE)
+
+
+def preparer_pieces(pieces: list[dict], dossier: Path) -> tuple[list[str], str]:
+    """Écrit les pièces que Claude lit lui-même (images, PDF) dans `dossier` et extrait le texte des autres.
+
+    Renvoie (noms des fichiers à lire avec Read, texte des pièces bureautiques).
+    """
+    a_lire, textes = [], []
+    for i, p in enumerate(pieces, start=1):
+        extension = Path(p["nom"]).suffix.lower()
+        if extension not in EXTENSIONS_PJ:
+            continue
+        chemin = dossier / f"piece{i}_{slug(Path(p['nom']).stem)[:40] or 'fichier'}{extension}"
+        chemin.write_bytes(bytes(p["contenu"]))
+        try:
+            if extension in TEXTES_PJ:
+                textes.append(f"Pièce jointe « {p['nom']} » :\n{chemin.read_text(errors='replace')[:30_000]}")
+            elif extension in agent.OFFICE:
+                textes.append(f"Pièce jointe « {p['nom']} » :\n{agent.texte_office(chemin)[:30_000]}")
+            elif extension in agent.VIEUX_OFFICE:
+                textes.append(f"Pièce jointe « {p['nom']} » :\n{agent.texte_vieux_office(chemin)[:30_000]}")
+            else:
+                a_lire.append((agent.heic_en_jpeg(chemin) if extension in HEIC_PJ else chemin).name)
+        except Exception as e:  # une pièce illisible ne bloque pas le support
+            textes.append(f"Pièce jointe « {p['nom']} » : illisible ({e})")
+    return a_lire, "\n\n".join(textes)
+
+
+def consigne_pieces(a_lire: list[str]) -> str:
+    if not a_lire:
+        return ""
+    return ("- L'élève a joint des fichiers de contexte dans le dossier courant (emploi du temps, dates d'épreuves, "
+            "consignes…). Lis-les avec l'outil Read avant tout : " + ", ".join(f"`{n}`" for n in a_lire) +
+            ". Ce ne sont pas des cours : ne les cite pas avec un repère [Dn].\n")
+
+
+def entree_avec_pieces(texte: str, texte_pieces: str) -> str:
+    if not texte_pieces:
+        return texte
+    return f"Fichiers joints par l'élève (contexte, pas des cours) :\n{texte_pieces}\n\n=====\n\nCours :\n\n{texte}"
 
 
 def date_fr(d: dt.date) -> str:
@@ -112,7 +261,7 @@ def bloc_consigne(consigne: str) -> str:
 
 
 def prompt(genre: str, sujet: str, date_eval: dt.date | None = None, aujourdhui: dt.date | None = None,
-           consigne: str = "") -> str:
+           consigne: str = "", fichiers: list[str] | None = None) -> str:
     if genre not in PROMPTS:
         raise ValueError(f"genre inconnu : {genre}")
     if genre == "plan" and date_eval is None:
@@ -120,8 +269,8 @@ def prompt(genre: str, sujet: str, date_eval: dt.date | None = None, aujourdhui:
     aujourdhui = aujourdhui or dt.date.today()
     return PROMPTS[genre].format(sujet=sujet, nb=10, nb_cartes=20, aujourdhui=date_fr(aujourdhui),
                                  date_eval=date_fr(date_eval) if date_eval else "", duree="2 heures",
-                                 consigne=bloc_consigne(consigne), web_md=WEB_MD, web_json=WEB_JSON,
-                                 note_web=NOTE_WEB_JSON)
+                                 consigne=bloc_consigne(consigne) + consigne_pieces(fichiers or []),
+                                 web_md=WEB_MD, web_json=WEB_JSON, note_web=NOTE_WEB_JSON)
 
 
 WEB_MD = (f", puis, seulement si tu as utilisé le web, une dernière section « {SOURCES_WEB} » avec une ligne "
@@ -202,14 +351,16 @@ def parse_cartes(texte: str) -> list[dict]:
 
 
 def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None = None,
-            consigne: str = "") -> tuple[str, dict, list[dict]]:
+            consigne: str = "", pieces: list[dict] | None = None, memoire=None,
+            progres=lambda texte: None) -> tuple[str, dict, list[dict]]:
     """Renvoie (contenu, repères des cours, sources web). Contenu : Markdown, ou JSON pour un quiz et des flashcards.
 
     L'agent peut chercher sur le web s'il le juge utile ; les cours restent la base.
+    Beaucoup de cours : condensés d'abord par groupes (voir contexte). `pieces` : [{"nom", "contenu"}].
     """
     if not docs:
         raise ErreurAgent("aucun document à utiliser")
-    texte_cours, reperes = contexte(docs)
+    texte_cours, reperes, _ = contexte(docs, sujet, consigne, memoire, progres)
 
     def lire(texte: str):
         # Réponse inutilisable : demander() réessaie avec le modèle au-dessus
@@ -221,9 +372,12 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
             raise ErreurAgent(f"réponse trop courte : {texte[:200]!r}")
         return separer_web(texte.strip())
 
-    with tempfile.TemporaryDirectory() as vide:  # aucun fichier local : les cours sont dans l'entrée
-        (contenu, web), _ = demander(genre, prompt(genre, sujet, date_eval, consigne=consigne), Path(vide), lire=lire,
-                                     outils=OUTILS_WEB, entree=texte_cours, timeout=1200)
+    with tempfile.TemporaryDirectory() as dossier:  # les cours sont dans l'entrée, les pièces jointes ici
+        a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
+        progres("rédaction")
+        (contenu, web), _ = demander(genre, prompt(genre, sujet, date_eval, consigne=consigne, fichiers=a_lire),
+                                     Path(dossier), lire=lire, outils=OUTILS_WEB + (["Read"] if a_lire else []),
+                                     entree=entree_avec_pieces(texte_cours, texte_pieces), timeout=1200)
     return contenu, reperes, web
 
 
@@ -244,16 +398,18 @@ fournies ci-dessous. Règles :
 - Chaque tâche dit concrètement quoi faire, et `support` indique le support préparé à utiliser
   parmi : {supports} (ou "" si aucun).
 - Alterne les matières, garde de la place pour relire les corrigés et refaire les erreurs.
-- Respecte en priorité le contexte de l'élève.
-Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
+- Respecte en priorité le contexte de l'élève (emploi du temps, dates d'épreuves, disponibilités).
+{pieces}Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {{"conseil": "une phrase d'encouragement et de méthode", "jours": [{{"date": "AAAA-MM-JJ", "titre": "...",
   "taches": [{{"matiere": "...", "quoi": "...", "duree": 45, "support": "fiche"}}]}}]}}
 `duree` est en minutes.
 """
 
 
-def prompt_programme(titre: str, debut: dt.date, fin: dt.date, aujourdhui: dt.date | None = None) -> str:
+def prompt_programme(titre: str, debut: dt.date, fin: dt.date, aujourdhui: dt.date | None = None,
+                     fichiers: list[str] | None = None) -> str:
     return PROMPT_PROGRAMME.format(titre=titre, debut=date_fr(debut), fin=date_fr(fin),
+                                   pieces=consigne_pieces(fichiers or []),
                                    aujourdhui=date_fr(aujourdhui or dt.date.today()),
                                    supports=", ".join(f'"{g}"' for g in GENRES if g != "plan"))
 
@@ -331,11 +487,17 @@ def jours_programme(programme: dict | None, faits: list[str], revisions: list[di
     return jours
 
 
-def generer_programme(campagne: dict, matieres: list[dict], evenements: list[dict]) -> dict:
-    with tempfile.TemporaryDirectory() as vide:
-        programme, _ = demander("programme", prompt_programme(campagne["titre"], campagne["debut"], campagne["fin"]),
-                                Path(vide), lire=lambda t: parse_programme(t, campagne["debut"], campagne["fin"]),
-                                entree=entree_programme(campagne["consigne"], matieres, evenements), timeout=600)
+def generer_programme(campagne: dict, matieres: list[dict], evenements: list[dict],
+                      pieces: list[dict] | None = None) -> dict:
+    with tempfile.TemporaryDirectory() as dossier:
+        a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
+        entree = entree_programme(campagne["consigne"], matieres, evenements)
+        if texte_pieces:
+            entree += f"\n\nFichiers joints par l'élève :\n{texte_pieces}"
+        programme, _ = demander("programme", prompt_programme(campagne["titre"], campagne["debut"], campagne["fin"],
+                                                              fichiers=a_lire),
+                                Path(dossier), lire=lambda t: parse_programme(t, campagne["debut"], campagne["fin"]),
+                                outils=["Read"] if a_lire else None, entree=entree, timeout=600)
     return programme
 
 

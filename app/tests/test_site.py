@@ -54,6 +54,9 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "niveaux_matieres_comptes", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
     monkeypatch.setattr(db, "documents_matiere", lambda n, m: [DOC] if m == "Réseaux" else [])
     monkeypatch.setattr(db, "documents", lambda ids: [DOC] if 1 in ids else [])
+    monkeypatch.setattr(db, "pieces_jointes", lambda revision_id=None, campagne_id=None, contenu=False: [])
+    monkeypatch.setattr(db, "ajouter_pieces", lambda f, revision_id=None, campagne_id=None:
+                        appels.append(("pieces", [n for n, _ in f], revision_id, campagne_id)))
     with TestClient(main.app) as c:
         c.appels = appels
         c.etat = etat
@@ -132,6 +135,40 @@ def test_demander_par_matiere_avec_repli(client):
                     follow_redirects=False)
     assert r.status_code == 303
     assert ("rev", "quiz", "ospf", [1], None) in client.appels
+
+
+def test_revision_avec_fichiers_joints(client, monkeypatch):
+    assert 'name="pieces"' in client.get("/reviser/nouvelle").text
+    assert 'enctype="multipart/form-data"' in client.get("/reviser/nouvelle").text
+    fichiers = [("pieces", ("Emploi du temps.jpg", b"\xff\xd8jpeg", "image/jpeg")),
+                ("pieces", ("C:\\Users\\anto\\convoc.pdf", b"%PDF-1.4", "application/pdf"))]
+    r = client.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux"}, files=fichiers,
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert ("pieces", ["Emploi du temps.jpg", "convoc.pdf"], 5, None) in client.appels
+    # Rien n'est envoyé dans l'inbox ni ajouté à la bibliothèque
+    assert not [a for a in client.appels if a[0] == "maj"]
+    r = client.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux"},
+                    files=[("pieces", ("virus.exe", b"MZ", "application/octet-stream"))])
+    assert r.status_code == 400 and "virus.exe" in r.text
+    monkeypatch.setattr(main, "MAX_PIECE", 3)
+    r = client.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux"},
+                    files=[("pieces", ("gros.pdf", b"%PDF-1.4", "application/pdf"))])
+    assert r.status_code == 400
+    # Champ fichier vide (rien choisi) : accepté
+    r = client.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux"},
+                    files=[("pieces", ("", b"", "application/octet-stream"))], follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_piece_jointe_affichee(client, monkeypatch):
+    pieces = {3: {"id": 3, "nom": "edt.png", "contenu": b"\x89PNG", "taille": 4},
+              4: {"id": 4, "nom": "convoc.docx", "contenu": b"PK", "taille": 2}}
+    monkeypatch.setattr(db, "piece_jointe", lambda i: pieces.get(i))
+    r = client.get("/piece/3")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.headers["content-disposition"].startswith("inline")
+    assert client.get("/piece/4").headers["content-disposition"].startswith("attachment")
+    assert client.get("/piece/9").status_code == 404
 
 
 def test_plan_sans_date_refuse(client):
@@ -863,6 +900,10 @@ def test_creer_campagne(client, monkeypatch):
     revs = [a for a in client.appels if a[0] == "rev"]
     assert revs == [("rev", "examen", "Réseaux : vlan", [1], date(2026, 11, 6), {"consigne": "Maths lundi", "campagne_id": 9}),
                     ("rev", "fiche", "Réseaux : vlan", [1], None, {"consigne": "Maths lundi", "campagne_id": 9})]
+    r = client.post("/campagne", data=donnees, files=[("pieces", ("planning.pdf", b"%PDF-1.4", "application/pdf"))],
+                    follow_redirects=False)
+    assert ("pieces", ["planning.pdf"], None, 9) in client.appels
+    assert 'name="pieces"' in client.get("/campagne/nouvelle").text
     assert client.post("/campagne", data={**donnees, "fin": "2026-10-01"}).status_code == 400
     assert client.post("/campagne", data={**donnees, "genres": ["plan"]}).status_code == 400
 

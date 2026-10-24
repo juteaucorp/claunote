@@ -337,11 +337,15 @@ def traiter_revision(kd: KDrive, rev: dict):
 
     Rejouable : la révision reste « en attente » jusqu'au bout (limite, panne, redémarrage).
     """
-    activite(f"{revision.GENRES.get(rev['genre'], rev['genre'])} « {rev['sujet']} » "
-             f"({modeles.NOMS[modeles.choisir(rev['genre'])]})")
+    quoi = (f"{revision.GENRES.get(rev['genre'], rev['genre'])} « {rev['sujet']} » "
+            f"({modeles.NOMS[modeles.choisir(rev['genre'])]})")
+    activite(quoi)
     try:
-        contenu, reperes, web = revision.generer(rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]),
-                                                 rev["date_eval"], rev.get("consigne") or "")
+        # Beaucoup de cours : condensés par groupes, gardés en base pour reprendre après une limite
+        contenu, reperes, web = revision.generer(
+            rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]), rev["date_eval"], rev.get("consigne") or "",
+            pieces=db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True), memoire=db.Condenses(),
+            progres=lambda etape: activite(f"{quoi} : {etape}"))
     except ErreurAgent as e:
         db.maj_revision(rev["id"], "erreur", erreur=str(e))
         log(f"erreur de révision {rev['id']} : {e}")
@@ -399,7 +403,8 @@ def traiter_campagne(campagne: dict):
     activite(f"Programme de « {campagne['titre']} »")
     try:
         programme = revision.generer_programme(campagne, list(matieres.values()),
-                                               db.evenements_entre(campagne["debut"], campagne["fin"]))
+                                               db.evenements_entre(campagne["debut"], campagne["fin"]),
+                                               db.pieces_jointes(campagne_id=campagne["id"], contenu=True))
     except ErreurAgent as e:
         db.maj_campagne(campagne["id"], "erreur", erreur=str(e))
         log(f"erreur de programme pour la campagne {campagne['id']} : {e}")

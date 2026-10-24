@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+from pathlib import Path
 
 import pytest
 
@@ -12,12 +13,74 @@ DOCS = [{"id": 11, "nom": "a.pdf", "titre": "VLAN", "niveau": "BTS1", "matiere":
          "transcription": "x" * 200}]
 
 
-def test_contexte_numerote_et_respecte_le_budget(monkeypatch):
-    monkeypatch.setattr(revision, "BUDGET", 50)
-    texte, reperes = revision.contexte(DOCS)
-    assert reperes == {"D1": 11, "D2": 12}
-    assert texte.startswith("[D1] VLAN (BTS1, Réseaux, Cours)") and "[D2] b.pdf" in texte
-    assert texte.split("TP)\n")[1] == "x" * (50 - len("Un VLAN segmente un réseau."))
+def test_contexte_numerote_sans_condenser_quand_tout_tient(monkeypatch):
+    monkeypatch.setattr(agent, "appeler_claude", lambda *a, **k: pytest.fail("aucune condensation attendue"))
+    texte, reperes, condenses = revision.contexte(DOCS)
+    assert reperes == {"D1": 11, "D2": 12} and condenses == 0
+    assert texte.startswith("[D1] VLAN (BTS1, Réseaux, Cours)") and "[D2] b.pdf" in texte and "x" * 200 in texte
+
+
+def test_grouper_coupe_les_cours_trop_longs():
+    blocs = ["[D1] A\n" + "a" * 50, "[D2] B\n" + "b" * 50, "[D3] C\n" + "c" * 250]
+    groupes = revision.grouper(blocs, taille=130)
+    assert all(len(g) <= 130 for g in groupes)
+    assert groupes[0].startswith("[D1] A") and "[D2] B" in groupes[0]
+    assert "[D3] C (partie 1)" in groupes[1] and "[D3] C (partie 3)" in "".join(groupes)
+    assert "".join(groupes).count("c") == 250  # rien de perdu
+
+
+def test_beaucoup_de_cours_condenses_par_groupes_puis_tous_utilises(monkeypatch):
+    monkeypatch.setattr(revision, "BUDGET", 500)
+    monkeypatch.setattr(revision, "GROUPE", 450)
+    docs = [{"id": 100 + i, "nom": f"c{i}.pdf", "titre": f"Cours {i}", "niveau": "BTS1", "matiere": "Réseaux",
+             "type": "Cours", "transcription": "notion " * 40} for i in range(1, 9)]
+    appels = []
+
+    def faux(prompt, cwd, outils=None, entree=None, timeout=0, modele="", **k):
+        appels.append((k.get("tache"), modele, entree))
+        if k.get("tache") == "condense":
+            reperes = sorted(set(re.findall(r"\[D\d+\]", entree)), key=lambda r: int(r[2:-1]))
+            return "\n".join(f"### {r} résumé" for r in reperes)
+        return "## L'essentiel\n" + "Tout le cours [D1] [D8]. " * 5
+
+    import re
+    monkeypatch.setattr(agent, "appeler_claude", faux)
+    memoire, etapes = revision.Memoire(), []
+    contenu, reperes, web = revision.generer("fiche", "VLAN", docs, memoire=memoire, progres=etapes.append)
+    condenses = [a for a in appels if a[0] == "condense"]
+    assert len(condenses) >= 3 and all(m == "haiku" for _, m, _ in condenses)
+    assert len(reperes) == 8 and reperes["D8"] == 108  # aucun cours laissé de côté
+    final = appels[-1][2]
+    assert all(f"[D{i}]" in final for i in range(1, 9)) and "notion notion" not in final
+    assert etapes[0].startswith("cours condensés 1/") and etapes[-1] == "rédaction"
+    # Deuxième support sur les mêmes cours (campagne, ou reprise après une limite) : rien n'est recondensé
+    appels.clear()
+    revision.generer("fiche", "VLAN", docs, memoire=memoire)
+    assert [a[0] for a in appels] == ["fiche"]
+
+
+def test_pieces_jointes_lues_par_l_agent(monkeypatch, tmp_path):
+    vu = {}
+
+    def faux(prompt, cwd, outils=None, entree=None, **k):
+        vu.update(prompt=prompt, outils=outils, entree=entree, fichiers=sorted(p.name for p in Path(cwd).iterdir()))
+        return "## L'essentiel\nRévise lundi [D1] pour l'épreuve de mardi 8 h.\n" + "x" * 80
+
+    import zipfile
+    docx = tmp_path / "c.docx"
+    with zipfile.ZipFile(docx, "w") as z:
+        z.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                   '<w:body><w:p><w:r><w:t>Épreuve de maths mardi 8 h</w:t></w:r></w:p></w:body></w:document>')
+    monkeypatch.setattr(agent, "appeler_claude", faux)
+    pieces = [{"nom": "Emploi du temps.png", "contenu": b"\x89PNG"}, {"nom": "convocation.docx", "contenu": docx.read_bytes()},
+              {"nom": "virus.exe", "contenu": b"MZ"}]
+    revision.generer("fiche", "VLAN", DOCS, pieces=pieces)
+    assert vu["fichiers"] == ["piece1_emploi-du-temps.png", "piece2_convocation.docx", ]
+    assert "Read" in vu["outils"] and "`piece1_emploi-du-temps.png`" in vu["prompt"] and "pas des cours" in vu["prompt"]
+    assert "Épreuve de maths mardi 8 h" in vu["entree"] and vu["entree"].index("Épreuve") < vu["entree"].index("[D1] VLAN")
+    # Sans pièce jointe : pas d'outil Read
+    revision.generer("fiche", "VLAN", DOCS)
+    assert vu["outils"] == ["WebSearch", "WebFetch"] and "Read" not in vu["prompt"]
 
 
 def test_prompt_plan_demande_une_date():

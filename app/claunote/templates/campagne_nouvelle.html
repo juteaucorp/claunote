@@ -17,7 +17,7 @@
 {% if not niveaux %}
 <div class="carte">Il faut d'abord des cours classés : dépose des scans depuis <a href="/deposer">Déposer</a>.</div>
 {% else %}
-<form method="post" action="/campagne" class="formulaire" id="campagne">
+<form method="post" action="/campagne" class="formulaire" id="campagne" enctype="multipart/form-data">
   <section>
     <h2><span class="num">1</span> Nom et période</h2>
     <div class="carte">
@@ -68,7 +68,8 @@
   <section>
     <h2><span class="num">4</span> Contexte pour l'IA</h2>
     <div class="carte"><textarea name="consigne" rows="5" style="width: 100%" placeholder="ex. BTS blanc du 3 au 7 novembre : maths lundi 8 h (2 h), CEJM mardi (4 h), anglais jeudi. Je suis faible en probabilités. Pas de révision le mercredi après-midi."></textarea>
-      <p class="doux">Dates et durées des épreuves, points faibles, consignes des profs, disponibilités… Plus c'est précis, plus le programme colle.</p></div>
+      <p class="doux">Dates et durées des épreuves, points faibles, consignes des profs, disponibilités… Plus c'est précis, plus le programme colle.</p>
+      {% with exemple="Ton emploi du temps, le planning des épreuves blanches, une convocation…" %}{% include "_joindre.html" %}{% endwith %}</div>
   </section>
 
   <div class="carte resume" id="resume">

@@ -43,8 +43,11 @@
 <div class="carte alerte-carte">{{ erreurs|length }} support{{ 's' if erreurs|length > 1 }} en erreur. <form method="post" action="/campagne/{{ campagne.id }}/relancer" class="enligne"><button>Relancer</button></form></div>
 {% endif %}
 
-{% if campagne.consigne %}
-<details class="carte contexte"><summary>Contexte donné à l'IA</summary><p>{{ campagne.consigne|e|replace('\n', '<br>'|safe) }}</p></details>
+{% if campagne.consigne or pieces %}
+<details class="carte contexte"><summary>Contexte donné à l'IA{% if pieces %} · {{ pieces|length }} fichier{{ 's' if pieces|length > 1 }}{% endif %}</summary>
+  {% if campagne.consigne %}<p>{{ campagne.consigne|e|replace('\n', '<br>'|safe) }}</p>{% endif %}
+  {% include "_pieces.html" %}
+</details>
 {% endif %}
 
 <h2>Programme</h2>

@@ -11,7 +11,7 @@
 {% if not choix and not document %}
 <div class="carte">Il faut d'abord des cours classés : dépose des scans depuis <a href="/deposer">Déposer</a>.</div>
 {% else %}
-<form method="post" action="/reviser" class="formulaire" id="nouvelle">
+<form method="post" action="/reviser" class="formulaire" id="nouvelle" enctype="multipart/form-data">
   <section>
     <h2><span class="num">1</span> Quoi ?</h2>
     <div class="genres">
@@ -53,11 +53,12 @@
 
   <section>
     <h2><span class="num">4</span> Un contexte pour l'IA ? <span class="doux">(facultatif)</span></h2>
-    <div class="carte"><textarea name="consigne" rows="3" style="width: 100%" placeholder="ex. Le prof a dit que l'éval porte surtout sur les masques de sous-réseau. Insiste sur les exercices."></textarea></div>
+    <div class="carte"><textarea name="consigne" rows="3" style="width: 100%" placeholder="ex. Le prof a dit que l'éval porte surtout sur les masques de sous-réseau. Insiste sur les exercices."></textarea>
+      {% with exemple="Un énoncé du prof, le sujet de l'an dernier, ton emploi du temps…" %}{% include "_joindre.html" %}{% endwith %}</div>
   </section>
 
   <button class="principal grand">Générer</button>
-  <p class="doux">L'agent n'utilise que tes cours. Compte 1 à 3 minutes ; tu peux quitter la page, une notification te préviendra.</p>
+  <p class="doux">L'agent part de tes cours, <strong>tous ceux de la matière si tu n'en coches aucun</strong> (au-delà d'une trentaine, il les condense d'abord par groupes). Compte 1 à 3 minutes, plus avec beaucoup de cours ; tu peux quitter la page, une notification te préviendra.</p>
 </form>
 {% endif %}
 <style>
