@@ -6,8 +6,8 @@
 <title>{% block titre %}Claunote{% endblock %} · Claunote</title>
 <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#1c1b1a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#232220" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="/static/icone-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -24,7 +24,7 @@
     --verre: rgba(255, 255, 255, .7); --verre-fort: rgba(255, 255, 255, .93); --verre-bord: rgba(255, 255, 255, .7);
     --verre-reflet: inset 0 1px 0 rgba(255, 255, 255, .9), inset 0 -1px 0 rgba(255, 255, 255, .25);
     --verre-ombre: 0 8px 32px rgba(60, 40, 20, .14), 0 1px 3px rgba(60, 40, 20, .08);
-    --verre-flou: blur(22px) saturate(180%);
+    --verre-flou: blur(22px) saturate(180%); --entete: rgba(250, 249, 245, .82);
     --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(217, 119, 87, .16), transparent 60%),
       radial-gradient(90% 50% at 0% 100%, rgba(240, 190, 140, .18), transparent 60%);
   }
@@ -35,36 +35,41 @@
       --alerte: #f0a487; --ok: #7cc28d; --ombre: none;
       --verre: rgba(40, 38, 36, .66); --verre-fort: rgba(40, 38, 36, .93); --verre-bord: rgba(255, 255, 255, .12);
       --verre-reflet: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 -1px 0 rgba(255, 255, 255, .04);
-      --verre-ombre: 0 8px 32px rgba(0, 0, 0, .45);
+      --verre-ombre: 0 8px 32px rgba(0, 0, 0, .45); --entete: rgba(35, 34, 32, .82);
       --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(224, 138, 109, .14), transparent 60%),
         radial-gradient(90% 50% at 0% 100%, rgba(160, 90, 60, .12), transparent 60%);
     }
   }
   * { box-sizing: border-box; }
-  /* Pas de fond « fixed » ni de fondu entre pages : sur iPhone, ils font sauter l'affichage sous le verre */
   html { background: var(--fond-doux); overscroll-behavior-y: none; }  /* l'en-tête ne descend plus quand on tire la page */
-  body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background-color: var(--fond-doux);
-    background-image: var(--fond-ambiance); background-repeat: no-repeat; background-size: 100% 100lvh; color: var(--texte); min-height: 100vh;
+  body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); min-height: 100vh;
     overscroll-behavior-y: none; }
+  /* Fond d'ambiance : calque fixe de la hauteur de l'écran, identique en haut et en bas de la page.
+     (Un background-image s'arrêtait après le premier écran ; background-attachment: fixed saute sur iPhone.) */
+  body::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: 100lvh; z-index: -1; pointer-events: none;
+    background: var(--fond-ambiance); transform: translateZ(0); }
   /* Le flou est porté par ::before : un élément flouté ne laisse pas ses enfants (le menu Plus) flouter la page */
   .verre { isolation: isolate; border: 1px solid var(--verre-bord); box-shadow: var(--verre-reflet), var(--verre-ombre); }
   .verre::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--verre);
     -webkit-backdrop-filter: var(--verre-flou); backdrop-filter: var(--verre-flou);
     transform: translateZ(0); -webkit-backface-visibility: hidden; }  /* calque à part : le flou ne clignote pas au défilement */
   .feuille.verre::before { background: var(--verre-fort); }
-  @media (prefers-reduced-transparency: reduce) { :root { --verre: var(--carte); --verre-fort: var(--carte); } }
+  @media (prefers-reduced-transparency: reduce) { :root { --verre: var(--carte); --verre-fort: var(--carte); --entete: var(--fond-doux); } }
   a { color: var(--accent-fonce); text-underline-offset: 3px; }
   h1, h2, .marque { font-family: ui-serif, Georgia, "Times New Roman", serif; font-weight: 600; letter-spacing: -.01em; }
   h1 { font-size: 1.9rem; line-height: 1.25; margin: 4px 0 20px; }
   h2 { font-size: 1.25rem; line-height: 1.3; margin: 32px 0 12px; }
 
-  header { position: sticky; top: 0; z-index: 10; background: var(--fond); border-bottom: 1px solid var(--bord); padding-top: env(safe-area-inset-top); }
+  /* En-tête en verre léger : le fond de la page continue dessous, sans bande d'une autre couleur */
+  header { position: sticky; top: 0; z-index: 10; isolation: isolate; border-bottom: 1px solid var(--bord); padding-top: env(safe-area-inset-top); }
+  header::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--entete);
+    -webkit-backdrop-filter: var(--verre-flou); backdrop-filter: var(--verre-flou); transform: translateZ(0); }
   .barre { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 8px 14px; }
   .marque { display: flex; align-items: center; gap: 10px; font-size: 1.35rem; color: var(--texte); text-decoration: none; margin-right: auto; }
   .marque img { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--bord); background: #fff; }
   nav.haut { display: flex; flex-wrap: nowrap; gap: 2px; white-space: nowrap; }
   nav.haut a { color: var(--texte); text-decoration: none; padding: 6px 11px; border-radius: 999px; font-weight: 500; font-size: .95rem; }
-  nav.haut a:hover { background: var(--fond-doux); }
+  nav.haut a:hover { background: var(--bord); }
   nav.haut a.actif { background: var(--accent-pale); color: var(--accent-fonce); }
   .badge { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: .75rem; line-height: 20px; text-align: center; font-weight: 600; }
   .outils { display: flex; gap: 8px; align-items: center; }
@@ -91,7 +96,7 @@
     .marque { font-size: 1.2rem; }
     .marque img { width: 32px; height: 32px; border-radius: 9px; }
     .icone-entete { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 12px; color: var(--texte); }
-    .icone-entete:active { background: var(--fond-doux); }
+    .icone-entete:active { background: var(--bord); }
     /* Barre d'onglets flottante en verre, comme iOS 26 */
     nav.onglets { display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 20;
       max-width: 520px; margin: 0 auto; padding: 5px; border-radius: 32px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
@@ -137,6 +142,7 @@
   input, select, button { font: inherit; padding: 8px 12px; border: 1px solid var(--bord); border-radius: 10px; background: var(--carte); color: var(--texte); }
   input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   button { cursor: pointer; font-weight: 500; }
+  a.bouton, .fin button, .actions button { white-space: nowrap; }
   button:hover { border-color: var(--accent); }
   button.principal { background: var(--accent); color: #fff; border-color: var(--accent); }
   button.principal:hover { background: var(--accent-fonce); border-color: var(--accent-fonce); }
@@ -206,6 +212,8 @@
     main { padding-top: 16px; padding-left: 12px; padding-right: 12px; }
     .carte { padding: 14px 16px; border-radius: 16px; }
     .carte.lignes { padding: 2px 16px; }
+    .grille { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+    .grille .carte { padding: 12px 14px; }
     button, a.bouton, select, input:not([type=checkbox]):not([type=radio]) { min-height: 44px; }
     button, a.bouton { border-radius: 999px; padding-left: 18px; padding-right: 18px; }
     .carte { border-radius: 22px; }
