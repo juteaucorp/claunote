@@ -35,6 +35,8 @@ def anonyme(monkeypatch):
                                                     "note": "Le dossier « BTS1 » indique BTS1", "origine": "BTS1"}])
     monkeypatch.setattr(db, "nb_a_verifier", lambda: 1)
     monkeypatch.setattr(db, "nb_import_a_confirmer", lambda: 0)
+    monkeypatch.setattr(db, "sensibles", lambda decision=None, jours=30: [])
+    monkeypatch.setattr(db, "decoupages", lambda limite=10: [])
     monkeypatch.setattr(db, "nb_evaluations_proches", lambda: 0)
     monkeypatch.setattr(db, "document", lambda i: DOC if i == 1 else None)
     monkeypatch.setattr(db, "liste", lambda *a: [DOC])
@@ -227,6 +229,26 @@ def test_deposer_garde_les_dossiers(client, monkeypatch):
     assert "scan" in client.appels
 
 
+def test_deposer_un_tres_gros_fichier_par_morceaux(client, monkeypatch):
+    faits = []
+
+    class FauxKD:
+        def ensure_path(self, parent, parts):
+            return 900
+
+        def upload(self, dir_id, nom, contenu, conflict="version"):
+            faits.append(("upload", nom))
+
+        def upload_flux(self, dir_id, nom, fichier, taille, conflict="rename"):
+            faits.append(("flux", nom, taille, fichier.read(3)))
+
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: FauxKD()))
+    monkeypatch.setattr(main, "GROS_FICHIER", 10)
+    client.post("/deposer?paquet=1", files=[("fichiers", ("annee-bts1.pdf", b"%PDF-" + b"x" * 50, "application/pdf")),
+                                            ("fichiers", ("petit.pdf", b"%PDF", "application/pdf"))])
+    assert faits == [("flux", "annee-bts1.pdf", 55, b"%PD"), ("upload", "petit.pdf")]
+
+
 def test_deposer_par_paquets_en_json(client, monkeypatch):
     class FauxKD:
         def ensure_path(self, parent, parts):
@@ -261,6 +283,41 @@ def test_page_import(client, monkeypatch):
     assert ".vscode" in r.text and "Supprimer la sélection" in r.text
     assert "/import/fichier/7" in r.text and 'name="coupes" value="1"' in r.text
     assert "Rangé par année scolaire" in r.text and "BTS1" in r.text and "Réseaux" in r.text and "TP" in r.text
+
+
+def test_page_import_personnels_et_gros_scans(client, monkeypatch):
+    doute = {"id": 3, "kdrive_id": 9, "nom": "scan-impots.pdf", "chemin": "Vrac/scan-impots.pdf", "categorie": "impots",
+             "raisons": ["en-tête : « avis d imposition »"], "pages": None, "decision": "doute", "le": None}
+    jete = {**doute, "id": 4, "nom": "RIB.pdf", "categorie": "banque", "raisons": ["nom du fichier « RIB.pdf »"],
+            "decision": "corbeille"}
+    gros = {"kdrive_id": 11, "nom": "annee-bts1.pdf", "chemin": "annee-bts1.pdf", "pages": 312, "statut": "fait",
+            "coupes": {}, "maj_le": None,
+            "plan": {"documents": [{"pages": [1, 2, 3], "titre": "Les VLAN", "matiere": "Réseaux"}],
+                     "sensibles": {"sur": {"pages": [40], "categorie": "banque", "raisons": ["IBAN valide"]}},
+                     "blanches": [4, 5]}}
+    for nom in ("import_bilan", "import_groupes"):
+        monkeypatch.setattr(db, nom, lambda *a, **k: [])
+    monkeypatch.setattr(db, "import_fichiers", lambda d, ids=None: [])
+    monkeypatch.setattr(db, "sensibles", lambda decision=None, jours=30: [doute] if decision == "doute" else [jete])
+    monkeypatch.setattr(db, "decoupages", lambda limite=10: [gros])
+    r = client.get("/import")
+    assert r.status_code == 200
+    assert "Documents personnels ?" in r.text and "scan-impots.pdf" in r.text and "impôts" in r.text
+    assert "RIB.pdf" in r.text and "mis à la corbeille" in r.text
+    assert "annee-bts1.pdf" in r.text and "Les VLAN" in r.text and "312 pages" in r.text
+    assert "pages 40 personnelles (corbeille)" in r.text and "2 pages blanches" in r.text
+
+
+def test_choix_personnels(client, monkeypatch):
+    marques, choix = [], []
+    monkeypatch.setattr(db, "sensible_choisir", lambda ids, d: choix.append((ids, d)) or [{"kdrive_id": 9}])
+    monkeypatch.setattr(db, "import_marquer", lambda ids, d, **k: marques.append((ids, d)) or len(ids))
+    r = client.post("/import/personnels", data={"ids": ["3"], "action": "supprimer"}, follow_redirects=False)
+    assert r.status_code == 303 and "corbeille" in r.headers["location"]
+    assert choix == [([3], "supprime")] and marques == [([9], "supprimer")]
+    client.post("/import/personnels", data={"ids": ["3"], "action": "analyser"}, follow_redirects=False)
+    assert choix[-1] == ([3], "analyser") and marques[-1] == ([9], "analyser")
+    assert client.post("/import/personnels", data={"ids": ["3"], "action": "x"}).status_code == 400
 
 
 def test_choix_import(client, monkeypatch):

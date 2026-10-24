@@ -20,7 +20,8 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import anki, auth, db, importation, modeles, notifications, pdf, pronote, rangement, revision
+from claunote import (anki, auth, db, decoupage, importation, modeles, notifications, pdf, pronote, rangement,
+                      revision, sensible)
 from claunote.agent import NIVEAUX, TYPES
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -338,6 +339,9 @@ def _nettoyer(dossier: Path):
     dossier.rmdir()
 
 
+GROS_FICHIER = 32 * 1024 * 1024
+
+
 @app.get("/deposer", response_class=HTMLResponse)
 def page_deposer(request: Request):
     return templates.TemplateResponse(request, "deposer.html", {"niveaux": NIVEAUX, **_filtres_depot()})
@@ -369,7 +373,13 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
         dossiers = tuple(chemin[:-1])
         if dossiers not in dossiers_kdrive:
             dossiers_kdrive[dossiers] = kd.ensure_path(INBOX_ID, list(dossiers))
-        kd.upload(dossiers_kdrive[dossiers], chemin[-1], f.file.read(), conflict="rename")
+        f.file.seek(0, 2)
+        taille = f.file.tell()
+        f.file.seek(0)
+        if taille > GROS_FICHIER:  # scan d'une année entière : envoyé par morceaux, pas en mémoire
+            kd.upload_flux(dossiers_kdrive[dossiers], chemin[-1], f.file, taille)
+        else:
+            kd.upload(dossiers_kdrive[dossiers], chemin[-1], f.file.read(), conflict="rename")
         envoyes.append("/".join(chemin))
     if envoyes:
         db.demander_scan()
@@ -610,7 +620,26 @@ def page_import(request: Request, message: str = ""):
     groupes = [{"cle": g, "pages": db.import_groupe(g)} for g in db.import_groupes(sur=False)]
     return templates.TemplateResponse(request, "import.html", {
         "lots": lots, "inutiles": inutiles, "groupes": [g for g in groupes if g["pages"]],
-        "libelles": importation.LIBELLES, "message": message})
+        "libelles": importation.LIBELLES, "message": message,
+        "doutes": db.sensibles("doute"), "corbeille": db.sensibles(), "categories": sensible.LIBELLES,
+        "decoupages": db.decoupages(), "seuil_pages": decoupage.SEUIL_PAGES})
+
+
+@app.post("/import/personnels")
+def choix_personnels(ids: list[int] = Form([]), action: str = Form(...)):
+    """Documents peut-être personnels : à la corbeille, ou analysés (ce sont des cours)."""
+    decision = {"supprimer": "supprime", "analyser": "analyser"}.get(action)
+    if decision is None:
+        raise HTTPException(400, "action inconnue")
+    lignes = db.sensible_choisir(ids, decision)
+    # Le worker applique : « supprimer » met à la corbeille kDrive, « analyser » saute le garde-fou
+    db.import_marquer([s["kdrive_id"] for s in lignes], "supprimer" if decision == "supprime" else "analyser")
+    if lignes:
+        db.demander_scan()
+    n, pluriel = len(lignes), "s" if len(lignes) > 1 else ""
+    message = (f"{n} document{pluriel} part{'ent' if n > 1 else ''} à la corbeille kDrive (récupérable{pluriel} 30 jours)."
+               if decision == "supprime" else f"{n} document{pluriel} ajouté{pluriel} à l'analyse.")
+    return RedirectResponse(f"/import?{urlencode({'message': message})}", status_code=303)
 
 
 @app.post("/import/choix")

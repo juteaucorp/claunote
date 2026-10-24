@@ -242,6 +242,22 @@ def import_a_confirmer(lot: str, inutiles: int):
         db.notifier(f"import:{lot}:{int(time.time())}", f"Import « {lot or 'inbox'} » trié", corps, "/import")
 
 
+def document_personnel(nom: str, libelle: str, supprime: bool, pages: str | None = None):
+    """Garde-fou : un document personnel a été retiré avant l'IA (corbeille) ou attend ton avis."""
+    if db.abonnements():
+        quoi = f"Pages {pages} de « {nom} »" if pages else f"« {nom} »"
+        corps = (f"{quoi} ({libelle}) : mis à la corbeille kDrive sans être lu par l'IA (récupérable 30 jours)."
+                 if supprime else f"{quoi} ressemble à un document personnel ({libelle}) : à supprimer ou à analyser ?")
+        db.notifier(f"sensible:{nom}:{pages or ''}:{int(time.time())}",
+                    "Document personnel supprimé" if supprime else "Document personnel ?", corps, "/import")
+
+
+def decoupage_fini(nom: str, documents: int):
+    if db.abonnements():
+        db.notifier(f"decoupage:{nom}:{int(time.time())}", "Gros scan découpé",
+                    f"« {nom} » → {documents} document{'s' if documents > 1 else ''}, analysés un par un.", "/import")
+
+
 def tour(maintenant: dt.datetime | None = None):
     maintenant = maintenant or dt.datetime.now(PARIS)
     if not db.abonnements():
