@@ -40,6 +40,7 @@ LIBELLES = {
     "cartes": "Flashcards", "plan": "Plan de révision", "programme": "Programme de campagne",
     "condense": "Cours condensés",
     "examen": "Épreuve blanche",
+    "sonde": "Test de Claude (bouton Réessayer)",
 }
 NOMS = {"haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus"}
 

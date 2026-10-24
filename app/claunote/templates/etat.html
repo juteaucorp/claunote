@@ -28,6 +28,19 @@
     {% else %}<p class="alerte">Ne répond pas{% if c.depuis %} depuis {{ heure(c.depuis) }}{% endif %}.</p>
       {% if c.jusqu_a %}<p>Nouvel essai à {{ heure(c.jusqu_a) }}.</p>{% endif %}{% endif %}
     {% if c.message and c.etat != 'ok' %}<details><summary>Message de Claude Code</summary><p class="doux">{{ c.message }}</p></details>{% endif %}
+    {% if c.etat in ('limite', 'panne') %}
+    <p class="reessayer">
+      {% if sonde_demandee or sonde.resultat == 'en_cours' %}<span class="doux">Test de Claude en cours…</span>
+      {% else %}<button hx-post="/claude/reessayer" hx-target="#retour-sonde" hx-swap="innerHTML">Réessayer maintenant</button>{% endif %}
+      <span id="retour-sonde" class="doux"></span></p>
+    <p class="doux">Un tout petit appel à Haiku : s'il répond (ton usage est revenu plus tôt), la file repart tout de suite,
+      sinon la pause continue. <strong>Aucun crédit n'est acheté</strong> : seul le jeton du forfait est utilisé.</p>
+    {% endif %}
+    {% if sonde.le and sonde.resultat != 'en_cours' %}<p class="doux">Dernier test ({{ heure(sonde.le) }}) :
+      {% if sonde.resultat == 'ok' %}Claude a répondu{% if sonde.message %} ({{ sonde.message }}){% endif %}.
+      {% elif sonde.resultat == 'limite' %}limite toujours atteinte.
+      {% elif sonde.resultat == 'panne' %}Claude ne répond toujours pas.
+      {% else %}échec ({{ sonde.message }}).{% endif %}</p>{% endif %}
   </div>
   <div class="carte {{ 'ko' if k.etat != 'ok' }}">
     <strong>kDrive</strong>

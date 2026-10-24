@@ -108,13 +108,15 @@ class Garde:
 CLAUDE = Garde("Claude", pause_max=30 * 60)
 KDRIVE = Garde("kDrive", pause_max=15 * 60)
 ETAT = {"demarre": None, "activite": None, "reste": False}  # publié toutes les 30 s par le thread battement
+SONDE = {"le": None, "resultat": None, "message": ""}  # dernier test de Claude demandé depuis le site
+SONDE_ECART = 60  # boutons répétés : au plus un test par minute
 
 
 def publier():
     """État du worker pour le site (bandeau, page État)."""
     db.etat_ecrire("service", json.dumps({
         "vu": _iso(time.time()), "demarre": ETAT["demarre"], "arret": ARRET.is_set(), "activite": ETAT["activite"],
-        "claude": CLAUDE.publier(), "kdrive": KDRIVE.publier(), "modeles": modeles.indisponibles()}))
+        "claude": CLAUDE.publier(), "kdrive": KDRIVE.publier(), "modeles": modeles.indisponibles(), "sonde": SONDE}))
 
 
 def activite(texte: str | None):
@@ -872,6 +874,42 @@ def etape(nom: str, faire, *args):
     return None
 
 
+def sonder_claude():
+    """Bouton « Réessayer maintenant » du site, pendant une pause de Claude (limite, panne).
+
+    Un appel minuscule (agent.sonder) : s'il répond, la pause est levée et la file repart tout de
+    suite ; sinon la pause continue (l'heure de reprise annoncée est mise à jour). Rien n'est acheté :
+    `claude -p` n'utilise que le jeton du forfait (voir agent.ENV_FORFAIT).
+    """
+    if not db.etat_consommer("claude_sonde"):
+        return
+    maintenant = time.time()
+    if SONDE["le"] and maintenant - dt.datetime.fromisoformat(SONDE["le"]).timestamp() < SONDE_ECART:
+        return
+    if CLAUDE.etat == "ok":
+        SONDE.update(le=_iso(maintenant), resultat="ok", message="Claude était déjà disponible.")
+        return
+    SONDE.update(le=_iso(maintenant), resultat="en_cours", message="")
+    activite("Test de Claude demandé depuis le site")
+    try:
+        agent.sonder()
+    except LimiteAtteinte as e:
+        SONDE.update(resultat="limite", message=str(e)[:300])
+        if not e.reprise and CLAUDE.etat == "limite" and CLAUDE.jusqu_a > maintenant:
+            CLAUDE.echec("limite", str(e), CLAUDE.jusqu_a)  # pas d'heure annoncée : on garde la précédente
+            return
+        raise  # etape : la pause continue jusqu'à la nouvelle heure de reprise
+    except ClaudeIndisponible as e:
+        SONDE.update(resultat="panne", message=str(e)[:300])
+        raise
+    except Exception as e:
+        SONDE.update(resultat="erreur", message=str(e)[:300])
+        raise
+    SONDE.update(resultat="ok", message="")
+    CLAUDE.ok()
+    log("Claude répond de nouveau (test demandé depuis le site) : la file repart")
+
+
 def en_parallele(items: list, faire, libelle, fils: int = PARALLELE):
     """Applique `faire` à chaque élément, `fils` à la fois.
 
@@ -1005,6 +1043,7 @@ def main():
     threading.Thread(target=battement, daemon=True, name="battement").start()
     prochaine_synchro, dernier_nettoyage = 0.0, float("-inf")
     while not ARRET.is_set():
+        etape("test de Claude", sonder_claude)
         prochaine_synchro = synchro_pronote(prochaine_synchro)
         dernier_nettoyage = tour(kd, dernier_nettoyage)
         attendre(5 if ETAT["reste"] and CLAUDE.disponible() else INTERVALLE)

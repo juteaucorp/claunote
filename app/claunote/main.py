@@ -103,30 +103,30 @@ def etat_service() -> dict:
     return s
 
 
-def bandeau_service() -> tuple[str, str] | None:
-    """Une phrase en haut de chaque page quand quelque chose bloque : (texte, détail)."""
+def bandeau_service() -> tuple[str, str, bool] | None:
+    """Une phrase en haut de chaque page quand quelque chose bloque : (texte, détail, bouton Réessayer Claude)."""
     s = etat_service()
     if not s["connu"]:
         return None
     if not s["vivant"]:
         return (f"Le worker ne répond plus depuis {_heure_fr(s['vu'])} : scans et révisions attendent.",
-                "Sur la VM : docker compose up -d")
+                "Sur la VM : docker compose up -d", False)
     if s.get("arret"):
-        return "Le worker redémarre : il termine le travail en cours.", ""
+        return "Le worker redémarre : il termine le travail en cours.", "", False
     c, k = s["claude"], s["kdrive"]
     if c["etat"] == "limite":
         quand = f" vers {_heure_fr(c['jusqu_a'])}" if c["jusqu_a"] else " dans un moment"
         return (f"Limite de ton forfait Claude atteinte : l'IA reprend{quand}.",
-                "Rien n'est perdu : la file attend et repart toute seule.")
+                "Rien n'est perdu : la file attend et repart toute seule.", True)
     if c["etat"] == "connexion":
         return ("Claude refuse le jeton du forfait : l'IA est en pause.",
-                "Sur la VM : claude setup-token, puis mets le jeton dans .env (CLAUDE_CODE_OAUTH_TOKEN).")
+                "Sur la VM : claude setup-token, puis mets le jeton dans .env (CLAUDE_CODE_OAUTH_TOKEN).", False)
     if c["etat"] == "panne":
         return (f"Claude ne répond pas, nouvel essai à {_heure_fr(c['jusqu_a'])}." if c["jusqu_a"]
-                else "Claude ne répond pas.", "Rien n'est perdu : la file attend.")
+                else "Claude ne répond pas.", "Rien n'est perdu : la file attend.", True)
     if k["etat"] != "ok":
         return (f"kDrive ne répond pas, nouvel essai à {_heure_fr(k['jusqu_a'])}." if k["jusqu_a"]
-                else "kDrive ne répond pas.", "Les analyses et les rangements reprendront tout seuls.")
+                else "kDrive ne répond pas.", "Les analyses et les rangements reprendront tout seuls.", False)
     return None
 
 
@@ -1290,6 +1290,18 @@ def scan():
     return "Scan demandé : le worker vérifie l'inbox dans les 5 secondes."
 
 
+@app.post("/claude/reessayer", response_class=HTMLResponse)
+def claude_reessayer():
+    """Pendant une pause de Claude : le worker fait un tout petit appel et repart si Claude répond.
+
+    Aucun crédit n'est acheté : le worker n'utilise que le jeton du forfait (agent.ENV_FORFAIT) ;
+    si la limite est toujours là, la pause continue simplement.
+    """
+    db.etat_ecrire("claude_sonde", "oui")
+    db.demander_scan()  # réveille le worker
+    return "Test demandé : le worker essaie Claude dans les secondes qui viennent (résultat sur la page État)."
+
+
 @app.get("/etat", response_class=HTMLResponse)
 def page_etat(request: Request):
     """Santé du service : worker, Claude (limite du forfait), kDrive, file d'attente, modèles utilisés."""
@@ -1300,7 +1312,8 @@ def page_etat(request: Request):
     return templates.TemplateResponse(request, "etat.html", {
         "s": s, "heure": _heure_fr, "file": db.file_attente(), "taches": modeles.tableau(), "noms": modeles.NOMS,
         "indispo": indispo, "bilan": db.bilan_ia(24), "appels": db.appels_ia(25), "libelles": modeles.LIBELLES,
-        "maximum": modeles.maximum()})
+        "maximum": modeles.maximum(), "sonde_demandee": db.etat_valeur("claude_sonde") is not None,
+        "sonde": {**(s.get("sonde") or {}), "le": _instant((s.get("sonde") or {}).get("le"))}})
 
 
 @app.get("/health")

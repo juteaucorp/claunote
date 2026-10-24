@@ -96,6 +96,13 @@ ATTENTES_PANNE = (20, 90)  # secondes entre deux essais quand Claude ne répond 
 PARALLELE = min(max(int(os.environ.get("CLAUDE_PARALLELE") or 3), 1), 6)
 _places = threading.BoundedSemaphore(PARALLELE)
 
+# Seul le forfait est utilisé, jamais une facturation à l'usage : une clé API (ANTHROPIC_API_KEY) passerait
+# avant le jeton du forfait et serait facturée par Anthropic. Elle est donc retirée de l'environnement de
+# `claude -p`, qui n'a plus que CLAUDE_CODE_OAUTH_TOKEN. Claude Code n'achète jamais de crédits : au-delà de
+# la limite, il s'arrête (sauf si l'« usage supplémentaire » est activé sur le compte claude.ai).
+FACTURATION_API = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+ENV_FORFAIT = {k: v for k, v in os.environ.items() if k not in FACTURATION_API}
+
 
 class LimiteAtteinte(Exception):
     """Limite d'usage du forfait atteinte : réessayer à `reprise` (None : heure inconnue)."""
@@ -235,7 +242,8 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
         try:
             with _places:
                 debut = time.monotonic()
-                p = subprocess.run(cmd, cwd=cwd, input=entree, capture_output=True, text=True, timeout=timeout)
+                p = subprocess.run(cmd, cwd=cwd, input=entree, capture_output=True, text=True, timeout=timeout,
+                                   env=ENV_FORFAIT)
         except subprocess.TimeoutExpired as e:
             journal(tache=tache, modele=modele, duree=timeout, resultat="erreur", detail="trop long")
             raise ErreurAgent(f"Claude Code trop long ({timeout // 60} min)") from e
@@ -265,6 +273,16 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
             raise echec
         time.sleep(attente)
     raise AssertionError("inatteignable")
+
+
+def sonder():
+    """Le plus petit appel possible (Haiku, une ligne, sans outil) : Claude répond-il de nouveau ?
+
+    Lancé seulement depuis le bouton « Réessayer maintenant » du site, pendant une pause.
+    Lève LimiteAtteinte, ClaudeIndisponible… comme un vrai appel.
+    """
+    appeler_claude("Réponds seulement : OK", Path(tempfile.gettempdir()), modele=modeles.ECHELLE[0],
+                   tache="sonde", timeout=120)
 
 
 def demander(tache: str, prompt: str, cwd: Path, lire=lambda texte: texte, outils: list[str] | None = None,
