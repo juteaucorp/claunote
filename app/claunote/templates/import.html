@@ -7,18 +7,73 @@
 
 <ol class="etapes" aria-label="Étapes d'un import">
   <li><strong>Dossier copié</strong><span>dans l'inbox kDrive ou sur <a href="/deposer">Déposer</a></span></li>
-  <li><strong>Tri sans IA</strong><span>code, doublons, PDF + Word, pages de scans</span></li>
-  <li class="{{ 'actif' if inutiles or groupes }}"><strong>Ton feu vert</strong><span>suppressions, découpage des scans</span></li>
+  <li><strong>Tri sans IA</strong><span>code, doublons, PDF + Word, pages de scans, documents personnels</span></li>
+  <li class="{{ 'actif' if inutiles or groupes or doutes }}"><strong>Ton feu vert</strong><span>suppressions, découpage des scans</span></li>
   <li><strong>Analyse IA</strong><span>un document à la fois, rangé dans kDrive</span></li>
 </ol>
 
-{% if not lots and not inutiles and not groupes %}
+{% if not lots and not inutiles and not groupes and not doutes and not decoupages and not corbeille %}
 <div class="carte">
   <strong>Aucun import pour l'instant.</strong>
   <p class="doux">Copie un dossier entier (avec ses sous-dossiers) dans l'inbox kDrive, ou dépose-le sur la page
   <a href="/deposer">Déposer</a>. Je lis l'ancienne organisation, j'écarte le code et les fichiers de config,
   je relie les PDF à leur version Word et je regroupe les scans page par page.</p>
 </div>
+{% endif %}
+
+{% if doutes %}
+<form method="post" action="/import/personnels" class="carte tri personnels" data-personnels>
+  <div class="entete-section">
+    <h2>Documents personnels ? <span class="compteur">{{ doutes|length }}</span></h2>
+  </div>
+  <p class="doux">Ils ressemblent à des papiers personnels. <strong>L'IA ne les a pas lus.</strong>
+    Supprime-les (corbeille kDrive, 30 jours) ou, si c'est un cours, lance l'analyse.</p>
+  <ul class="lignes fichiers">
+    {% for s in doutes %}
+    <li>
+      <input type="checkbox" name="ids" value="{{ s.id }}" checked aria-label="{{ s.nom }}">
+      <div class="corps">
+        <span class="nom">{{ s.nom }}</span>{% if s.pages %} <span class="doux">· pages {{ s.pages }}</span>{% endif %}
+        <div class="doux">{{ categories.get(s.categorie, 'document personnel') }} · {{ s.raisons|join(' ; ') }}</div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <div class="actions commandes">
+    <button name="action" value="supprimer" class="principal">Supprimer la sélection</button>
+    <button name="action" value="analyser">Ce sont des cours : analyser</button>
+  </div>
+</form>
+{% endif %}
+
+{% if decoupages %}
+<section class="carte decoupages">
+  <div class="entete-section"><h2>Gros scans découpés</h2></div>
+  <p class="doux">Un PDF de plus de {{ seuil_pages }} pages est recoupé en documents (pages blanches et
+    en-têtes, puis Claude sur de petites images), qui sont ensuite analysés un par un.</p>
+  <ul class="lignes fichiers">
+    {% for d in decoupages %}
+    <li>
+      <div class="corps">
+        <span class="nom">{{ d.nom }}</span> <span class="doux">· {{ d.pages }} pages · {{ d.maj_le|paris }}</span>
+        <div class="doux">
+          {% if d.statut == 'fait' %}<strong>{{ d.plan.documents|length }} documents</strong>
+          {%- elif d.statut == 'envoi' %}{{ d.plan.documents|length }} documents, envoi en cours
+          {%- elif d.statut == 'decoupage' %}recherche des débuts de documents ({{ d.coupes|length }} paquet{{ 's' if d.coupes|length > 1 }} de pages lu{{ 's' if d.coupes|length > 1 }})
+          {%- else %}lecture des pages en cours{% endif %}
+          {% if d.plan %}{% if d.plan.blanches %} · {{ d.plan.blanches|length }} page{{ 's' if d.plan.blanches|length > 1 }} blanche{{ 's' if d.plan.blanches|length > 1 }} écartée{{ 's' if d.plan.blanches|length > 1 }}{% endif %}
+          {% for niveau, g in d.plan.sensibles.items() %} · pages {{ g.pages|join(', ') }} personnelles ({{ 'corbeille' if niveau == 'sur' else 'à confirmer' }}){% endfor %}{% endif %}
+        </div>
+        {% if d.plan and d.statut == 'fait' %}
+        <details><summary class="doux">Voir les documents</summary>
+          <ol class="parties">{% for p in d.plan.documents %}<li>{{ p.titre or 'Sans titre' }}{% if p.matiere %} <span class="doux">· {{ p.matiere }}</span>{% endif %} <span class="doux">· p. {{ p.pages[0] }}–{{ p.pages[-1] }}</span></li>{% endfor %}</ol>
+        </details>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
 {% endif %}
 
 {% for lot, fichiers in inutiles.items() %}
@@ -113,7 +168,25 @@
 </section>
 {% endfor %}
 
+{% if corbeille %}
+<details class="carte corbeille">
+  <summary><strong>Documents personnels mis à la corbeille</strong> <span class="doux">· {{ corbeille|length }} en 30 jours, jamais lus par l'IA</span></summary>
+  <ul class="lignes fichiers">
+    {% for s in corbeille %}
+    <li><div class="corps">
+      <span class="nom">{{ s.nom }}</span>{% if s.pages %} <span class="doux">· pages {{ s.pages }}</span>{% endif %}
+      <div class="doux">{{ s.le|paris }} · {{ categories.get(s.categorie, 'document personnel') }} · {{ s.raisons|join(' ; ') }}</div>
+    </div></li>
+    {% endfor %}
+  </ul>
+  <p class="doux">Une erreur ? Restaure le fichier depuis la corbeille kDrive (30 jours) et remets-le dans l'inbox
+    sous un autre nom : s'il est encore repéré, il attendra ton avis ici.</p>
+</details>
+{% endif %}
+
 <style>
+  .parties { margin: 6px 0 0; padding-left: 22px; font-size: .9rem; }
+  .corbeille summary { cursor: pointer; }
   .etapes { list-style: none; padding: 0; margin: 0 0 18px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; counter-reset: etape; }
   .etapes li { position: relative; padding: 10px 12px 10px 42px; border: 1px solid var(--bord); border-radius: 14px; background: var(--carte); font-size: .9rem; line-height: 1.35; }
   .etapes li::before { counter-increment: etape; content: counter(etape); position: absolute; left: 12px; top: 10px; width: 22px; height: 22px; border-radius: 50%;
@@ -173,6 +246,12 @@
           !confirm(`Supprimer ${n} fichier(s) ? Ils partent dans la corbeille kDrive (récupérables 30 jours).`)) e.preventDefault();
     });
   });
+  document.querySelectorAll('[data-personnels]').forEach(form => form.addEventListener('submit', e => {
+    const n = form.querySelectorAll('input[name="ids"]:checked').length;
+    if (!n) { e.preventDefault(); alert('Coche au moins un document.'); return; }
+    if (e.submitter && e.submitter.value === 'supprimer' &&
+        !confirm(`Supprimer ${n} document(s) ? Ils partent dans la corbeille kDrive (récupérables 30 jours).`)) e.preventDefault();
+  }));
   document.querySelectorAll('[data-scans]').forEach(form => {
     const nb = form.querySelector('[data-nb]');
     const maj = () => {

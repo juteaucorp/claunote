@@ -4,8 +4,10 @@ Un dossier copié en entier dans l'inbox forme un « lot ». Une fois le lot com
 nouveau fichier pendant 90 s), il est trié sans IA (importation.py) : fichiers inutiles proposés
 à la suppression sur le site, doublons PDF/Word, pages de scans à fusionner ; puis une seule
 passe IA lit les noms de dossiers pour comprendre l'ancienne organisation.
-Chaque document gardé : téléchargement → analyse Claude Code → base de données → déplacement
-dans archives/<niveau>/<matière>/<type> (ou a-verifier/) + transcription .md à côté.
+Chaque document gardé : téléchargement → garde-fou des documents personnels (sans IA, sensible.py)
+→ analyse Claude Code → base de données → déplacement dans archives/<niveau>/<matière>/<type>
+(ou a-verifier/) + transcription .md à côté. Un très gros scan (une année entière) est d'abord
+découpé en documents (decoupage.py), qui reviennent dans l'inbox et sont analysés un par un.
 Un sous-dossier nommé avec l'année d'étude (« BTS1 », « Terminale »…) fixe le niveau.
 
 Fiabilité (voir la page État du site) :
@@ -28,7 +30,8 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import agent, db, importation, modeles, notifications, pdf, pronote, rangement, revision
+from claunote import (agent, db, decoupage, importation, modeles, notifications, ocr, pdf, pronote, rangement,
+                      revision, sensible)
 from claunote.agent import ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -194,6 +197,8 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dos
     try:
         chemin = kd.download(item["id"], dossier_local / item["name"])
         telecharge = time.monotonic()
+        if avant_analyse(kd, item, chemin, doc_id):
+            return
         a = analyser(chemin, dossiers, indice(dossiers, item["name"]), matieres, memoire(item))
     except ErreurAgent as e:
         shutil.rmtree(memoire(item), ignore_errors=True)
@@ -244,6 +249,183 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dos
     log(f"{statut.replace('_', ' ')} ({modeles.NOMS.get(a.modele, a.modele)}{', second avis' if a.avis else ''}) : "
         f"{item['name']} → {'/'.join(rangement.dossier_doc(doc))}/{nom} "
         f"[téléchargement {telecharge - debut:.0f} s, IA {analyse - telecharge:.0f} s, rangement {fin - analyse:.0f} s]")
+
+
+# --- Avant l'IA : documents personnels et très gros scans -------------------------------
+
+def avant_analyse(kd: KDrive, item: dict, chemin: Path, doc_id: int) -> bool:
+    """Vrai si le fichier ne doit pas être analysé tel quel (personnel, ou gros scan découpé)."""
+    dossiers = item.get("dossiers", [])
+    # Documents des profs, ou fichier que tu as dit « pas personnel » : pas de garde-fou
+    controle = "Pronote" not in dossiers and db.sensible_decision(item["id"]) != "analyser"
+    if controle:
+        v = sensible.examiner_nom(item["name"], dossiers)
+        if v.niveau == "sur":
+            mettre_de_cote(kd, item, doc_id, v)
+            return True
+    if decoupage.a_decouper(chemin):
+        decouper(kd, item, chemin, doc_id)
+        return True
+    if controle:
+        activite(f"Vérification de « {item['name']} » (documents personnels, sans IA)")
+        v = sensible.examiner(chemin, item["name"], dossiers)
+        if v:
+            mettre_de_cote(kd, item, doc_id, v)
+            return True
+    return False
+
+
+def mettre_de_cote(kd: KDrive, item: dict, doc_id: int, v: sensible.Verdict):
+    """Document personnel : corbeille kDrive si c'est sûr, sinon il attend ton avis (page Import)."""
+    dossiers = item.get("dossiers", [])
+    chemin = "/".join(dossiers + [item["name"]])
+    raisons = "; ".join(v.raisons)
+    if v.niveau == "sur":
+        try:
+            kd.delete(item["id"])
+        except httpx.HTTPStatusError as e:  # déjà supprimé à la main
+            log(f"{chemin} : corbeille impossible ({e.response.status_code})")
+        db.import_oublier([item["id"]])
+        db.sensible_noter(item["id"], item["name"], chemin, v.categorie, v.raisons, "corbeille")
+        log(f"document personnel ({v.libelle}) mis à la corbeille kDrive sans analyse : {chemin} ({raisons})")
+    else:
+        db.import_enregistrer(lot_de(item), [importation.Fichier(
+            item["id"], item["name"], dossiers, int(item.get("size") or 0), decision="sensible", raison=raisons)])
+        db.import_marquer([item["id"]], "sensible")
+        db.sensible_noter(item["id"], item["name"], chemin, v.categorie, v.raisons, "doute")
+        log(f"peut-être personnel ({v.libelle}), pas analysé, en attente de ton avis : {chemin} ({raisons})")
+    db.supprimer(doc_id)
+    try:
+        notifications.document_personnel(item["name"], v.libelle, v.niveau == "sur")
+    except Exception as e:
+        log(f"notification impossible : {e}")
+
+
+def decouper(kd: KDrive, item: dict, chemin: Path, doc_id: int):
+    """Très gros scan → documents déposés dans l'inbox à côté de lui. Reprenable à chaque étape.
+
+    L'état (lecture locale, réponses de Claude par paquet, documents envoyés) est gardé en base :
+    une limite du forfait ou un redémarrage reprend où on en était, sans rappeler Claude.
+    """
+    dossiers, nom = item.get("dossiers", []), item["name"]
+    etat = db.decoupage(item["id"]) or {}
+    if etat.get("statut") == "fait":  # fini avant un arrêt : il ne restait qu'à oublier la fiche
+        db.supprimer(doc_id)
+        return
+    if not etat:
+        db.decoupage_maj(item["id"], nom=nom, chemin="/".join(dossiers + [nom]), pages=ocr.nb_pages(chemin))
+    plan = etat.get("plan")
+    if plan is None:
+        plan = planifier_decoupage(item, chemin, etat)
+        if plan is None:
+            return  # arrêt demandé : la suite au prochain démarrage
+    envoyer_decoupage(kd, item, chemin, plan)
+    # L'original : gardé à part (les documents produits en viennent), ou à la corbeille s'il contient
+    # des pages personnelles sûres, pour qu'elles ne restent pas dans tes cours.
+    if (plan["sensibles"].get("sur") or {}).get("pages"):
+        kd.delete(item["id"])
+        devenu = "corbeille kDrive"
+    else:
+        with KDRIVE_VERROU:
+            dest = kd.ensure_path(ETUDES_ID, ["import", "scans-decoupes"] + dossiers)
+        kd.move(item["id"], dest)
+        devenu = "Etudes/import/scans-decoupes"
+    db.import_enregistrer(lot_de(item), [importation.Fichier(item["id"], nom, dossiers, int(item.get("size") or 0))])
+    db.import_marquer([item["id"]], "decoupe")
+    db.decoupage_maj(item["id"], statut="fait")
+    db.supprimer(doc_id)
+    n = len(plan["documents"])
+    log(f"gros scan découpé : {nom} → {n} documents, {len(plan['blanches'])} pages blanches écartées, original → {devenu}")
+    try:
+        notifications.decoupage_fini(nom, n)
+    except Exception as e:
+        log(f"notification impossible : {e}")
+
+
+def planifier_decoupage(item: dict, chemin: Path, etat: dict) -> dict | None:
+    nom = item["name"]
+    miniatures = CACHE_DIR / f"decoupage-{item['id']}"
+    pages = etat.get("lecture")
+    if pages is None or not miniatures.exists():
+        log(f"gros scan : {nom} ({ocr.nb_pages(chemin)} pages), lecture locale de chaque page")
+        pages = decoupage.lire_local(chemin, miniatures, progression=lambda n, t: activite(
+            f"Découpage de « {nom} » : lecture des pages ({n}/{t}), sans IA"))
+        db.decoupage_maj(item["id"], lecture=pages, statut="decoupage")
+    coupes, toutes = dict(etat.get("coupes") or {}), {}
+    precedente = None
+    for i in range(0, len(pages), decoupage.PAQUET):
+        paquet = pages[i:i + decoupage.PAQUET]
+        cle = str(paquet[0]["page"])
+        if cle not in coupes:
+            if ARRET.is_set() or not CLAUDE.disponible():
+                return None
+            activite(f"Découpage de « {nom} » : pages {paquet[0]['page']} à {paquet[-1]['page']} sur {len(pages)}")
+            try:
+                reponse = decoupage.demander_coupes(paquet, miniatures, precedente)
+            except ErreurAgent as e:
+                log(f"découpage de {nom}, pages {cle}+ : réponse de Claude inutilisable ({e}), indices locaux seulement")
+                reponse = decoupage.coupes_locales(paquet)
+            coupes[cle] = {str(k): v for k, v in reponse.items()}
+            db.decoupage_maj(item["id"], coupes=coupes)
+        toutes.update({int(k): v for k, v in coupes[cle].items()})
+        montrees = [p["page"] for p in paquet if not p["blanche"] and not p["sensible"]]
+        if montrees:
+            debut = max((n for n, c in toutes.items() if c.get("nouveau") and n <= montrees[-1]), default=None)
+            precedente = {"page": montrees[-1], **({k: toutes[debut].get(k) for k in ("titre", "matiere")}
+                                                     if debut else {})}
+    plan = decoupage.plan(pages, toutes)
+    db.decoupage_maj(item["id"], plan=plan, statut="envoi")
+    shutil.rmtree(miniatures, ignore_errors=True)
+    return plan
+
+
+def envoyer_decoupage(kd: KDrive, item: dict, chemin: Path, plan: dict):
+    """Chaque document dans l'inbox (même dossier que le gros scan) ; pages personnelles à part."""
+    dossiers, nom = item.get("dossiers", []), item["name"]
+    with KDRIVE_VERROU:  # analyses en parallèle : un dossier n'est pas créé deux fois
+        dest = kd.ensure_path(INBOX_ID, dossiers)
+        perso = kd.ensure_path(ETUDES_ID, ["import", "pages-personnelles"]) if "sur" in plan["sensibles"] else None
+    total = len(plan["documents"])
+    for k, d in enumerate(plan["documents"], 1):
+        if d.get("kdrive_id"):
+            continue
+        activite(f"Découpage de « {nom} » : envoi du document {k}/{total}")
+        contenu = decoupage.extraire(chemin, d["pages"])
+        nom_d = decoupage.nom_partie(nom, k, total, d)
+        envoi = kd.upload(dest, nom_d, contenu, conflict="rename")
+        d["kdrive_id"] = envoi["id"]
+        db.import_enregistrer(lot_de(item), [importation.Fichier(
+            envoi["id"], envoi.get("name") or nom_d, dossiers, len(contenu),
+            raison=f"document {k}/{total} de « {nom} » (pages {decoupage.plages(d['pages'])})")])
+        db.decoupage_maj(item["id"], plan=plan)
+    stem = rangement.slug(PurePosixPath(nom).stem)[:40] or "scan"
+    for niveau, g in plan["sensibles"].items():
+        if g.get("fait"):
+            continue
+        pages = decoupage.plages(g["pages"])
+        nom_s = f"{stem}-pages-{pages.replace(', ', '_')}-personnel.pdf"
+        contenu = decoupage.extraire(chemin, g["pages"])
+        v = sensible.Verdict(niveau, g["categorie"], g["raisons"])
+        if niveau == "sur":
+            envoi = kd.upload(perso, nom_s, contenu, conflict="rename")
+            kd.delete(envoi["id"])
+            db.sensible_noter(envoi["id"], nom, "/".join(dossiers + [nom]), g["categorie"], g["raisons"],
+                              "corbeille", pages)
+            log(f"pages {pages} de {nom} ({v.libelle}) mises à la corbeille kDrive sans analyse")
+        else:
+            envoi = kd.upload(dest, nom_s, contenu, conflict="rename")
+            nom_s = envoi.get("name") or nom_s
+            db.import_enregistrer(lot_de(item), [importation.Fichier(
+                envoi["id"], nom_s, dossiers, len(contenu), decision="sensible", raison="; ".join(g["raisons"]))])
+            db.sensible_noter(envoi["id"], nom_s, "/".join(dossiers + [nom_s]), g["categorie"], g["raisons"],
+                              "doute", pages)
+            log(f"pages {pages} de {nom} peut-être personnelles ({v.libelle}) : en attente de ton avis")
+        g["fait"] = True
+        db.decoupage_maj(item["id"], plan=plan)
+        try:
+            notifications.document_personnel(nom, v.libelle, niveau == "sur", pages)
+        except Exception as e:
+            log(f"notification impossible : {e}")
 
 
 def ranger_doc(kd: KDrive, doc: dict, dossiers: dict[tuple, int]):

@@ -12,7 +12,8 @@ def worker(monkeypatch):
     monkeypatch.setenv("KDRIVE_ETUDES_ID", "1")
     import importlib
 
-    from claunote import worker as w
+    from claunote import db, worker as w
+    monkeypatch.setattr(db, "sensible_decision", lambda kdrive_id: None)
     return importlib.reload(w)
 
 
@@ -520,3 +521,121 @@ def test_analyses_en_parallele_et_arret_a_la_limite(worker, monkeypatch):
         worker.analyser_inbox(None, items)
     # la limite arrête la distribution : les documents suivants attendent le tour d'après
     assert 1 not in faits and len(faits) < len(items[:worker.LOT]) - 1
+
+
+# --- Documents personnels et gros scans ---------------------------------------------------
+
+class KDFichier(KDImport):
+    """Faux kDrive dont les fichiers téléchargés ont un vrai contenu."""
+
+    def __init__(self, contenus):
+        super().__init__({})
+        self.contenus, self.n = contenus, 1000
+
+    def download(self, fid, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(self.contenus[fid])
+        return dest
+
+    def upload(self, dir_id, nom, contenu, conflict="version"):
+        self.n += 1
+        self.envois.append((dir_id, nom, self.n))
+        return {"id": self.n, "name": nom}
+
+
+@pytest.fixture
+def base(worker, monkeypatch, tmp_path):
+    """Base de données en mémoire pour les tables touchées par le garde-fou et le découpage."""
+    b = {"notes": [], "import": [], "marques": [], "supprimes": [], "decoupage": {}, "notifs": []}
+    monkeypatch.setattr(worker, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(worker.db, "creer", lambda kid, nom: 1)
+    monkeypatch.setattr(worker.db, "supprimer", lambda i: b["supprimes"].append(i))
+    monkeypatch.setattr(worker.db, "import_oublier", lambda ids: b["marques"].append((ids, "oublie")))
+    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, fs: b["import"].extend(fs))
+    monkeypatch.setattr(worker.db, "import_marquer", lambda ids, d, **k: b["marques"].append((ids, d)))
+    monkeypatch.setattr(worker.db, "sensible_noter", lambda *a, **k: b["notes"].append(a))
+    monkeypatch.setattr(worker.db, "decoupage", lambda kid: b["decoupage"].get(kid))
+    monkeypatch.setattr(worker.db, "decoupage_maj", lambda kid, **c: b["decoupage"].setdefault(kid, {}).update(c))
+    monkeypatch.setattr(worker.notifications, "document_personnel", lambda *a: b["notifs"].append(a))
+    monkeypatch.setattr(worker.notifications, "decoupage_fini", lambda *a: b["notifs"].append(a))
+    monkeypatch.setattr(worker, "analyser", lambda *a: pytest.fail("un document personnel est parti à l'IA"))
+    return b
+
+
+def test_rib_a_la_corbeille_sans_ia(worker, base):
+    from tests.test_sensible import RIB
+    kd = KDFichier({7: RIB.encode()})
+    worker.traiter(kd, {"id": 7, "name": "notes.txt", "dossiers": ["Vrac"]})
+    assert kd.supprimes == [7] and base["supprimes"] == [1]
+    assert base["notes"][0][:2] == (7, "notes.txt") and base["notes"][0][5] == "corbeille"
+    assert base["notifs"] == [("notes.txt", "coordonnées bancaires", True)]
+
+
+def test_document_douteux_attend_ton_avis(worker, base):
+    kd = KDFichier({7: "Exercice : analysez ce bulletin de paie.".encode()})
+    worker.traiter(kd, {"id": 7, "name": "exo.txt", "dossiers": ["Vrac"]})
+    assert kd.supprimes == [] and base["marques"] == [([7], "sensible")]
+    assert base["notes"][0][5] == "doute" and base["import"][0].decision == "sensible"
+
+
+def test_pas_de_garde_fou_si_tu_as_dit_que_c_est_un_cours(worker, base, monkeypatch):
+    from tests.test_sensible import RIB
+    monkeypatch.setattr(worker.db, "sensible_decision", lambda kid: "analyser")
+    vus = []
+    monkeypatch.setattr(worker, "analyser", lambda chemin, *a: vus.append(chemin.name) or (_ for _ in ()).throw(
+        worker.ErreurAgent("stop")))
+    monkeypatch.setattr(worker.db, "variantes_de", lambda kid: [])
+    monkeypatch.setattr(worker.db, "maj", lambda *a, **k: None)
+    monkeypatch.setattr(worker.db, "import_lot", lambda lot: None)
+    worker.traiter(KDFichier({7: RIB.encode()}), {"id": 7, "name": "exemple-rib-cejm.txt", "dossiers": ["CEJM"]})
+    assert vus == ["exemple-rib-cejm.txt"]
+
+
+def test_gros_scan_decoupe_et_reprise(worker, base, monkeypatch, tmp_path):
+    from pypdf import PdfWriter
+    import io
+    w = PdfWriter()
+    for _ in range(8):
+        w.add_blank_page(100, 100)
+    tampon = io.BytesIO()
+    w.write(tampon)
+    monkeypatch.setattr(worker.decoupage, "SEUIL_PAGES", 5)
+    monkeypatch.setattr(worker.decoupage, "PAQUET", 4)
+    perso = {"niveau": "sur", "categorie": "banque", "raisons": ["IBAN valide"]}
+    lecture = [{"page": n, "blanche": n == 3, "sensible": perso if n == 6 else None, "debut": n in (1, 4),
+                "titre": None, "matiere": None, "mots": 10} for n in range(1, 9)]
+
+    def lire_local(chemin, miniatures, progression=None):
+        miniatures.mkdir(parents=True)
+        return lecture
+    monkeypatch.setattr(worker.decoupage, "lire_local", lire_local)
+    appels = []
+
+    def demander(paquet, miniatures, precedente):
+        appels.append(paquet[0]["page"])
+        if paquet[0]["page"] == 5:
+            raise worker.LimiteAtteinte("limite")
+        return {1: {"nouveau": True, "titre": "Suites"}, 2: {"nouveau": False}, 4: {"nouveau": True, "titre": "VLAN"}}
+    monkeypatch.setattr(worker.decoupage, "demander_coupes", demander)
+    kd = KDFichier({7: tampon.getvalue()})
+    item = {"id": 7, "name": "Année BTS1.pdf", "dossiers": ["Scans"], "size": 1}
+    with pytest.raises(worker.LimiteAtteinte):  # limite du forfait au 2e paquet : on reprendra
+        worker.traiter(kd, item)
+    assert base["decoupage"][7]["statut"] == "decoupage" and list(base["decoupage"][7]["coupes"]) == ["1"]
+    assert kd.envois == []
+
+    def demander_ensuite(paquet, miniatures, precedente):
+        appels.append(paquet[0]["page"])
+        assert precedente == {"page": 4, "titre": "VLAN", "matiere": None}
+        return {5: {"nouveau": False}, 7: {"nouveau": True, "titre": "DS anglais"}, 8: {"nouveau": False}}
+    monkeypatch.setattr(worker.decoupage, "demander_coupes", demander_ensuite)
+    worker.traiter(kd, item)
+    assert appels == [1, 5, 5]  # le 1er paquet n'est pas redemandé à Claude
+    noms = [e[1] for e in kd.envois]
+    assert noms[:3] == ["annee-bts1-1-suites.pdf", "annee-bts1-2-vlan.pdf", "annee-bts1-3-ds-anglais.pdf"]
+    assert noms[3].startswith("annee-bts1-pages-6-personnel") and kd.supprimes == [1004, 7]
+    plan = base["decoupage"][7]["plan"]
+    assert [d["pages"] for d in plan["documents"]] == [[1, 2], [4, 5], [7, 8]]
+    assert [f.raison for f in base["import"][:1]] == ["document 1/3 de « Année BTS1.pdf » (pages 1-2)"]
+    assert base["decoupage"][7]["statut"] == "fait" and ([7], "decoupe") in base["marques"]
+    assert ("Année BTS1.pdf", 3) in base["notifs"]

@@ -137,3 +137,21 @@ class KDrive:
                   "total_size": len(content), "conflict": conflict}
         return self._rejouer(lambda: self._data(self.http.post(self._url("/upload", upload=True), params=params,
                                                                content=content)), rejouable=conflict != "rename")
+
+    def upload_flux(self, dir_id: int, name: str, fichier, taille: int, conflict: str = "rename") -> dict:
+        """Envoi d'un gros fichier (scan d'une année entière) lu par morceaux, sans le charger en mémoire.
+
+        `fichier` : objet fichier binaire, relu depuis le début à chaque essai.
+        """
+        params = {"directory_id": dir_id, "file_name": name, "total_size": taille, "conflict": conflict}
+
+        def morceaux():
+            fichier.seek(0)
+            while bloc := fichier.read(1024 * 1024):
+                yield bloc
+
+        def envoyer():
+            return self._data(self.http.post(self._url("/upload", upload=True), params=params, content=morceaux(),
+                                              headers={"Content-Length": str(taille)}, timeout=httpx.Timeout(60, write=600)))
+        return self._rejouer(envoyer, rejouable=conflict != "rename")
+

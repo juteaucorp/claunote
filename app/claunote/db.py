@@ -215,6 +215,34 @@ CREATE TABLE IF NOT EXISTS condenses (
 DELETE FROM condenses WHERE cree_le < now() - interval '90 days';
 """
 
+# Garde-fou des documents personnels et découpage des gros scans (sensible.py, decoupage.py)
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS sensibles (
+    id         SERIAL PRIMARY KEY,
+    kdrive_id  BIGINT NOT NULL,
+    nom        TEXT NOT NULL,
+    chemin     TEXT NOT NULL DEFAULT '',
+    categorie  TEXT,
+    raisons    TEXT[] NOT NULL DEFAULT '{}',
+    pages      TEXT,                                 -- pages retirées d'un gros scan (« 12-13 »)
+    decision   TEXT NOT NULL,                        -- corbeille, doute, analyser (pas personnel), supprime
+    le         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sensibles_kdrive ON sensibles (kdrive_id);
+CREATE TABLE IF NOT EXISTS decoupages (
+    kdrive_id  BIGINT PRIMARY KEY,                   -- le gros scan d'origine
+    nom        TEXT NOT NULL DEFAULT '',
+    chemin     TEXT NOT NULL DEFAULT '',
+    pages      INT NOT NULL DEFAULT 0,
+    statut     TEXT NOT NULL DEFAULT 'lecture',      -- lecture, decoupage, envoi, fait
+    lecture    JSONB,                                -- une entrée par page (lecture locale)
+    coupes     JSONB NOT NULL DEFAULT '{}',          -- réponses de Claude par paquet de pages
+    plan       JSONB,                                -- documents produits (pages, titre, kdrive_id)
+    cree_le    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""
+
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
           "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note",
           "variante_kdrive_id", "variante_nom", "essais", "modele", "avis"}
@@ -1040,11 +1068,12 @@ def import_basculer(ancien: int, nouveau: int):
 
 
 def nb_import_a_confirmer() -> int:
-    """Fichiers inutiles proposés à la suppression + groupes de scans au découpage incertain."""
+    """Fichiers inutiles proposés à la suppression, scans au découpage incertain, documents peut-être personnels."""
     with connect() as c:
         return c.execute(
             """SELECT (SELECT count(*) FROM import_fichiers WHERE decision = 'inutile')
-                    + (SELECT count(DISTINCT groupe) FROM import_fichiers WHERE decision = 'page' AND NOT sur) AS n"""
+                    + (SELECT count(DISTINCT groupe) FROM import_fichiers WHERE decision = 'page' AND NOT sur)
+                    + (SELECT count(*) FROM sensibles WHERE decision = 'doute') AS n"""
         ).fetchone()["n"]
 
 
@@ -1178,3 +1207,62 @@ def file_attente() -> dict:
                       (SELECT count(*) FROM documents WHERE statut = 'reclasser') AS reclassements,
                       (SELECT count(*) FROM revisions WHERE statut = 'en_attente') AS revisions,
                       (SELECT count(*) FROM campagnes WHERE statut = 'en_attente') AS campagnes""").fetchone()
+
+
+# --- Documents personnels (sensible.py) --------------------------------------------------
+
+def sensible_noter(kdrive_id: int, nom: str, chemin: str, categorie: str | None, raisons: list[str],
+                   decision: str, pages: str | None = None) -> int:
+    with connect() as c:
+        return c.execute(
+            """INSERT INTO sensibles (kdrive_id, nom, chemin, categorie, raisons, pages, decision)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (kdrive_id, nom, chemin, categorie, raisons, pages, decision)).fetchone()["id"]
+
+
+def sensible_decision(kdrive_id: int) -> str | None:
+    """Dernière décision connue pour ce fichier (« analyser » : tu as dit que ce n'était pas personnel)."""
+    with connect() as c:
+        r = c.execute("SELECT decision FROM sensibles WHERE kdrive_id = %s ORDER BY id DESC LIMIT 1",
+                      (kdrive_id,)).fetchone()
+    return r["decision"] if r else None
+
+
+def sensibles(decision: str | None = None, jours: int = 30):
+    with connect() as c:
+        if decision:
+            return c.execute("SELECT * FROM sensibles WHERE decision = %s ORDER BY id DESC", (decision,)).fetchall()
+        return c.execute("SELECT * FROM sensibles WHERE decision IN ('corbeille', 'supprime') "
+                         "AND le > now() - make_interval(days => %s) ORDER BY id DESC LIMIT 100", (jours,)).fetchall()
+
+
+def sensible_choisir(ids: list[int], decision: str) -> list[dict]:
+    """Doutes tranchés sur le site ; renvoie les lignes concernées."""
+    with connect() as c:
+        return c.execute("UPDATE sensibles SET decision = %s, le = now() WHERE id = ANY(%s) AND decision = 'doute' "
+                         "RETURNING *", (decision, ids)).fetchall()
+
+
+# --- Gros scans découpés (decoupage.py) -----------------------------------------------------
+
+def decoupage(kdrive_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM decoupages WHERE kdrive_id = %s", (kdrive_id,)).fetchone()
+
+
+def decoupage_maj(kdrive_id: int, **champs):
+    """Crée ou complète l'état d'un découpage (reprise après une limite, une panne, un redémarrage)."""
+    permis = {"nom", "chemin", "pages", "statut", "lecture", "coupes", "plan"}
+    champs = {k: (Jsonb(v) if k in {"lecture", "coupes", "plan"} and v is not None else v)
+              for k, v in champs.items() if k in permis}
+    cols = ["kdrive_id", *champs]
+    maj = ", ".join(f"{k} = EXCLUDED.{k}" for k in champs) + ", maj_le = now()"
+    with connect() as c:
+        c.execute(f"INSERT INTO decoupages ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
+                  f"ON CONFLICT (kdrive_id) DO UPDATE SET {maj}", (kdrive_id, *champs.values()))
+
+
+def decoupages(limite: int = 10):
+    with connect() as c:
+        return c.execute("SELECT kdrive_id, nom, chemin, pages, statut, plan, coupes, maj_le FROM decoupages "
+                         "ORDER BY maj_le DESC LIMIT %s", (limite,)).fetchall()

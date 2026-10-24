@@ -90,3 +90,22 @@ def test_envoi_rename_pas_rejoue_s_il_est_peut_etre_parti(monkeypatch):
     with pytest.raises(kdrive.KDriveIndisponible):
         make(coupe).upload(1, "a.pdf", b"x", conflict="rename")
     assert len(vus) == 4  # connexion impossible : rien n'est parti, on peut réessayer
+
+
+def test_upload_flux_par_morceaux_avec_taille(monkeypatch):
+    import io
+    import claunote.kdrive as k
+    monkeypatch.setattr(k.time, "sleep", lambda s: None)
+    recus = []
+
+    def handler(req):
+        corps = req.read()
+        recus.append((req.headers.get("content-length"), req.headers.get("transfer-encoding"), len(corps)))
+        if len(recus) == 1:
+            return httpx.Response(429)  # refusé avant traitement : renvoyé depuis le début
+        return httpx.Response(200, json={"data": {"id": 9, "name": req.url.params["file_name"]}})
+
+    contenu = io.BytesIO(b"x" * (3 * 1024 * 1024 + 5))
+    r = make(handler).upload_flux(3, "annee.pdf", contenu, 3 * 1024 * 1024 + 5)
+    assert r == {"id": 9, "name": "annee.pdf"}
+    assert recus == [(str(3 * 1024 * 1024 + 5), None, 3 * 1024 * 1024 + 5)] * 2
