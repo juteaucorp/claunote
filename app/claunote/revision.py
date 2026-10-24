@@ -422,7 +422,7 @@ def entree_programme(consigne: str, matieres: list[dict], evenements: list[dict]
     parties = [f"Contexte donné par l'élève :\n{consigne.strip() or '(aucun)'}", "Matières :"]
     for m in matieres:
         supports = ", ".join(GENRES[g] for g in m["supports"]) or "aucun"
-        cours = "; ".join(m["cours"][:25]) or "?"
+        cours = "; ".join(m["cours"]) or "?"
         parties.append(f"- {m['matiere']} ({m['niveau']}){' sur « ' + m['sujet'] + ' »' if m.get('sujet') else ''}"
                        f" : supports préparés : {supports}. Cours : {cours}")
     if evenements:

@@ -216,7 +216,7 @@ est au programme et l'historique **Déjà fait** (filtres par type, matière, re
   le web prend un peu plus de temps et de forfait.
 - Tu peux **cocher les cours** à utiliser, et donner un **contexte** (consignes du prof, points faibles…).
   Sans cours cochés, le sujet sert de recherche dans la matière ; s'il ne trouve rien, toute la matière est utilisée.
-- **Campagne** : plusieurs matières × plusieurs supports d'un coup (24 au maximum) + un **programme
+- **Campagne** : plusieurs matières × plusieurs supports d’un coup (sans limite de nombre, générés l’un après l’autre) + un **programme
   jour par jour** sur la période choisie, qui tient compte de ton contexte et des évaluations Pronote.
   Les tâches se cochent sur la page de la campagne ; celles du jour apparaissent sur Aujourd'hui et
   dans le rappel quotidien. Une seule notification quand tout est prêt.
