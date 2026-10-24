@@ -134,8 +134,10 @@
   .carte.accent { border-color: var(--accent); background: var(--accent-pale); }
   .doux { color: var(--doux); font-size: .92rem; }
   .alerte { color: var(--alerte); }
-  .bandeau { display: flex; gap: 12px; align-items: flex-start; text-decoration: none; color: var(--texte); border-color: var(--alerte); }
+  .bandeau { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; border-color: var(--alerte); }
+  .bandeau a { flex: 1 1 220px; display: flex; gap: 12px; align-items: flex-start; text-decoration: none; color: var(--texte); }
   .bandeau svg { flex: none; color: var(--alerte); margin-top: 2px; }
+  .bandeau button { flex: none; margin: 0; }
   .fil { color: var(--doux); font-size: .9rem; margin: 0 0 6px; }
   .fil a { color: var(--doux); }
 
@@ -282,7 +284,7 @@
 <main>
   {% if not sans_nav %}<p id="retour-scan" class="carte accent"></p>
   {% set panne = bandeau_service() if not chemin.startswith('/etat') else None %}
-  <div id="maj-bandeau" class="maj">{% if panne %}<a class="carte bandeau" href="/etat">{{ icone('etat', 20) }}<span><strong>{{ panne[0] }}</strong>{% if panne[1] %}<br><span class="doux">{{ panne[1] }}</span>{% endif %}</span></a>{% endif %}</div>
+  <div id="maj-bandeau" class="maj">{% if panne %}<div class="carte bandeau"><a href="/etat">{{ icone('etat', 20) }}<span><strong>{{ panne[0] }}</strong>{% if panne[1] %}<br><span class="doux">{{ panne[1] }}</span>{% endif %}</span></a>{% if panne[2] %}<button hx-post="/claude/reessayer" hx-target="#retour-scan" hx-swap="innerHTML" title="Un tout petit appel à Claude : s'il répond, la file repart. Aucun crédit acheté.">Réessayer</button>{% endif %}</div>{% endif %}</div>
   {% if mdp_par_defaut() and not chemin.startswith('/compte') %}<p class="carte accent">⚠️ Tu utilises le mot de passe par défaut
     (<code>admin</code> / <code>claunote</code>). <a href="/compte">Change-le maintenant</a>.</p>{% endif %}
   {% endif %}
