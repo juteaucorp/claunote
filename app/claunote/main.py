@@ -705,7 +705,6 @@ def fichier_import(kdrive_id: int):
 
 
 HISTORIQUE_PAR_PAGE = 20
-MAX_CAMPAGNE = 24  # révisions générées par campagne : le forfait Pro les passe l'une après l'autre
 
 
 MAX_PIECES = 8                      # fichiers joints à une révision ou une campagne
@@ -930,7 +929,7 @@ def nouvelle_campagne(request: Request):
     aujourdhui = dt.datetime.now(pronote.PARIS).date()
     lundi = aujourdhui + dt.timedelta(days=7 - aujourdhui.weekday())
     return templates.TemplateResponse(request, "campagne_nouvelle.html", {
-        "par_niveau": par_niveau, "niveaux": niveaux, "genres": revision.GENRES, "max": MAX_CAMPAGNE,
+        "par_niveau": par_niveau, "niveaux": niveaux, "genres": revision.GENRES,
         "debut": aujourdhui, "fin": lundi + dt.timedelta(days=4)})
 
 
@@ -950,8 +949,6 @@ async def creer_campagne(request: Request):
     matieres = [m for m in f.getlist("matieres") if "|" in m]
     if not genres or not matieres:
         raise HTTPException(400, "choisis au moins une matière et un type de support")
-    if len(genres) * len(matieres) > MAX_CAMPAGNE:
-        raise HTTPException(400, f"{MAX_CAMPAGNE} supports au maximum par campagne")
     demandes = []
     for nm in matieres:
         niveau, _, matiere = nm.partition("|")

@@ -124,7 +124,6 @@
   (() => {
     const form = document.getElementById("campagne");
     if (!form) return;
-    const MAX = {{ max }};
     const MODELES = {
       blanc: { titre: "Semaine de BTS blanc", genres: ["examen", "fiche"],
         consigne: "Épreuves blanches du … au … :\n- lundi : … (… h)\n- mardi : … (… h)\nJe veux m'entraîner en conditions réelles et relire les corrigés le soir." },
@@ -153,9 +152,10 @@
         detail.textContent = ""; bouton.disabled = true; return;
       }
       titre.textContent = `${n} support${n > 1 ? "s" : ""} + le programme`;
-      detail.textContent = n > MAX ? `Maximum ${MAX} : retire une matière ou un support.`
-        : `Environ ${Math.max(5, Math.round(n * 2.5))} min de génération, l'un après l'autre. Une notification te prévient quand tout est prêt.`;
-      bouton.disabled = n > MAX;
+      const min = Math.max(5, Math.round(n * 2.5));
+      const duree = min < 90 ? `${min} min` : `${Math.round(min / 60)} h`;
+      detail.textContent = `Environ ${duree} de génération, l'un après l'autre (pauses comprises si le forfait Claude sature). Une notification te prévient quand tout est prêt.`;
+      bouton.disabled = false;
     };
     form.addEventListener("change", maj);
     maj();
