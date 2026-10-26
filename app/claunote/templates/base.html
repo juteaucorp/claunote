@@ -86,6 +86,7 @@
   .feuille-haut svg { width: 20px; height: 20px; color: var(--doux); }
   .feuille-haut form { margin: 0; }
   .feuille-haut .badge { margin-left: auto; }
+  .feuille-haut a small, .feuille a small { display: block; font-size: .78rem; font-weight: 400; color: var(--doux); line-height: 1.3; }
   .titre-menu { grid-column: 1 / -1; padding: 8px 10px 2px; font-size: .7rem; font-weight: 700; letter-spacing: .06em;
     text-transform: uppercase; color: var(--doux); }
   .titre-menu:first-child { padding-top: 4px; }
@@ -242,25 +243,10 @@
 {% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
 {% set en_pause = analyses_en_pause() %}
 {% macro liens_plus() %}
-      <span class="titre-menu">Ajouter</span>
-      <a href="/deposer">{{ icone('deposer') }}Déposer</a>
-      <a href="/import">{{ icone('organiser') }}Import de dossiers{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
-      <span class="titre-menu">Réviser</span>
-      <a href="/demander">{{ icone('bulle') }}Une question</a>
-      <a href="/cartes">{{ icone('cartes') }}Flashcards{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
-      <span class="titre-menu">Ranger</span>
-      <a href="/a-verifier">{{ icone('verifier') }}À vérifier{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>
-      <a href="/organiser">{{ icone('organiser') }}Organiser</a>
-      <a href="/organiser/matieres">{{ icone('fusion') }}Matières en double</a>
-      <a href="/hors-cours">{{ icone('hors') }}Hors cours</a>
-      <span class="titre-menu">Suivi</span>
-      <a href="/analyses">{{ icone('scan') }}Analyses{% if en_pause %}<span class="badge">pause</span>{% endif %}</a>
-      <a href="/etat">{{ icone('etat') }}État du service</a>
-      <a href="/notifications">{{ icone('cloche') }}Notifications</a>
-      <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" onclick="this.closest('details').open = false">{{ icone('relancer') }}Scanner l'inbox</button>
-      <span class="titre-menu">Compte</span>
-      <a href="/compte">{{ icone('compte') }}Compte</a>
-      <form method="post" action="/deconnexion"><button>{{ icone('sortie') }}Déconnexion</button></form>
+      <a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
+      <a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>
+      <a href="/analyses">{{ icone('etat') }}<span>Activité<small>analyses, état du service</small></span>{% if en_pause %}<span class="badge">pause</span>{% endif %}</a>
+      <a href="/compte">{{ icone('compte') }}<span>Réglages<small>compte, notifications</small></span></a>
 {% endmacro %}
 <header>
   <div class="barre">
@@ -308,6 +294,16 @@
   <div id="contenu"{% if vivant %} data-vivant="{{ vivant }}" data-empreinte="{{ contenu_html|empreinte }}"{% endif %}>{{ contenu_html }}</div>
   {% if false %}{% block contenu %}{% endblock %}{% block vivant %}{% endblock %}{% endif %}
 </main>
+<script>
+  // Sur ordinateur : « / » place le curseur dans la recherche (de la page, sinon de l'en-tête)
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+    const cible = e.target;
+    if (cible.closest && cible.closest("input, textarea, select, [contenteditable]")) return;
+    const champ = document.querySelector("main input[name=q], main textarea[name=question], header input[name=q]");
+    if (champ) { e.preventDefault(); champ.focus(); champ.select && champ.select(); }
+  });
+</script>
 <script>
   // Menus « Plus » : se ferment en touchant ailleurs
   document.addEventListener("click", (e) => {

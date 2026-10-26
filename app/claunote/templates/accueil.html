@@ -10,7 +10,8 @@
 <h1>Aujourd'hui</h1>
 
 <form action="/recherche" class="recherche-accueil">
-  {{ icone('recherche', 20) }}<input name="q" placeholder="Chercher dans tous tes cours…" aria-label="Rechercher" enterkeyhint="search">
+  {{ icone('recherche', 20) }}<input name="q" placeholder="Chercher, ou poser une question à l'IA…" aria-label="Rechercher ou demander" enterkeyhint="search" required>
+  <button formaction="/demander" formmethod="post" class="demander-ia" title="Poser la question à l'IA (elle lit tous tes documents)">{{ icone('bulle', 18) }}<span>Demander</span></button>
 </form>
 
 {% set attente = nb_a_verifier() %}
@@ -127,6 +128,11 @@
   .date-jour { margin: 0; }
   .recherche-accueil { display: flex; align-items: center; gap: 8px; background: var(--carte); border: 1px solid var(--bord); border-radius: 999px; padding: 0 16px; color: var(--doux); margin-bottom: 14px; }
   .recherche-accueil input { flex: 1; border: 0; background: none; padding: 12px 0; outline: none; min-height: 0; }
+  .recherche-accueil { padding-right: 6px; }
+  .recherche-accueil .demander-ia { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; min-height: 0;
+    border-radius: 999px; border: 0; background: var(--accent-pale); color: var(--accent-fonce); font-weight: 600; }
+  .recherche-accueil input { min-width: 0; }
+  @media (max-width: 480px) { .recherche-accueil .demander-ia span { display: none; } .recherche-accueil .demander-ia { padding: 8px; } }
   .ligne-lien { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--texte); }
   .ligne-lien span { flex: 1; }
   .tuile-cartes { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

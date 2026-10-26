@@ -170,6 +170,37 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS avis TEXT;                       
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS relire BOOLEAN NOT NULL DEFAULT false;
 -- Fichier de la file d'analyse à lire sans Claude (choisi sur la page Analyses)
 ALTER TABLE import_fichiers ADD COLUMN IF NOT EXISTS local BOOLEAN NOT NULL DEFAULT false;
+-- Moteur choisi à la main pour un fichier de la file : local, claude (vide : selon le réglage)
+ALTER TABLE import_fichiers ADD COLUMN IF NOT EXISTS moteur TEXT;
+UPDATE import_fichiers SET moteur = 'local', local = false WHERE local;
+-- Contrôles du modèle local par Claude : mesure de sa fiabilité (page Activité)
+CREATE TABLE IF NOT EXISTS controles (
+    id      SERIAL PRIMARY KEY,
+    le      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    tache   TEXT NOT NULL,                     -- analyse, question…
+    accord  BOOLEAN NOT NULL,                  -- Claude a confirmé le travail du local
+    detail  TEXT
+);
+DELETE FROM controles WHERE le < now() - interval '90 days';
+-- Passages des documents (index.py) : la recherche porte sur des morceaux de ~1 200 caractères, par les mots
+-- et, si pgvector et le modèle d'embeddings local sont là, par le sens
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS indexe_le TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS passages (
+    id           SERIAL PRIMARY KEY,
+    document_id  INT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    rang         INT NOT NULL,
+    texte        TEXT NOT NULL,
+    recherche    tsvector GENERATED ALWAYS AS (to_tsvector('french', texte)) STORED
+);
+CREATE INDEX IF NOT EXISTS passages_document ON passages (document_id, rang);
+CREATE INDEX IF NOT EXISTS passages_recherche ON passages USING GIN (recherche);
+DO $$ BEGIN
+    CREATE EXTENSION IF NOT EXISTS vector;
+    ALTER TABLE passages ADD COLUMN IF NOT EXISTS vecteur vector(768);
+    CREATE INDEX IF NOT EXISTS passages_vecteur ON passages USING hnsw (vecteur vector_cosine_ops);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pgvector indisponible : recherche par les mots seulement (%)', SQLERRM;
+END $$;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS essais INT NOT NULL DEFAULT 0;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS pdf_essais INT NOT NULL DEFAULT 0; -- copie du PDF dans kDrive
 ALTER TABLE import_lots ADD COLUMN IF NOT EXISTS a_comprendre BOOLEAN NOT NULL DEFAULT false;  -- passe IA à faire
@@ -271,6 +302,7 @@ CREATE TABLE IF NOT EXISTS messages (
     cree_le          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages (conversation_id, id);
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS detail TEXT;  -- qui a répondu : modèle local, vérifié par Claude…
 -- Réponse interrompue par un redémarrage du site (elle prend 5 min au plus)
 UPDATE messages SET statut = 'erreur', erreur = 'Réponse interrompue (redémarrage du site) : renvoie la question.'
  WHERE statut = 'en_attente' AND cree_le < now() - interval '10 minutes';
@@ -1355,7 +1387,7 @@ def decoupages(limite: int = 10):
 # --- Demander (chat) -----------------------------------------------------------
 
 def cours_pour_question(requete: str, niveau: str | None = None, matiere: str | None = None, limite: int = 5,
-                        avec_texte: bool = False):
+                        avec_texte: bool = False, statuts=("classe",)):
     """Cours classés qui contiennent des mots de la question (« mot1 | mot2 »), les plus pertinents d'abord,
     avec un extrait où les mots sont entre ** (Markdown gras)."""
     if not requete.strip():
@@ -1363,16 +1395,17 @@ def cours_pour_question(requete: str, niveau: str | None = None, matiere: str | 
     texte = ", transcription" if avec_texte else ""
     with connect() as c:
         return c.execute(
-            f"""SELECT id, nom, titre, niveau, matiere, type, resume{texte},
+            f"""SELECT id, nom, titre, niveau, matiere, type, statut, resume{texte},
                        ts_headline('french', coalesce(transcription, ''), requete,
                                    'StartSel=**, StopSel=**, MaxFragments=2, MaxWords=35, MinWords=12, '
                                    'FragmentDelimiter=" … "') AS extrait
                 FROM documents, to_tsquery('french', %(q)s) AS requete
-                WHERE statut = 'classe' AND recherche @@ requete
+                WHERE statut = ANY(%(statuts)s) AND recherche @@ requete
                   AND (%(niveau)s::text IS NULL OR niveau = %(niveau)s)
                   AND (%(matiere)s::text IS NULL OR matiere = %(matiere)s)
                 ORDER BY ts_rank(recherche, requete) DESC LIMIT %(limite)s""",
-            {"q": requete, "niveau": niveau or None, "matiere": matiere or None, "limite": limite}).fetchall()
+            {"q": requete, "niveau": niveau or None, "matiere": matiere or None, "limite": limite,
+             "statuts": list(statuts)}).fetchall()
 
 
 def creer_conversation(titre: str, niveau: str | None = None, matiere: str | None = None) -> int:
@@ -1419,12 +1452,12 @@ def messages(conv_id: int):
 
 
 def maj_message(msg_id: int, statut: str, contenu: str = "", reperes=None, web=None, modele: str | None = None,
-                erreur: str | None = None, role: str | None = None):
+                erreur: str | None = None, role: str | None = None, detail: str | None = None):
     """`role` : « local » quand l'IA, en pause, a été remplacée par la recherche dans les cours."""
     with connect() as c:
         c.execute("UPDATE messages SET statut = %s, contenu = %s, reperes = %s, sources_web = %s, modele = %s, "
-                  "erreur = %s, role = coalesce(%s, role) WHERE id = %s",
-                  (statut, contenu, Jsonb(reperes or {}), Jsonb(web or []), modele, erreur, role, msg_id))
+                  "erreur = %s, role = coalesce(%s, role), detail = %s WHERE id = %s",
+                  (statut, contenu, Jsonb(reperes or {}), Jsonb(web or []), modele, erreur, role, detail, msg_id))
 
 
 def voisins(requete: str, limite: int = 12):
@@ -1445,7 +1478,7 @@ def file_analyse(limite: int = 200):
     """Fichiers de l'inbox qui attendent l'analyse (ou suspendus), les documents des profs d'abord."""
     with connect() as c:
         return c.execute(
-            """SELECT f.kdrive_id, f.nom, f.chemin, f.lot, f.taille, f.decision, f.local, f.cree_le,
+            """SELECT f.kdrive_id, f.nom, f.chemin, f.lot, f.taille, f.decision, f.moteur, f.cree_le,
                       d.id AS doc_id, coalesce(d.essais, 0) AS essais, coalesce(d.relire, false) AS attend_claude
                FROM import_fichiers f LEFT JOIN documents d ON d.kdrive_id = f.kdrive_id
                WHERE f.categorie = 'document' AND f.decision IN ('analyser', 'suspendu') AND NOT f.dossier
@@ -1455,9 +1488,9 @@ def file_analyse(limite: int = 200):
 
 
 def file_choisir(ids: list[int], action: str) -> int:
-    """Action de masse sur la file : suspendre, reprendre, local, claude, supprimer."""
-    sql = {"suspendre": "decision = 'suspendu'", "reprendre": "decision = 'analyser'",
-           "local": "local = true", "claude": "local = false", "supprimer": "decision = 'supprimer'"}[action]
+    """Action de masse sur la file : suspendre, reprendre, local, claude, auto (selon le réglage), supprimer."""
+    sql = {"suspendre": "decision = 'suspendu'", "reprendre": "decision = 'analyser'", "local": "moteur = 'local'",
+           "claude": "moteur = 'claude'", "auto": "moteur = NULL", "supprimer": "decision = 'supprimer'"}[action]
     avant = {"suspendre": "('analyser')", "reprendre": "('suspendu')"}.get(action, "('analyser', 'suspendu')")
     with connect() as c, c.transaction():
         n = c.execute(f"UPDATE import_fichiers SET {sql} WHERE kdrive_id = ANY(%s) AND decision IN {avant}",
@@ -1467,13 +1500,13 @@ def file_choisir(ids: list[int], action: str) -> int:
     return n
 
 
-def import_suspendus_locaux(ids: list[int]) -> tuple[set[int], set[int]]:
-    """(fichiers suspendus, fichiers à lire sans Claude) parmi ces fichiers de l'inbox."""
+def import_choix(ids: list[int]) -> tuple[set[int], dict[int, str]]:
+    """(fichiers suspendus, {fichier: moteur choisi à la main}) parmi ces fichiers de l'inbox."""
     with connect() as c:
-        rows = c.execute("SELECT kdrive_id, decision, local FROM import_fichiers WHERE kdrive_id = ANY(%s) "
-                         "AND (decision = 'suspendu' OR local)", (ids,)).fetchall()
+        rows = c.execute("SELECT kdrive_id, decision, moteur FROM import_fichiers WHERE kdrive_id = ANY(%s) "
+                         "AND (decision = 'suspendu' OR moteur IS NOT NULL)", (ids,)).fetchall()
     return ({r["kdrive_id"] for r in rows if r["decision"] == "suspendu"},
-            {r["kdrive_id"] for r in rows if r["local"]})
+            {r["kdrive_id"]: r["moteur"] for r in rows if r["moteur"]})
 
 
 def a_relire(limite: int = 10):
@@ -1498,3 +1531,128 @@ def marquer_relire(ids: list[int], valeur: bool = True) -> int:
 def annuler_relectures() -> int:
     with connect() as c:
         return c.execute("UPDATE documents SET relire = false WHERE relire").rowcount
+
+
+def noter_controle(tache: str, accord: bool, detail: str = ""):
+    with connect() as c:
+        c.execute("INSERT INTO controles (tache, accord, detail) VALUES (%s, %s, %s)", (tache, accord, detail[:500]))
+
+
+def fiabilite_locale(jours: int = 30) -> dict:
+    """Accord du modèle local avec Claude sur les contrôles récents."""
+    with connect() as c:
+        r = c.execute("SELECT count(*) AS n, count(*) FILTER (WHERE accord) AS accords FROM controles "
+                      "WHERE le > now() - make_interval(days => %s)", (jours,)).fetchone()
+        derniers = c.execute("SELECT le, tache, accord, detail FROM controles ORDER BY le DESC LIMIT 8").fetchall()
+    return {"n": r["n"], "accords": r["accords"], "taux": r["accords"] / r["n"] if r["n"] else None,
+            "derniers": derniers}
+
+
+# --- Passages (index.py) -----------------------------------------------------------------
+
+STATUTS_UTILES = ("classe", "a_verifier", "hors_cours")  # tout ce qui a été lu, même rangé à part
+DISTANCE_MAX = 0.6  # distance cosinus au-delà de laquelle un passage n'a plus de rapport avec la question
+_vecteurs = {"ok": None}
+
+
+def vecteurs_possibles() -> bool:
+    """pgvector est installé dans la base (image pgvector/pgvector de docker-compose)."""
+    if _vecteurs["ok"] is None:
+        with connect() as c:
+            _vecteurs["ok"] = c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                                        "WHERE table_name = 'passages' AND column_name = 'vecteur') AS ok"
+                                        ).fetchone()["ok"]
+    return _vecteurs["ok"]
+
+
+def a_indexer(limite: int = 20):
+    """Documents lus dont les passages manquent ou sont plus anciens que la dernière modification."""
+    with connect() as c:
+        return c.execute("SELECT id, nom, titre, transcription FROM documents WHERE statut = ANY(%s) "
+                         "AND coalesce(transcription, '') <> '' AND (indexe_le IS NULL OR indexe_le < maj_le) "
+                         "ORDER BY maj_le DESC LIMIT %s", (list(STATUTS_UTILES), limite)).fetchall()
+
+
+def remplacer_passages(doc_id: int, textes: list[str], vecteurs: list | None = None):
+    avec = vecteurs is not None and vecteurs_possibles()
+    with connect() as c, c.transaction():
+        c.execute("DELETE FROM passages WHERE document_id = %s", (doc_id,))
+        for rang, texte in enumerate(textes):
+            if avec:
+                c.execute("INSERT INTO passages (document_id, rang, texte, vecteur) VALUES (%s, %s, %s, %s::vector)",
+                          (doc_id, rang, texte, str(vecteurs[rang])))
+            else:
+                c.execute("INSERT INTO passages (document_id, rang, texte) VALUES (%s, %s, %s)", (doc_id, rang, texte))
+        c.execute("UPDATE documents SET indexe_le = now() WHERE id = %s", (doc_id,))
+
+
+def passages_sans_vecteur(limite: int = 64):
+    if not vecteurs_possibles():
+        return []
+    with connect() as c:
+        return c.execute("SELECT id, texte FROM passages WHERE vecteur IS NULL ORDER BY id LIMIT %s",
+                         (limite,)).fetchall()
+
+
+def poser_vecteurs(ids: list[int], vecteurs: list):
+    with connect() as c, c.transaction():
+        for i, v in zip(ids, vecteurs):
+            c.execute("UPDATE passages SET vecteur = %s::vector WHERE id = %s", (str(v), i))
+
+
+def bilan_index() -> dict:
+    with connect() as c:
+        r = c.execute(
+            """SELECT (SELECT count(*) FROM documents WHERE statut = ANY(%(s)s)
+                        AND coalesce(transcription, '') <> '') AS documents,
+                      (SELECT count(*) FROM documents WHERE statut = ANY(%(s)s) AND coalesce(transcription, '') <> ''
+                        AND indexe_le IS NOT NULL AND indexe_le >= maj_le) AS indexes,
+                      (SELECT count(*) FROM passages) AS passages""", {"s": list(STATUTS_UTILES)}).fetchone()
+        r["vecteurs"] = c.execute("SELECT count(vecteur) AS n FROM passages").fetchone()["n"] \
+            if vecteurs_possibles() else None
+    return r
+
+
+def _filtres_passages(niveau, matiere, statuts) -> tuple[str, dict]:
+    return ("d.statut = ANY(%(statuts)s) AND (%(niveau)s::text IS NULL OR d.niveau = %(niveau)s) "
+            "AND (%(matiere)s::text IS NULL OR d.matiere = %(matiere)s)",
+            {"statuts": list(statuts), "niveau": niveau or None, "matiere": matiere or None})
+
+
+def chercher_passages(requete: str, vecteur: list | None = None, niveau: str | None = None,
+                      matiere: str | None = None, limite: int = 8, statuts=STATUTS_UTILES) -> list[dict]:
+    """Passages les plus utiles pour une question : par les mots et par le sens, fusionnés (rangs réciproques).
+
+    Chaque passage vient avec son document et un extrait où les mots de la question sont en **gras**.
+    """
+    where, p = _filtres_passages(niveau, matiere, statuts)
+    rangs: dict[int, float] = {}
+    with connect() as c:
+        if requete.strip():
+            mots = c.execute(
+                f"""SELECT p.id FROM passages p JOIN documents d ON d.id = p.document_id,
+                           to_tsquery('french', %(q)s) AS requete
+                    WHERE {where} AND p.recherche @@ requete
+                    ORDER BY ts_rank(p.recherche, requete) DESC LIMIT 25""", {**p, "q": requete}).fetchall()
+            for rang, r in enumerate(mots):
+                rangs[r["id"]] = rangs.get(r["id"], 0) + 1 / (60 + rang)
+        if vecteur is not None and vecteurs_possibles():
+            sens = c.execute(
+                f"""SELECT p.id FROM passages p JOIN documents d ON d.id = p.document_id
+                    WHERE {where} AND p.vecteur IS NOT NULL AND p.vecteur <=> %(v)s::vector < %(dmax)s
+                    ORDER BY p.vecteur <=> %(v)s::vector LIMIT 25""",
+                {**p, "v": str(vecteur), "dmax": DISTANCE_MAX}).fetchall()
+            for rang, r in enumerate(sens):
+                rangs[r["id"]] = rangs.get(r["id"], 0) + 1 / (60 + rang)
+        meilleurs = sorted(rangs, key=rangs.get, reverse=True)[:limite]
+        if not meilleurs:
+            return []
+        lignes = c.execute(
+            """SELECT p.id, p.document_id, p.rang, p.texte, d.nom, d.titre, d.niveau, d.matiere, d.type, d.statut,
+                      ts_headline('french', p.texte, to_tsquery('french', %(q)s),
+                                  'StartSel=**, StopSel=**, MaxFragments=2, MaxWords=40, MinWords=15, '
+                                  'FragmentDelimiter=" … "') AS extrait
+               FROM passages p JOIN documents d ON d.id = p.document_id WHERE p.id = ANY(%(ids)s)""",
+            {"q": requete or "", "ids": meilleurs}).fetchall()
+    par_id = {l["id"]: l for l in lignes}
+    return [par_id[i] for i in meilleurs if i in par_id]

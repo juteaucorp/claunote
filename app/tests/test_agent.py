@@ -359,3 +359,14 @@ def test_interrompre_une_analyse(monkeypatch, tmp_path):
     assert agent.interrompre() == 1
     fil.join(5)
     assert not fil.is_alive() and erreurs and not agent._processus
+
+
+def test_arborescence_par_le_modele_local_d_abord(monkeypatch):
+    monkeypatch.setattr(agent, "demander", lambda *a, **k: pytest.fail("Claude ne doit pas être appelé"))
+    local = lambda prompt, entree: {"resume": "Rangé par année.", "dossiers": {"BTS1/Maths": {"niveau": "BTS1",
+                                                                                               "matiere": "Maths"}}}
+    resume, compris = agent.interpreter_arborescence({"BTS1/Maths": 3}, [], local)
+    assert resume == "Rangé par année." and compris["BTS1/Maths"]["niveau"] == "BTS1"
+    # le modèle local échoue : Claude prend le relais
+    monkeypatch.setattr(agent, "demander", lambda *a, **k: ({"resume": "Claude", "dossiers": {}}, "haiku"))
+    assert agent.interpreter_arborescence({"BTS1/Maths": 3}, [], lambda p, e: None)[0] == "Claude"

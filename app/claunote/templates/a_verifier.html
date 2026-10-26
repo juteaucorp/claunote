@@ -11,6 +11,8 @@
 {% endmacro %}
 {% block vivant %}remplacer{% endblock %}
 {% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('ranger', 'verifier') }}
 <h1>À vérifier</h1>
 <datalist id="matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>
 

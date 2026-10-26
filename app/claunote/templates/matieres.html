@@ -3,7 +3,8 @@
 {% from "_fusion.html" import groupe %}
 {% block titre %}Matières en double{% endblock %}
 {% block contenu %}
-<p class="fil"><a href="/organiser">Organiser</a> › Matières en double</p>
+{% from "_onglets.html" import onglets %}
+{{ onglets('ranger', 'matieres') }}
 <h1>Matières en double</h1>
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
 <p class="doux">Sur une même année, l'IA a parfois donné plusieurs noms à la même matière (« Maths » et « Mathématiques »,

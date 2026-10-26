@@ -3,6 +3,8 @@
 {% block titre %}Analyses{% endblock %}
 {% block vivant %}remplacer{% endblock %}
 {% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('activite', 'analyses') }}
 <h1>Analyses</h1>
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
 
@@ -29,29 +31,55 @@
               onclick="return confirm('Couper les analyses en cours ? Les fichiers restent dans la file et seront refaits à la reprise.')">Arrêter maintenant</button>
     {% endif %}
   </form>
+  <p class="boutons"><button hx-post="/scan" hx-target="#retour-scan-page" hx-swap="innerHTML">{{ icone('relancer', 18) }} Vérifier l'inbox maintenant</button>
+    <span id="retour-scan-page" class="doux petit"></span></p>
   <p class="doux petit">« Pause » laisse finir ce qui tourne ; « Arrêter maintenant » le coupe (rien n'est perdu, rien n'est mis en erreur).</p>
 </div>
 
-<h2>Sans Claude</h2>
+<h2>Qui fait le travail</h2>
 <form method="post" action="/analyses/reglages" class="carte reglages">
-  <p class="doux">Quand Claude n'est pas disponible (limite du forfait, panne), les documents peuvent être lus sur la VM :
-    texte des fichiers numériques, <strong>OCR Tesseract</strong> pour les scans, classement par
-    <strong>Ollama</strong> ({{ modele_local }}) s'il est installé, sinon par ressemblance avec tes cours déjà classés.
-    Plus lent (processeur seul) et moins bon sur l'écriture manuscrite.</p>
+  <p class="doux">Le <strong>modèle local</strong> tourne sur la VM (processeur seul) : texte des fichiers numériques,
+    <strong>OCR Tesseract</strong> pour les scans, <strong>Ollama</strong> ({{ modele_local }}) pour comprendre et classer.
+    Quand il doute ou n'arrive pas à lire (écriture manuscrite), il demande à <strong>Claude</strong>, qui vérifie et
+    corrige ; la même règle sert aux reclassements, aux noms de dossiers, aux matières et au chat.</p>
   <fieldset>
-    <legend>Analyser sans Claude</legend>
+    <legend>Analyses et petites tâches</legend>
     {% for k, libelle in modes.items() %}
     <label class="option"><input type="radio" name="mode" value="{{ k }}" {{ 'checked' if k == r.mode }}> {{ libelle }}</label>
     {% endfor %}
   </fieldset>
   <label class="option"><input type="checkbox" name="relire" value="1" {{ 'checked' if r.relire }}>
-    Faire relire par Claude, à son retour, les documents lus sans lui <span class="doux">(meilleure transcription, consomme le forfait)</span></label>
-  <ul class="etat-outils">
-    <li><span class="point {{ 'ok' if s.local.ocr else 'ko' }}"></span>OCR Tesseract : {{ 'installé' if s.local.ocr else ('absent' if s.local.ocr is false else 'état inconnu') }}</li>
-    <li><span class="point {{ 'ok' if s.local.pret else 'pause' }}"></span>{{ s.local.message or 'Ollama : état inconnu' }}</li>
-  </ul>
+    Faire relire par Claude, à son retour, les documents douteux lus sans lui <span class="doux">(consomme le forfait)</span></label>
   <div><button class="principal">Enregistrer</button></div>
 </form>
+
+<div class="grille-local">
+  <div class="carte">
+    <strong>Modèle local</strong>
+    <ul class="etat-outils">
+      <li><span class="point {{ 'ok' if s.local.ocr else 'ko' }}"></span>OCR Tesseract : {{ 'installé' if s.local.ocr else ('absent' if s.local.ocr is false else 'état inconnu') }}</li>
+      <li><span class="point {{ 'ok' if s.local.pret else 'pause' }}"></span>{{ s.local.message or 'Ollama : état inconnu' }}</li>
+    </ul>
+    {% if fiabilite.n %}
+    <p class="mesure"><strong>{{ (fiabilite.taux * 100)|round|int }} %</strong> <span class="doux">d'accord avec Claude sur {{ fiabilite.n }} contrôle{{ 's' if fiabilite.n > 1 }} (30 jours)</span></p>
+    {% else %}<p class="doux">Fiabilité : mesurée dès les premiers contrôles par Claude (1 analyse sûre sur 10, et chaque doute).</p>{% endif %}
+  </div>
+  <div class="carte">
+    <strong>VM</strong>
+    <ul class="etat-outils">
+      <li><span class="point {{ 'ko' if vm.sature else 'ok' }}"></span>{{ vm.sature or 'Disponible pour le modèle local' }}</li>
+      <li>Processeur : {{ (vm.charge * 100)|round|int }} % de {{ vm.coeurs }} cœur{{ 's' if vm.coeurs > 1 }}{% if vm.memoire_libre_mo is not none %} · {{ vm.memoire_libre_mo }} Mo libres{% endif %}</li>
+      <li class="doux">≈ {{ vm.duree_moyenne_s }} s par document sur la VM ; au-delà de {{ vm.attente_max_min }} min de file, Claude prend le surplus.</li>
+    </ul>
+  </div>
+  <div class="carte">
+    <strong>Index de tes documents</strong>
+    <ul class="etat-outils">
+      <li>{{ index.indexes }} / {{ index.documents }} documents découpés en {{ index.passages }} passages</li>
+      <li>{% if index.vecteurs is none %}Recherche par les mots (pgvector absent){% elif index.vecteurs %}Recherche par le sens : {{ index.vecteurs }} passages{% else %}Recherche par le sens : en attente du modèle d'embeddings{% endif %}</li>
+    </ul>
+  </div>
+</div>
 {% if nb_relire %}
 <form method="post" action="/analyses/relire" class="carte rangee">
   <div class="corps"><strong>{{ nb_relire }} document{{ 's' if nb_relire > 1 }} à relire avec Claude</strong>
@@ -75,7 +103,7 @@
       <div class="corps">
         <span class="titre">{{ f.nom }}</span>
         {% if f.decision == 'suspendu' %}<span class="pastille">en attente</span>{% endif %}
-        {% if f.local %}<span class="pastille">sans Claude</span>{% endif %}
+        {% if f.moteur == 'local' %}<span class="pastille">modèle local</span>{% elif f.moteur == 'claude' %}<span class="pastille">Claude</span>{% endif %}
         {% if f.attend_claude %}<span class="pastille">attend Claude</span>{% endif %}
         {% if f.chemin.startswith('Pronote/') %}<span class="pastille">prof</span>{% endif %}
         {% if f.essais %}<span class="pastille alerte">{{ f.essais }} échec{{ 's' if f.essais > 1 }}</span>{% endif %}
@@ -124,6 +152,10 @@
   legend { font-weight: 600; margin-bottom: 4px; }
   .option { display: flex; gap: 8px; align-items: flex-start; }
   .option input { margin-top: 5px; }
+  .grille-local { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+  .grille-local .carte { margin: 0; display: grid; gap: 8px; align-content: start; }
+  .mesure { margin: 0; }
+  .mesure strong { font-size: 1.4rem; }
   .etat-outils { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: .92rem; }
   .barre-masse { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; position: sticky; top: 70px; z-index: 3; }
   .barre-masse .tout { display: inline-flex; gap: 8px; align-items: center; margin-right: auto; }

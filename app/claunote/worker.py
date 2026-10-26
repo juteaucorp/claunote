@@ -30,8 +30,8 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (agent, db, decoupage, importation, local, modeles, notifications, ocr, pdf, pronote, rangement,
-                      revision, sensible)
+from claunote import (agent, db, decoupage, importation, index, local, modeles, notifications, ocr, pdf, pronote,
+                      rangement, ressources, revision, sensible)
 from claunote.agent import ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive, KDriveIndisponible
 from claunote.matieres import harmoniser
@@ -51,6 +51,8 @@ ARRET = threading.Event()  # SIGTERM reçu : finir le travail en cours puis quit
 KDRIVE_VERROU = threading.Lock()  # rangements des analyses parallèles : un dossier n'est pas créé deux fois
 PAUSE = threading.Event()  # analyses en pause (page Analyses du site) : révisions et rangements continuent
 STOP = threading.Event()   # « Arrêter maintenant » : les analyses en cours abandonnent (elles restent dans la file)
+EN_COURS: list[str] = []   # ce que font les fils d'analyse (local et Claude), publié sur la page Activité
+EN_COURS_VERROU = threading.Lock()
 
 
 def log(msg: str):
@@ -116,10 +118,7 @@ SONDE_ECART = 60  # boutons répétés : au plus un test par minute
 
 
 def reglages_analyse() -> dict:
-    """Réglages de la page Analyses : mode d'analyse locale, relecture par Claude, pause."""
-    mode = db.etat_valeur("analyse_locale") or os.environ.get("ANALYSE_LOCALE") or "auto"
-    return {"mode": mode if mode in local.MODES else "auto",
-            "relire": (db.etat_valeur("relire_avec_claude") or "oui") == "oui"}
+    return local.reglages()
 
 
 def surveiller():
@@ -231,6 +230,29 @@ def arrete() -> bool:
     return STOP.is_set() or ARRET.is_set()
 
 
+def claude_peut_aider() -> bool:
+    """Claude est là et le réglage permet de lui demander de l'aide pour une analyse."""
+    return CLAUDE.disponible() and reglages_analyse()["mode"] != "toujours"
+
+
+def etape_echec(e: Exception):
+    """Claude est tombé pendant qu'il aidait le modèle local : on ouvre son disjoncteur, le local continue."""
+    if isinstance(e, LimiteAtteinte):
+        CLAUDE.limite(e)
+    elif isinstance(e, ClaudeDeconnecte):
+        CLAUDE.echec("connexion", f"jeton Claude refusé ou expiré : {e}", time.time() + 30 * 60)
+    else:
+        CLAUDE.echec("panne", str(e))
+
+
+def a_relire(a) -> bool:
+    """Un document lu sur la VM sans l'aide de Claude sera relu par Claude à son retour, si c'est utile."""
+    if a.modele != "local" or "vérifié par Claude" in (a.avis or ""):
+        return False
+    r = reglages_analyse()
+    return r["relire"] and (a.a_relire or r["mode"] == "auto")
+
+
 def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dossiers: dict | None = None):
     """Analyse un fichier et le range. `item["local"]` : sans Claude ; `item["relire"]` : relecture par Claude
     d'un document déjà analysé sans lui (en cas d'échec, il garde son classement)."""
@@ -244,9 +266,15 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dos
         telecharge = time.monotonic()
         if not relecture and avant_analyse(kd, item, chemin, doc_id):
             return
+        a = None
         if item.get("local"):
-            a = local.analyser(chemin, dossiers, indice(dossiers, item["name"]), matieres, arret=arrete)
-        else:
+            try:
+                a = local.analyser(chemin, dossiers, indice(dossiers, item["name"]), matieres, arret=arrete,
+                                   claude=claude_peut_aider(), claude_echec=etape_echec)
+            except local.BesoinClaude as e:  # manuscrit illisible par l'OCR : Claude lit le scan lui-même
+                log(f"le modèle local demande l'aide de Claude : {item['name']} : {e}")
+                item = {**item, "local": False}
+        if a is None:
             a = analyser(chemin, dossiers, indice(dossiers, item["name"]), matieres, memoire(item))
     except ErreurAgent as e:
         shutil.rmtree(memoire(item), ignore_errors=True)
@@ -287,7 +315,7 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dos
            chapitre=a.chapitre, date_doc=a.date, mots_cles=a.mots_cles, resume=a.resume,
            transcription=a.transcription, confiance=a.confiance, erreur=None, origine="/".join(dossiers) or None,
            note=note, essais=0, modele=a.modele or None, avis=a.avis or None,
-           relire=a.modele == "local" and reglages_analyse()["relire"])
+           relire=a_relire(a))
     db.marquer_a_ranger([doc_id])
     db.import_marquer([item["id"]], "fait")
     shutil.rmtree(memoire(item), ignore_errors=True)
@@ -554,7 +582,13 @@ def statut_et_note(a, note: str | None) -> tuple[str, str | None]:
 def reclasser(doc: dict, matieres: list[str]):
     """Reclassement demandé depuis la page Organiser : relit la transcription, pas le scan."""
     try:
-        a = agent.reclasser(doc, matieres)
+        a = None
+        if reglages_analyse()["mode"] != "jamais":  # le modèle local d'abord
+            a = local.reclasser(doc, matieres, claude=claude_peut_aider(), claude_echec=etape_echec)
+        if a is None:
+            if not CLAUDE.disponible():
+                return  # ni local ni Claude : il attend
+            a = agent.reclasser(doc, matieres)
         a.matiere = harmoniser(a.matiere, matieres)
     except ErreurAgent as e:
         db.maj(doc["id"], statut="a_verifier", note=f"Reclassement impossible : {e}")
@@ -693,20 +727,21 @@ def a_traiter(kd: KDrive, items: list[dict] | None = None, sans_claude: bool = F
     """Fichiers à analyser : gardés par le tri, restés 'nouveau' (limite, panne), ou perdus hors de l'inbox.
 
     Les documents des profs passent en premier ; un fichier qui a déjà fait planter Claude, en dernier.
-    Un fichier suspendu sur la page Analyses est sauté ; un fichier « sans Claude » est marqué `local`.
-    `sans_claude` : Claude est indisponible, tout est lu localement (sans attendre la passe IA sur les dossiers).
+    Un fichier suspendu sur la page Activité est sauté ; `moteur` : local ou claude, si choisi à la main.
+    `sans_claude` : Claude est indisponible, rien n'attend la passe IA sur les noms de dossiers, et un fichier
+    déjà illisible pour le modèle local attend Claude.
     """
     if items is None:
         items = list(parcourir(kd, INBOX_ID, []))
     ids = [i["id"] for i in items]
     decisions, docs = db.import_connus(ids), db.statuts_kdrive(ids)
-    suspendus, locaux = db.import_suspendus_locaux(ids)
+    suspendus, moteurs = db.import_choix(ids)
     en_attente = set() if sans_claude else set(db.lots_a_comprendre())  # l'IA lit d'abord les noms de dossiers
     retenus = []
     for item in items:
         if item["id"] in suspendus:
             continue
-        item = {**item, "local": sans_claude or item["id"] in locaux}
+        item = {**item, "moteur": moteurs.get(item["id"])}
         doc = docs.get(item["id"])
         if doc is not None:
             # déjà illisible sans Claude : on n'essaie pas de nouveau en local, il attend Claude
@@ -715,7 +750,7 @@ def a_traiter(kd: KDrive, items: list[dict] | None = None, sans_claude: bool = F
         elif decisions.get(item["id"]) == "analyser" and item["type"] == "file" and lot_de(item) not in en_attente:
             retenus.append((0, item))
     if len(retenus) < LOT:
-        retenus += [(doc["essais"], {**item, "local": sans_claude}) for doc, item in orphelins(kd, ids)
+        retenus += [(doc["essais"], {**item, "moteur": None}) for doc, item in orphelins(kd, ids)
                     if not (sans_claude and doc.get("relire"))]
     retenus.sort(key=lambda r: (r[0], "Pronote" not in r[1]["dossiers"]))
     return [item for _, item in retenus]
@@ -802,7 +837,8 @@ def comprendre_en_attente():
     for lot in db.lots_a_comprendre():
         activite(f"Organisation des dossiers de « {lot or 'inbox'} »")
         try:
-            resume, compris = agent.interpreter_arborescence(db.import_dossiers(lot), db.matieres())
+            essai_local = local.essayer_json if reglages_analyse()["mode"] != "jamais" else None
+            resume, compris = agent.interpreter_arborescence(db.import_dossiers(lot), db.matieres(), essai_local)
         except ErreurAgent as e:
             log(f"organisation de « {lot} » non interprétée par l'IA ({e}) : indices des noms de dossiers seulement")
         else:
@@ -984,16 +1020,16 @@ def en_parallele(items: list, faire, libelle, fils: int = PARALLELE, continuer=N
     distribution : ceux déjà lancés finissent, les autres restent pour le tour suivant, puis
     l'erreur est relevée pour ouvrir le disjoncteur (etape).
     """
-    en_cours, verrou, echec = [], threading.Lock(), []
+    echec = []
     continuer = continuer or CLAUDE.disponible
 
     def un(item):
         if ARRET.is_set() or echec or not continuer():
             return
-        with verrou:
-            en_cours.append(libelle(item))
-            ETAT["en_cours"] = list(en_cours)
-            activite(en_cours[0] + (f" (et {len(en_cours) - 1} autre(s) en même temps)" if len(en_cours) > 1 else ""))
+        with EN_COURS_VERROU:  # partagé : le modèle local et Claude travaillent en même temps
+            EN_COURS.append(libelle(item))
+            ETAT["en_cours"] = list(EN_COURS)
+            activite(EN_COURS[0] + (f" (et {len(EN_COURS) - 1} autre(s) en même temps)" if len(EN_COURS) > 1 else ""))
         try:
             faire(item)
         except (LimiteAtteinte, ClaudeIndisponible, KDriveIndisponible, Interrompu) as e:
@@ -1001,9 +1037,9 @@ def en_parallele(items: list, faire, libelle, fils: int = PARALLELE, continuer=N
         except Exception as e:  # un fichier qui plante ne doit pas arrêter les autres
             log(f"erreur ({libelle(item)}) : {e.__class__.__name__} : {e}")
         finally:
-            with verrou:
-                en_cours.remove(libelle(item))
-                ETAT["en_cours"] = list(en_cours)
+            with EN_COURS_VERROU:
+                EN_COURS.remove(libelle(item))
+                ETAT["en_cours"] = list(EN_COURS)
 
     with ThreadPoolExecutor(fils, thread_name_prefix="ia") as ex:
         list(ex.map(un, items))
@@ -1011,39 +1047,83 @@ def en_parallele(items: list, faire, libelle, fils: int = PARALLELE, continuer=N
         raise echec[0]
 
 
-def analyser_inbox(kd: KDrive, items: list[dict]):
-    """Jusqu'à LOT documents, PARALLELE lus par Claude à la fois, +1 qui se télécharge ou se range pendant ce temps."""
+LOT_LOCAL = 2 * local.PARALLELE
+
+
+def repartir(items: list[dict], mode: str, claude_ok: bool) -> tuple[list[dict], list[dict]]:
+    """Qui lit quoi ce tour-ci : (pour le modèle local, pour Claude). Le reste attend le tour suivant.
+
+    « local d'abord » : le modèle local prend tout ce qu'il peut ; Claude ne prend que le surplus, quand la
+    VM est saturée ou quand la file ferait attendre un document plus de LOCAL_ATTENTE_MAX_MIN minutes.
+    """
+    choisis_local = [i for i in items if i.get("moteur") == "local"]
+    choisis_claude = [i for i in items if i.get("moteur") == "claude"] if claude_ok else []
+    libres = [i for i in items if not i.get("moteur")]
+    if mode == "jamais":
+        return choisis_local[:LOT_LOCAL], (choisis_claude + libres)[:LOT] if claude_ok else []
+    if mode == "toujours" or (mode == "auto" and not claude_ok) or (mode == "local" and not claude_ok):
+        return (choisis_local + libres)[:LOT_LOCAL], choisis_claude[:LOT]
+    if mode == "auto":
+        return choisis_local[:LOT_LOCAL], (choisis_claude + libres)[:LOT]
+    # local d'abord, Claude disponible
+    sature = ressources.sature()
+    place = 0 if sature else max(LOT_LOCAL - len(choisis_local), 0)
+    pour_local = choisis_local[:LOT_LOCAL] + libres[:place]
+    reste = libres[place:]
+    attente = ressources.attente_min(len(choisis_local) + len(libres), local.PARALLELE)
+    debordement = reste if (sature or attente > ressources.ATTENTE_MAX_MIN) else []
+    if debordement:
+        log(f"modèle local : {sature or f'environ {attente:.0f} min de file'} → {len(debordement[:LOT])} "
+            f"document(s) confié(s) à Claude")
+    return pour_local, (choisis_claude + debordement)[:LOT]
+
+
+def analyser_inbox(kd: KDrive, items: list[dict], mode: str | None = None, claude_ok: bool | None = None):
+    """Analyse un lot : le modèle local et Claude travaillent en même temps, chacun sur sa part (repartir)."""
+    mode = mode or reglages_analyse()["mode"]
+    claude_ok = CLAUDE.disponible() if claude_ok is None else claude_ok
+    pour_local, pour_claude = repartir(items, mode, claude_ok)
     matieres, dossiers = db.matieres(), {}
 
     def faire(item):
         log(f"analyse : {'/'.join(item['dossiers'] + [item['name']])}")
-        traiter(kd, item, matieres, dossiers)
+        traiter(kd, {**item, "local": False}, matieres, dossiers)
 
-    pour_claude = [i for i in items if not i.get("local")]
-    sans_claude = [i for i in items if i.get("local")]
-    if sans_claude:
-        analyser_sans_claude(kd, sans_claude, matieres, dossiers)
-    en_parallele(pour_claude[:LOT], faire, lambda item: f"Analyse de « {item['name']} »", PARALLELE + 1,
-                 continuer=lambda: CLAUDE.disponible() and not PAUSE.is_set() and not STOP.is_set())
-    ETAT["reste"] = ETAT["reste"] or len(pour_claude) > LOT  # encore du travail : pas d'attente d'une minute
+    def avec_claude():
+        en_parallele(pour_claude, faire, lambda item: f"Analyse de « {item['name']} »", PARALLELE + 1,
+                     continuer=lambda: CLAUDE.disponible() and not PAUSE.is_set() and not STOP.is_set())
 
-
-LOT_LOCAL = 2 * local.PARALLELE
+    erreurs = []
+    fil = None
+    if pour_claude:
+        def fil_claude():
+            try:
+                avec_claude()
+            except Exception as e:
+                erreurs.append(e)
+        fil = threading.Thread(target=fil_claude, name="analyses-claude")
+        fil.start()
+    if pour_local:
+        analyser_sans_claude(kd, pour_local, matieres, dossiers)
+    if fil:
+        fil.join()
+    ETAT["reste"] = len(items) > len(pour_local) + len(pour_claude)  # encore du travail : pas d'attente d'1 min
+    if erreurs:
+        raise erreurs[0]
 
 
 def analyser_sans_claude(kd: KDrive, items: list[dict], matieres: list[str] | None = None,
                          dossiers: dict | None = None):
-    """OCR + classement local (local.py), sur le processeur : peu à la fois, c'est lent."""
+    """Lecture sur la VM (local.py) : OCR + modèle local, Claude n'aidant que si besoin. Peu à la fois."""
     matieres = db.matieres() if matieres is None else matieres
     dossiers = {} if dossiers is None else dossiers
 
     def faire(item):
-        log(f"analyse sans Claude : {'/'.join(item['dossiers'] + [item['name']])}")
+        log(f"analyse locale : {'/'.join(item['dossiers'] + [item['name']])}")
         traiter(kd, {**item, "local": True}, matieres, dossiers)
 
-    en_parallele(items[:LOT_LOCAL], faire, lambda item: f"Analyse locale de « {item['name']} »", local.PARALLELE,
+    en_parallele(items, faire, lambda item: f"Analyse locale de « {item['name']} »", local.PARALLELE,
                  continuer=lambda: not PAUSE.is_set() and not STOP.is_set())
-    ETAT["reste"] = len(items) > LOT_LOCAL
 
 
 def relire_avec_claude(kd: KDrive):
@@ -1104,25 +1184,26 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     # Ce que tu attends sur le site passe d'abord : révisions, puis reclassements, puis les scans.
     if CLAUDE.disponible():
         etape("révisions", revisions_en_attente, kd)
-    if CLAUDE.disponible() and not ARRET.is_set():
+    if (CLAUDE.disponible() or not local.disponible()) and not ARRET.is_set() and not PAUSE.is_set():
         etape("reclassements", reclasser_en_attente)
     if not KDRIVE.disponible() or ARRET.is_set():
         return dernier_nettoyage
     etape("rangement", ranger_en_attente, kd)
     etape("PDF des révisions", pdf_manquants, kd)
     inbox = etape("inbox", lire_inbox, kd)
-    if CLAUDE.disponible() and not ARRET.is_set():
+    if (CLAUDE.disponible() or not local.disponible()) and not ARRET.is_set():
         etape("organisation des imports", comprendre_en_attente)
     ETAT["reste"] = False
     r = reglages_analyse()
-    claude_analyse = CLAUDE.disponible() and r["mode"] != "toujours"
+    claude_ok = CLAUDE.disponible() and r["mode"] != "toujours"
     if inbox is not None and KDRIVE.disponible() and not ARRET.is_set() and not PAUSE.is_set():
-        if claude_analyse:
-            etape("analyses", lambda: analyser_inbox(kd, a_traiter(kd, inbox)))
-        elif r["mode"] != "jamais":  # Claude en pause (ou pas voulu) : OCR et classement sur la VM
-            etape("analyses sans Claude", lambda: analyser_sans_claude(kd, a_traiter(kd, inbox, sans_claude=True)))
-        if claude_analyse and not ETAT["reste"] and not ARRET.is_set():
+        if claude_ok or r["mode"] != "jamais":  # sans Claude : OCR et modèle local sur la VM
+            etape("analyses", lambda: analyser_inbox(kd, a_traiter(kd, inbox, sans_claude=not claude_ok),
+                                                     r["mode"], claude_ok))
+        if claude_ok and not ETAT["reste"] and not ARRET.is_set():
             etape("relectures par Claude", relire_avec_claude, kd)
+    if not ETAT["reste"] and not ARRET.is_set():  # rien d'urgent : on indexe les passages (recherche, chat)
+        etape("index des documents", lambda: index.indexer(20, arrete) + index.vectoriser(128, arrete))
     if time.monotonic() - dernier_nettoyage > NETTOYAGE and KDRIVE.disponible() and not ARRET.is_set():
         etape("nettoyage", nettoyer_inbox, kd)
         return time.monotonic()

@@ -57,6 +57,8 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "documents_matiere", lambda n, m: [DOC] if m == "Réseaux" else [])
     monkeypatch.setattr(db, "documents", lambda ids: [DOC] if 1 in ids else [])
     monkeypatch.setattr(db, "file_analyse", lambda: [])
+    monkeypatch.setattr(db, "fiabilite_locale", lambda: {"n": 20, "accords": 17, "taux": 0.85, "derniers": []})
+    monkeypatch.setattr(db, "bilan_index", lambda: {"documents": 8, "indexes": 8, "passages": 30, "vecteurs": 30})
     monkeypatch.setattr(db, "nb_a_relire", lambda: 0)
     monkeypatch.setattr(db, "file_attente", lambda: {"scans": 0, "revisions": 0, "campagnes": 0, "reclassements": 0})
     monkeypatch.setattr(db, "matieres_par_annee", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
@@ -220,12 +222,12 @@ def test_deposer_garde_les_dossiers(client, monkeypatch):
     monkeypatch.setattr(main, "INBOX_ID", 10)
     fichiers = [("fichiers", ("Terminale/Maths/suites.pdf", b"%PDF-1", "application/pdf")),
                 ("fichiers", ("Terminale/Maths/cours2.pdf", b"%PDF-2", "application/pdf")),
-                ("fichiers", ("script.py", b"x", "text/plain")),
+                ("fichiers", ("config.yml", b"x", "text/plain")),
                 ("fichiers", ("Projet/node_modules/lib/doc.pdf", b"x", "application/pdf")),
                 ("fichiers", ("Terminale/~$suites.docx", b"x", "application/octet-stream")),
                 ("fichiers", ("../../photo.JPG", b"img", "image/jpeg"))]
     r = client.post("/deposer", files=fichiers, data={"niveau": ""})
-    assert r.status_code == 200 and "3 fichiers envoyés" in r.text and "script.py" in r.text
+    assert r.status_code == 200 and "3 fichiers envoyés" in r.text and "config.yml" in r.text
     assert "node_modules" in r.text and "~$suites.docx" in r.text
     assert ("path", 10, ["Terminale", "Maths"]) in faits and ("path", 10, []) in faits
     assert [f for f in faits if f[0] == "path"].count(("path", 10, ["Terminale", "Maths"])) == 1
@@ -264,8 +266,8 @@ def test_deposer_par_paquets_en_json(client, monkeypatch):
 
     monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: FauxKD()))
     r = client.post("/deposer?paquet=1", files=[("fichiers", ("BTS1/Dev/cours.docx", b"PK", "application/octet-stream")),
-                                                ("fichiers", ("BTS1/Dev/app.js", b"x", "text/javascript"))])
-    assert r.json() == {"envoyes": ["BTS1/Dev/cours.docx"], "ignores": ["BTS1/Dev/app.js"]}
+                                                ("fichiers", ("BTS1/Dev/app.json", b"x", "application/json"))])
+    assert r.json() == {"envoyes": ["BTS1/Dev/cours.docx"], "ignores": ["BTS1/Dev/app.json"]}
     page = client.get("/deposer").text
     assert '".docx"' in page and '"node_modules"' in page  # mêmes filtres côté navigateur
 
@@ -327,13 +329,13 @@ def test_choix_personnels(client, monkeypatch):
 
 def test_choix_import(client, monkeypatch):
     marques = []
-    lignes = [{"kdrive_id": 5, "nom": "a.py", "dossier": False}, {"kdrive_id": 6, "nom": "b.pdf", "dossier": False}]
+    lignes = [{"kdrive_id": 5, "nom": "a.yml", "dossier": False}, {"kdrive_id": 6, "nom": "b.pdf", "dossier": False}]
     monkeypatch.setattr(db, "import_fichiers", lambda d, ids=None: [l for l in lignes if l["kdrive_id"] in ids])
     monkeypatch.setattr(db, "import_marquer", lambda ids, d, **k: marques.append((ids, d)) or len(ids))
     r = client.post("/import/choix", data={"ids": ["5", "6"], "action": "supprimer"}, follow_redirects=False)
     assert r.status_code == 303 and marques[-1] == ([5, 6], "supprimer") and "corbeille" in r.headers["location"]
     client.post("/import/choix", data={"ids": ["5", "6"], "action": "analyser"}, follow_redirects=False)
-    assert marques[-1] == ([6], "analyser")  # le .py ne s'analyse pas
+    assert marques[-1] == ([6], "analyser")  # le .yml ne s'analyse pas
     assert client.post("/import/choix", data={"ids": ["5"], "action": "tout"}).status_code == 400
 
 
@@ -800,7 +802,7 @@ def test_accueil_aujourd_hui(client, monkeypatch):
     assert "Oral" in r.text and "Déjà fait" not in r.text and "8 documents" in r.text
     assert "1 document à vérifier" in r.text
     # Navigation mobile : onglets en bas et menu Plus
-    assert 'class="onglets verre"' in r.text and 'id="plus"' in r.text and "Scanner l'inbox" in r.text
+    assert 'class="onglets verre"' in r.text and 'id="plus"' in r.text and "Ranger<small>" in r.text and "Activité<small>" in r.text
 
 
 def test_documents_en_erreur(client, monkeypatch):
@@ -1109,9 +1111,9 @@ def chat(client, monkeypatch):
                    "reperes": reperes or {}, "sources_web": web or [], "modele": modele, "erreur": None}
         return i
 
-    def maj(i, statut, contenu="", reperes=None, web=None, modele=None, erreur=None, role=None):
+    def maj(i, statut, contenu="", reperes=None, web=None, modele=None, erreur=None, role=None, detail=None):
         msgs[i].update(statut=statut, contenu=contenu, reperes=reperes or {}, sources_web=web or [], modele=modele,
-                       erreur=erreur, role=role or msgs[i]["role"])
+                       erreur=erreur, role=role or msgs[i]["role"], detail=detail)
 
     cherches = []
     monkeypatch.setattr(db, "creer_conversation", creer)
@@ -1121,8 +1123,14 @@ def chat(client, monkeypatch):
     monkeypatch.setattr(db, "message", lambda i: msgs.get(i))
     monkeypatch.setattr(db, "messages", lambda c: [m for m in msgs.values() if m["conversation_id"] == c])
     monkeypatch.setattr(db, "maj_message", maj)
-    monkeypatch.setattr(db, "cours_pour_question", lambda q, niveau=None, matiere=None, limite=5, avec_texte=False:
-                        cherches.append((q, niveau, matiere)) or ([{**DOC, "extrait": "les **VLAN**"}] if "vlan" in q else []))
+    passage = {"id": 50, "document_id": 1, "rang": 0, "texte": "Les VLAN segmentent un switch.",
+               "extrait": "les **VLAN**", **{k: DOC[k] for k in ("nom", "titre", "niveau", "matiere", "type", "statut")}}
+    monkeypatch.setattr(db, "chercher_passages", lambda q, v, niveau=None, matiere=None, limite=8:
+                        cherches.append((q, niveau, matiere)) or ([passage] if "vlan" in q else []))
+    monkeypatch.setattr(db, "cours_pour_question", lambda *a, **k: [])
+    monkeypatch.setattr(main.index, "vecteur_question", lambda q: None)
+    monkeypatch.setattr(main.local, "disponible", lambda: "modèle local pas installé")
+    monkeypatch.setattr(db, "noter_controle", lambda *a: client.appels.append(("controle",) + a))
 
     class FilImmediat:
         def __init__(self, target, args, **k):
@@ -1145,23 +1153,24 @@ def test_demander_sans_ia(chat):
     assert r.status_code == 200
     assert "C&#39;est quoi un VLAN ?" in r.text or "C'est quoi un VLAN ?" in r.text
     assert '<a href="/doc/1">[D1]</a>' in r.text and "<strong>VLAN</strong>" in r.text
-    assert "Tes cours · sans IA" in r.text and "Demander à l'IA" in r.text
+    assert "Tes documents · sans IA" in r.text and "Demander à l'IA" in r.text
 
 
 def test_demander_ia_dans_une_conversation(chat, monkeypatch):
     chat.post("/demander", data={"question": "vlan ?", "mode": "local"})
     vu = {}
 
-    def repondre(q, historique, cours, portee=""):
-        vu.update(q=q, historique=[m["contenu"][:6] for m in historique], cours=[c["id"] for c in cours])
-        return "Un trunk transporte plusieurs VLAN [D1].", {"D1": 1}, [], "sonnet"
+    def repondre(q, historique, passages, portee="", agenda="", brouillon=None):
+        vu.update(q=q, historique=[m["contenu"][:6] for m in historique], docs=[p["document_id"] for p in passages],
+                  brouillon=brouillon)
+        return "Un trunk transporte plusieurs VLAN [D1].", {"D1": 1}, [], "sonnet", None
 
     monkeypatch.setattr(main.question, "repondre_ia", repondre)
     r = chat.post("/demander", data={"question": "Et un trunk vlan ?", "mode": "ia", "conversation": 1},
                   headers={"HX-Request": "true"})
     assert r.status_code == 200  # fragment ajouté au fil
     assert "Et un trunk vlan ?" in r.text and "Claude · Sonnet" in r.text and '<a href="/doc/1">[D1]</a>' in r.text
-    assert vu["historique"] == ["vlan ?", "Voici "] and vu["cours"] == [1]
+    assert vu["historique"] == ["vlan ?", "Voici "] and vu["docs"] == [1] and vu["brouillon"] is None
 
 
 def test_demander_repli_sans_ia_si_limite(chat, monkeypatch):
@@ -1195,7 +1204,7 @@ def test_demander_reponse_en_attente_puis_prete(chat):
 
 def test_demander_a_l_ia_apres_reponse_locale(chat, monkeypatch):
     chat.post("/demander", data={"question": "vlan", "mode": "local"})
-    monkeypatch.setattr(main.question, "repondre_ia", lambda q, h, c, p="": (f"IA : {q}", {}, [], "sonnet"))
+    monkeypatch.setattr(main.question, "repondre_ia", lambda q, h, c, p="", a="", b=None: (f"IA : {q}", {}, [], "sonnet", None))
     r = chat.post("/demander/message/2/ia")
     assert "IA : vlan" in r.text and chat.msgs[3]["contenu"] == "vlan"
 
@@ -1210,7 +1219,7 @@ def test_matieres_en_double(client, monkeypatch):
         {"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
     monkeypatch.setattr(db, "organiser", lambda filtres, limite=25, decalage=0: ([], 0))
     assert "1 groupe de matières en double" in client.get("/bibliotheque").text
-    assert '/organiser/matieres">Matières en double <span class="badge">1</span>' in client.get("/organiser").text
+    assert '/organiser/matieres" class="" >Matières<span class="badge">1</span>' in client.get("/organiser").text
     r = client.get("/organiser/matieres")
     assert r.status_code == 200 and "Évident" in r.text and 'value="Mathématiques"' in r.text
 
@@ -1229,7 +1238,7 @@ def test_fusionner_matieres(client, monkeypatch):
 
 def test_matieres_avis_ia(client, monkeypatch):
     monkeypatch.setattr(db, "titres_par_matiere", lambda: {})
-    monkeypatch.setattr(main.matieres, "demander_ia", lambda comptes, titres: [
+    monkeypatch.setattr(main.matieres, "demander_ia", lambda comptes, titres, essai_local=None: [
         {"niveau": "BTS1", "noms": [{"nom": "Réseaux", "n": 3}, {"nom": "SISR", "n": 1}], "nom": "Réseaux",
          "sur": False, "raisons": ["option réseaux"], "source": "ia"}])
     r = client.post("/organiser/matieres/ia")
@@ -1241,9 +1250,9 @@ def test_matieres_avis_ia(client, monkeypatch):
 def test_page_analyses(client, monkeypatch):
     monkeypatch.setattr(db, "file_analyse", lambda: [
         {"kdrive_id": 5, "nom": "tp.pdf", "chemin": "BTS1/tp.pdf", "lot": "BTS1", "taille": 2_000_000,
-         "decision": "analyser", "local": True, "essais": 2, "cree_le": None, "doc_id": None},
+         "decision": "analyser", "moteur": "local", "essais": 2, "cree_le": None, "doc_id": None},
         {"kdrive_id": 6, "nom": "x.pdf", "chemin": "x.pdf", "lot": "", "taille": 0, "decision": "suspendu",
-         "local": False, "essais": 0, "cree_le": None, "doc_id": None}])
+         "moteur": None, "essais": 0, "cree_le": None, "doc_id": None}])
     monkeypatch.setattr(db, "file_attente", lambda: {"scans": 1, "revisions": 0, "campagnes": 0, "reclassements": 0})
     monkeypatch.setattr(db, "nb_a_relire", lambda: 3)
     client.etat["service"] = '{"vu": "2099-01-01T00:00:00+00:00", "en_cours": ["Analyse de « a.pdf »"], ' \
@@ -1251,8 +1260,9 @@ def test_page_analyses(client, monkeypatch):
     r = client.get("/analyses")
     assert r.status_code == 200
     assert "1 analyse en cours" in r.text and "Analyse de « a.pdf »" in r.text
-    assert "sans Claude</span>" in r.text and "2 échecs" in r.text and "en attente</span>" in r.text
+    assert "modèle local</span>" in r.text and "2 échecs" in r.text and "en attente</span>" in r.text
     assert "3 documents à relire avec Claude" in r.text and "OCR Tesseract : installé" in r.text
+    assert "85 %</strong>" in r.text and "8 / 8 documents découpés en 30 passages" in r.text
 
 
 def test_pause_arret_et_reprise(client):
@@ -1281,14 +1291,54 @@ def test_actions_de_masse_sur_la_file(client, monkeypatch):
     assert client.post("/analyses/file", data={"ids": [5], "action": "rien"}).status_code == 400
 
 
-def test_demander_repli_sur_ollama(chat, monkeypatch):
-    monkeypatch.setattr(main, "_claude_en_pause", lambda: "limite de ton forfait Claude atteinte")
-    monkeypatch.setattr(main.local, "etat_ollama", lambda reverifier=False: {"pret": True})
-    monkeypatch.setattr(main.question, "repondre_ollama", lambda q, h, c, p="": ("Réponse locale [D1]", {"D1": 1}))
+def _local_pret(monkeypatch, reponse, confiance=0.9, aide=False):
+    monkeypatch.setattr(main.local, "disponible", lambda: None)
+    monkeypatch.setattr(main.question, "repondre_local", lambda q, h, p, a="", portee="": {
+        "reponse": reponse, "confiance": confiance, "aide": aide, "demande": "", "reperes": {"D1": 1}})
+
+
+def test_demander_local_d_abord_sur_de_lui(chat, monkeypatch):
+    _local_pret(monkeypatch, "Un VLAN segmente un switch [D1].")
+    monkeypatch.setattr(main.random, "random", lambda: 0.99)  # pas de contrôle par échantillon
+    monkeypatch.setattr(main.question, "repondre_ia", lambda *a, **k: pytest.fail("Claude ne doit pas être appelé"))
     chat.post("/demander", data={"question": "vlan", "mode": "ia"})
     m = chat.msgs[2]
-    assert m["role"] == "ia" and m["modele"] == "local" and "modèle local" in m["contenu"]
-    assert "Modèle local (Ollama)" in chat.get("/demander/1").text
+    assert m["modele"] == "local" and m["contenu"] == "Un VLAN segmente un switch [D1]." and "90%" in m["detail"]
+    assert "Modèle local · confiance 90%" in chat.get("/demander/1").text
+
+
+def test_demander_local_doute_claude_verifie(chat, monkeypatch):
+    _local_pret(monkeypatch, "Peut-être 802.11 ?", confiance=0.4, aide=True)
+    vu = {}
+
+    def repondre_ia(q, h, p, portee="", agenda="", brouillon=None):
+        vu["brouillon"] = brouillon
+        return "C'est 802.1Q [D1].", {"D1": 1}, [], "sonnet", False
+
+    monkeypatch.setattr(main.question, "repondre_ia", repondre_ia)
+    chat.post("/demander", data={"question": "vlan norme", "mode": "ia"})
+    m = chat.msgs[2]
+    assert vu["brouillon"]["reponse"] == "Peut-être 802.11 ?" and m["contenu"] == "C'est 802.1Q [D1]."
+    assert m["detail"] == "Brouillon du modèle local, corrigé et complété par Claude"
+    assert ("controle", "question", False, "vlan norme") in chat.appels
+
+
+def test_demander_claude_en_pause_le_local_repond(chat, monkeypatch):
+    monkeypatch.setattr(main, "_claude_en_pause", lambda: "limite de ton forfait Claude atteinte")
+    _local_pret(monkeypatch, "Je crois que oui.", confiance=0.5, aide=True)
+    monkeypatch.setattr(main.question, "repondre_ia", lambda *a, **k: pytest.fail("Claude ne doit pas être appelé"))
+    chat.post("/demander", data={"question": "vlan", "mode": "ia"})
+    m = chat.msgs[2]
+    assert m["role"] == "ia" and m["modele"] == "local" and "n'est pas sûr de lui" in m["contenu"]
+
+
+def test_demander_reglage_claude_d_abord(chat, monkeypatch):
+    _local_pret(monkeypatch, "réponse locale")
+    monkeypatch.setattr(main.local, "reglages", lambda: {"mode": "auto", "relire": True, "pause": False})
+    monkeypatch.setattr(main.question, "repondre_local", lambda *a, **k: pytest.fail("pas de modèle local"))
+    monkeypatch.setattr(main.question, "repondre_ia", lambda *a, **k: ("Claude", {}, [], "sonnet", None))
+    chat.post("/demander", data={"question": "vlan", "mode": "ia"})
+    assert chat.msgs[2]["contenu"] == "Claude"
 
 
 def test_date_de_synchro_lisible():

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block titre %}Déposer{% endblock %}
 {% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('ajouter', 'deposer') }}
 <h1>Déposer des documents</h1>
 {% if envoyes %}
 <div class="carte accent">
@@ -18,8 +20,8 @@
   <label class="zone" id="zone">
     <img src="/static/logo.svg" alt="" width="56" height="56">
     <strong>Glisse tes fichiers ou un dossier entier ici</strong>
-    <span class="doux">PDF, Word, Excel, PowerPoint, photos… Les sous-dossiers sont gardés ; le code et les fichiers
-      de configuration sont écartés avant l'envoi.</span>
+    <span class="doux">PDF, Word, Excel, PowerPoint, photos, scripts et notebooks de TP… Les sous-dossiers sont
+      gardés ; les projets de code et les fichiers de configuration sont écartés avant l'envoi.</span>
     <input type="file" name="fichiers" id="fichiers" multiple>
   </label>
   <p class="boutons">

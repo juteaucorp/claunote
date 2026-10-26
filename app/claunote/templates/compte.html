@@ -2,12 +2,13 @@
 {% block titre %}Compte{% endblock %}
 {% from "_icones.html" import icone %}
 {% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('reglages', 'compte') }}
 <h1>Compte</h1>
 <p class="doux">Connecté en tant que <strong>{{ utilisateur }}</strong>.</p>
 <div class="actions" style="margin-bottom: 16px">
-  <a class="bouton" href="/notifications">{{ icone('cloche', 18) }}Notifications</a>
   <a class="bouton" href="/installer">{{ icone('telephone', 18) }}Installer sur l'iPhone</a>
-  <a class="bouton" href="/etat">{{ icone('etat', 18) }}État du service</a>
+  <form method="post" action="/deconnexion" style="margin: 0"><button style="display: inline-flex; align-items: center; gap: 6px">{{ icone('sortie', 18) }}Déconnexion</button></form>
 </div>
 <form method="post" action="/compte" class="carte" style="max-width: 420px">
   <strong>Changer le mot de passe</strong>

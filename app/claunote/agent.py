@@ -28,6 +28,8 @@ from xml.etree import ElementTree
 from claunote import modeles
 
 SEUIL_CONFIANCE = 0.7
+SOURCES = {".py", ".sql", ".ipynb", ".html", ".htm", ".js", ".php", ".java", ".c", ".cpp", ".cs", ".sh", ".ps1",
+           ".bat", ".vb", ".kt", ".r", ".css", ".ts"}  # même liste que importation.SOURCES
 NIVEAUX = ["6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale", "BTS1", "BTS2"]
 TYPES = ["Cours", "TP", "Exercices", "Évaluation", "Notes perso"]
 
@@ -176,6 +178,7 @@ class Analyse:
     hors_cours: bool = False
     modele: str = ""     # modèle qui a lu le document
     avis: str = ""       # second avis d'un modèle plus fort, s'il y en a eu un
+    a_relire: bool = False  # lu sur la VM sans que Claude ait pu l'aider : à relire par Claude
 
 
 def _choix(valeur, options):
@@ -429,6 +432,25 @@ def texte_vieux_office(chemin: Path) -> str:
     return p.stdout.decode("utf-8", errors="replace")
 
 
+def texte_source(chemin: Path) -> str:
+    """Code d'un TP en Markdown : bloc de code (notebook : cellules de texte et de code dans l'ordre)."""
+    brut = chemin.read_text(errors="replace")
+    langage = chemin.suffix.lower().lstrip(".")
+    if langage == "ipynb":
+        try:
+            cellules = json.loads(brut).get("cells") or []
+        except ValueError:
+            cellules = []
+        morceaux = []
+        for c in cellules:
+            source = "".join(c.get("source") or []) if isinstance(c.get("source"), list) else str(c.get("source") or "")
+            if source.strip():
+                morceaux.append(source if c.get("cell_type") == "markdown" else f"```python\n{source}\n```")
+        if morceaux:
+            return "\n\n".join(morceaux)
+    return f"# {chemin.name}\n\n```{langage}\n{brut}\n```"
+
+
 def heic_en_jpeg(chemin: Path) -> Path:
     """Photo d'iPhone (HEIC) convertie en JPEG : Claude Code ne lit pas le HEIC."""
     from PIL import Image
@@ -606,6 +628,8 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
         texte, origine = texte_pdf(chemin), "PDF numérique"
     elif suffixe in (".txt", ".md"):
         texte, origine = chemin.read_text(errors="replace"), "fichier texte"
+    elif suffixe in SOURCES:
+        texte, origine = texte_source(chemin), "code source d'un TP ou d'un exercice"
     if texte is not None and not texte.strip():
         raise ErreurAgent(f"aucun texte dans {nom}")
     contexte = ""
@@ -733,9 +757,11 @@ Règles :
 """
 
 
-def interpreter_arborescence(dossiers: dict[str, int], matieres: list[str]) -> tuple[str, dict[str, dict]]:
+def interpreter_arborescence(dossiers: dict[str, int], matieres: list[str],
+                             essai_local=None) -> tuple[str, dict[str, dict]]:
     """Une seule passe texte, peu coûteuse, sur les noms de dossiers d'un import (pas sur les fichiers).
 
+    `essai_local(prompt, entree)` : le modèle local essaie d'abord (dict ou None) ; Claude seulement s'il échoue.
     Renvoie (résumé, {chemin: {niveau, matiere, type}}).
     """
     lignes = "\n".join(f"{chemin or '(racine)'} ({n})" for chemin, n in sorted(dossiers.items()))
@@ -751,8 +777,10 @@ def interpreter_arborescence(dossiers: dict[str, int], matieres: list[str]) -> t
             raise ErreurAgent("réponse sans objet JSON")
         return d
 
-    with tempfile.TemporaryDirectory() as vide:
-        d, _ = demander("dossiers", prompt, Path(vide), lire=lire, entree=lignes[:40_000], timeout=600)
+    d = essai_local(prompt, lignes[:12_000]) if essai_local else None
+    if not d or not isinstance(d.get("dossiers"), dict) or not d["dossiers"]:
+        with tempfile.TemporaryDirectory() as vide:
+            d, _ = demander("dossiers", prompt, Path(vide), lire=lire, entree=lignes[:40_000], timeout=600)
     compris = {}
     for chemin, v in (d.get("dossiers") or {}).items():
         if chemin in dossiers and isinstance(v, dict):

@@ -2,6 +2,8 @@
 {% from "_icones.html" import icone %}
 {% block titre %}Notifications{% endblock %}
 {% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('reglages', 'notifications') }}
 <h1>Notifications</h1>
 {% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
 

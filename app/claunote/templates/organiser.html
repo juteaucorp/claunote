@@ -1,11 +1,10 @@
 {% extends "base.html" %}
 {% block titre %}Organiser{% endblock %}
 {% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('ranger', 'organiser') }}
 <h1>Organiser</h1>
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
-{% set doublons = nb_matieres_en_double() %}
-<p><a class="bouton" href="/organiser/matieres">Matières en double{% if doublons %} <span class="badge">{{ doublons }}</span>{% endif %}</a>
-  <span class="doux">· fusionner « Maths » et « Mathématiques » d'une même année</span></p>
 
 <details class="carte filtres-carte" {{ 'open' if nb_filtres }}>
   <summary>Filtres{% if nb_filtres %} <span class="compteur">{{ nb_filtres }}</span>{% endif %}
