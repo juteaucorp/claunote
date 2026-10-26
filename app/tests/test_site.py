@@ -1371,4 +1371,4 @@ def test_matieres_page_propose_laisser_tel_quel(client, monkeypatch):
     assert '<input type="hidden" name="tous" value="Maths">' in r.text and "1 paire de matières laissée telle quelle" in r.text
     monkeypatch.setattr(db, "matieres_distinctes", lambda: {"BTS1": {frozenset(("Maths", "Mathématiques"))}})
     r = client.get("/organiser/matieres")
-    assert "Laisser tel quel" not in r.text and "Aucun doublon évident" in r.text
+    assert 'formaction="/organiser/matieres/garder"' not in r.text and "Aucun doublon évident" in r.text
