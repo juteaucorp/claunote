@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, auth, db, decoupage, importation, index, local, maj, matieres, modeles,
+from claunote import (agent, anki, auth, carte_mentale, db, decoupage, formules, importation, index, local, maj, matieres, modeles,
                       notifications, pdf, progression, pronote, question, rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
@@ -207,9 +207,15 @@ templates.env.filters["surligner_md"] = lambda extrait: surligner(re.sub(r"\*\*(
 
 
 def rendu_markdown(texte: str | None) -> str:
+    # Formules mises à l'abri du Markdown, puis rendues par KaTeX dans le navigateur (voir formules.py)
+    texte, maths = formules.proteger(texte or "")
     # Le HTML brut éventuel de la transcription est neutralisé avant le rendu
-    texte = (texte or "").replace("&", "&amp;").replace("<", "&lt;")
-    return markdown.markdown(texte, extensions=["tables", "fenced_code"])
+    texte = texte.replace("&", "&amp;").replace("<", "&lt;")
+    return formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths)
+
+
+# Texte simple (questions de quiz, flashcards) avec des formules $…$
+templates.env.filters["maths"] = formules.en_ligne
 
 
 def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Markup:
@@ -384,6 +390,20 @@ def document(request: Request, doc_id: int):
         "doc": doc, "transcription": rendu_markdown(doc["transcription"]), "apercu": apercu, "variante": variante,
         "format": PurePosixPath(doc["nom"]).suffix.lstrip(".").upper(),
         "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
+
+
+def _page_carte_mentale(request: Request, texte: str, titre: str, retour: str) -> HTMLResponse:
+    racine, branches = carte_mentale.arbre(texte, titre)
+    return templates.TemplateResponse(request, "carte_mentale.html", {
+        "racine": racine, "branches": branches, "titre": titre, "retour": retour})
+
+
+@app.get("/doc/{doc_id}/carte-mentale", response_class=HTMLResponse)
+def carte_mentale_document(request: Request, doc_id: int):
+    doc = db.document(doc_id)
+    if doc is None:
+        raise HTTPException(404)
+    return _page_carte_mentale(request, doc["transcription"] or "", doc["titre"] or doc["nom"], f"/doc/{doc_id}")
 
 
 @app.get("/doc/{doc_id}/fichier")
@@ -970,6 +990,16 @@ def _pdf(contenu: bytes, nom: str, telecharger: bool) -> Response:
     mode = "attachment" if telecharger else "inline"
     return Response(contenu, media_type="application/pdf", headers={
         "Content-Disposition": f"{mode}; filename*=UTF-8''{quote(nom)}", "Cache-Control": "private, max-age=60"})
+
+
+@app.get("/revision/{rev_id}/carte-mentale", response_class=HTMLResponse)
+def carte_mentale_revision(request: Request, rev_id: int):
+    rev = db.revision(rev_id)
+    if rev is None or rev["statut"] != "pret" or rev["genre"] not in revision.GENRES_TEXTE:
+        raise HTTPException(404)
+    texte = revision.separer_corrige(rev["contenu"])[0] if rev["genre"] == "examen" else rev["contenu"]
+    texte = revision.separer_web(texte)[0]
+    return _page_carte_mentale(request, texte, rev["sujet"], f"/revision/{rev_id}")
 
 
 @app.get("/revision/{rev_id}/pdf")

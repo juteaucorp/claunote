@@ -34,6 +34,7 @@ from claunote.rangement import slug
 GENRES = {"fiche": "Fiche de révision", "quiz": "Quiz", "cartes": "Flashcards", "examen": "Épreuve blanche",
           "plan": "Plan de révision"}
 COURTS = {"fiche": "Fiche", "quiz": "Quiz", "cartes": "Flashcards", "examen": "Épreuve blanche", "plan": "Plan"}
+GENRES_TEXTE = ("fiche", "examen", "plan")  # supports en Markdown : carte mentale possible
 CORRIGE = "## Corrigé"  # sépare le sujet d'une épreuve blanche de son corrigé
 BUDGET = 120_000  # caractères de cours lus d'un coup ; au-delà, les cours sont condensés par groupes
 GROUPE = 90_000   # caractères de cours par passe de condensation
@@ -55,7 +56,8 @@ Règles :
   de désaccord, garde les deux et signale-le (« Attention : le cours dit…, la source officielle dit… »).
 - Sources fiables seulement (sites officiels, éducation nationale, documentation officielle,
   Légifrance, Wikipédia en dernier recours). Marque chaque apport du web par [W1], [W2]…
-- Écris en français, simplement, sans HTML ni LaTeX (formules en texte : u_n = u_0 × q^n).
+- Écris en français, simplement, sans HTML. Formules de maths, de physique ou de chimie en LaTeX entre
+  $…$ (ex. $u_n = u_0 \\times q^n$, $\\ce{{H2O}}$) : le site les affiche proprement.
 {consigne}"""
 
 PROMPTS = {
@@ -150,7 +152,7 @@ Règles :
   et exercices types (énoncé court + résultat), pièges signalés. Priorité à ce qui touche au sujet.
 - Supprime les répétitions, les bavardages, la mise en page et ce qui est hors sujet.
 - Vise environ un quart de la longueur d'origine. N'invente rien, n'ajoute rien.
-{consigne}Réponds uniquement avec le texte condensé, en Markdown simple, sans HTML ni LaTeX.
+{consigne}Réponds uniquement avec le texte condensé, en Markdown simple, sans HTML ; garde les formules en LaTeX ($…$).
 """
 
 
@@ -317,10 +319,15 @@ def separer_corrige(texte: str) -> tuple[str, str]:
     return (texte, "") if i < 0 else (texte[:i].rstrip(), texte[i:])
 
 
+def _latex_dans_json(texte: str) -> str:
+    """Double les \\ des formules $…$ oubliés dans le JSON : « \\frac » y serait lu comme un saut de page + « rac »."""
+    return re.sub(r"\$[^$\n]*\$", lambda m: re.sub(r"(?<!\\)\\(?=[A-Za-z])", r"\\\\", m.group(0)), texte)
+
+
 def _liste_json(texte: str, cle: str, quoi: str) -> list:
     debut, fin = texte.find("{"), texte.rfind("}")
     try:
-        return list(json.loads(texte[debut:fin + 1])[cle])
+        return list(json.loads(_latex_dans_json(texte[debut:fin + 1]))[cle])
     except (ValueError, KeyError, TypeError) as e:
         raise ErreurAgent(f"{quoi} illisible : {texte[:200]!r}") from e
 

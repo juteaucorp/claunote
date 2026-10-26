@@ -10,6 +10,7 @@
 <p class="doux meta-doc">
   <a href="/doc/{{ doc.id }}/fichier" target="_blank">original</a>
   {% if doc.variante_kdrive_id %} · <a href="/doc/{{ doc.id }}/fichier?variante=1" target="_blank">version {{ (doc.variante_nom or '').rsplit('.', 1)[-1]|upper }}</a>{% endif %}
+  {% if doc.transcription %} · <a href="/doc/{{ doc.id }}/carte-mentale">carte mentale</a>{% endif %}
   {% if doc.chapitre and doc.chapitre != doc.titre %} · {{ doc.chapitre }}{% endif %}
   {% if doc.date_doc %} · {{ doc.date_doc.strftime('%d/%m/%Y') }}{% endif %}
   {% if doc.statut == 'hors_cours' %} · <a href="/hors-cours">hors cours</a>

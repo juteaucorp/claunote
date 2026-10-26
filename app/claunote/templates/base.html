@@ -15,6 +15,38 @@
 <meta name="apple-mobile-web-app-title" content="Claunote">
 {% block tete %}{% endblock %}
 <script src="/static/htmx.min.js" defer></script>
+<script>
+  // Formules $…$ (spans .math, voir formules.py) : KaTeX, embarqué, chargé seulement sur les pages qui en ont,
+  // et redessiné quand le contenu change (chat, rafraîchissement invisible, HTMX)
+  (() => {
+    let chargement = null;
+    const script = (src) => new Promise((ok, ko) => {
+      const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = ko; document.head.append(s);
+    });
+    window.chargerKatex = () => chargement || (chargement = (() => {
+      const css = document.createElement("link");
+      css.rel = "stylesheet"; css.href = "/static/vendor/katex/katex.min.css"; document.head.append(css);
+      return script("/static/vendor/katex/katex.min.js").then(() => script("/static/vendor/katex/mhchem.min.js"));
+    })());
+    const dessiner = () => {
+      const restantes = document.querySelectorAll(".math:not([data-katex])");
+      if (!restantes.length) return;
+      chargerKatex().then(() => restantes.forEach((el) => {
+        if (el.dataset.katex) return;
+        const latex = el.textContent;
+        el.dataset.katex = "1";
+        try {
+          katex.render(latex, el, { displayMode: el.classList.contains("bloc"), throwOnError: false });
+          el.title = latex;
+        } catch (e) { /* formule invalide : le LaTeX reste affiché tel quel */ }
+      })).catch(() => {});
+    };
+    document.addEventListener("DOMContentLoaded", () => {
+      dessiner();
+      new MutationObserver(dessiner).observe(document.body, { childList: true, subtree: true });
+    });
+  })();
+</script>
 <style>
   :root {
     --fond: #ffffff; --fond-doux: #faf9f5; --carte: #ffffff; --texte: #1f1e1d; --doux: #6f6b63;
@@ -140,6 +172,8 @@
   .carte.accent { border-color: var(--accent); background: var(--accent-pale); }
   .doux { color: var(--doux); font-size: .92rem; }
   .alerte { color: var(--alerte); }
+  .math.bloc { display: block; margin: .6em 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
+  .math .katex { font-size: 1.06em; }
   .bandeau { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; border-color: var(--alerte); }
   .bandeau a { flex: 1 1 220px; display: flex; gap: 12px; align-items: flex-start; text-decoration: none; color: var(--texte); }
   .bandeau svg { flex: none; color: var(--alerte); margin-top: 2px; }
