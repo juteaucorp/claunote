@@ -1,20 +1,26 @@
 {# Bloc de la page Mise à jour : rafraîchi toutes les 2 s pendant une action (le site redémarre au milieu) #}
 <div id="bloc-maj" {% if e.en_cours %}hx-get="/mise-a-jour/etat" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
 {% if erreur %}<p class="carte alerte">{{ erreur }}</p>{% endif %}
-{% if not present %}
+{% if not present and not e.en_cours %}
   <div class="carte accent">
     <strong>Le service maj ne tourne pas encore sur la VM.</strong>
-    <p>Une dernière fois à la main, dans le dossier de Claunote :</p>
+    <p>Une seule fois à la main, dans le dossier de Claunote, <strong>en une seule fois et sans rien lancer d'autre
+      en même temps</strong> (la construction peut prendre plus de 10 minutes) :</p>
     <pre class="cmd-maj">git pull && docker compose up -d --build</pre>
-    <p class="doux">Ensuite, tout se fait d'ici.</p>
+    <p class="doux">Ensuite, tout se fait d'ici. Si ce message apparaît alors qu'une mise à jour vient d'être lancée
+      depuis le site, attends : ne lance pas la commande.</p>
   </div>
 {% endif %}
 
 {% if e.en_cours %}
   <div class="carte action-maj">
     <strong>{{ 'En attente du service maj…' if e.en_attente else (e.message or 'En cours…') }}</strong>
-    <p class="doux">Pendant une mise à jour, le site se coupe une minute au redémarrage : cette page se reconnecte toute seule.
-      Le worker finit le document en cours avant de redémarrer.</p>
+    {% if e.debut %}<p class="doux">Commencée {{ heure(e.debut) }}.</p>{% endif %}
+    <p><strong>N'exécute aucune commande sur la VM pendant ce temps</strong> (même si une page te le propose) :
+      deux constructions en même temps peuvent saturer la machine.</p>
+    <p class="doux">Le site se coupe une minute au redémarrage : cette page se reconnecte toute seule. Le worker finit
+      le document en cours avant de redémarrer. Une mise à jour qui reconstruit le service lecture peut prendre
+      plus de 10 minutes.</p>
   </div>
 {% elif e.statut and not (e.action == 'verifier' and e.statut == 'ok') %}
   <p class="carte {{ 'ok-maj' if e.statut == 'ok' else 'alerte' }}">{{ e.message }}

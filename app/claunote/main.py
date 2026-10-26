@@ -123,8 +123,11 @@ def bandeau_service() -> tuple[str, str, bool] | None:
     if not s["connu"]:
         return None
     if not s["vivant"]:
+        if maj.action_en_cours():   # il redémarre pendant la mise à jour : surtout pas de commande à lancer
+            return ("Mise à jour en cours : le worker redémarre.",
+                    "N'exécute aucune commande sur la VM pendant ce temps : la page se remettra à jour seule.", False)
         return (f"Le worker ne répond plus depuis {_heure_fr(s['vu'])} : scans et révisions attendent.",
-                "Sur la VM : docker compose up -d", False)
+                "Sur la VM, si aucune mise à jour n'est en cours : docker compose up -d", False)
     if s.get("arret"):
         return "Le worker redémarre : il termine le travail en cours.", "", False
     c, k = s["claude"], s["kdrive"]

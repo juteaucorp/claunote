@@ -95,3 +95,39 @@ def test_code_pas_encore_installe(client, dossier):
     assert maj.disponibles() == 1
     r = client.get("/mise-a-jour")
     assert "Pas encore installé" in r.text and "web, worker" in r.text and "À jour." not in r.text
+
+
+def test_pendant_une_longue_action_aucune_commande_proposee(client, dossier):
+    """La boucle du service ne signe pas pendant une action : le site ne doit pas croire le service arrêté."""
+    vieux = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=8)).isoformat()
+    (dossier / "vu").write_text(vieux)                                   # boucle muette depuis 8 min
+    (dossier / "etat.json").write_text(json.dumps({"action": "mettre_a_jour", "statut": "en_cours", "debut": vieux,
+                                                   "message": "Construction de lecture…"}))
+    assert maj.present() and maj.action_en_cours()                       # ancien script : sans signal d'action
+    r = client.get("/mise-a-jour")
+    assert "ne tourne pas encore" not in r.text and "docker compose up" not in r.text
+    assert "N'exécute aucune commande" in r.text and "Construction de lecture" in r.text
+    (dossier / "action-vu").write_text(dt.datetime.now(dt.timezone.utc).isoformat())   # nouveau script
+    (dossier / "etat.json").write_text(json.dumps({"statut": "en_cours", "debut": (dt.datetime.now(dt.timezone.utc)
+                                                   - dt.timedelta(hours=5)).isoformat()}))
+    assert maj.action_en_cours()                                         # signal frais : même après 5 h
+
+
+def test_action_coupee_net_par_un_redemarrage(client, dossier):
+    """Machine redémarrée en pleine action : la boucle revient, l'état « en cours » n'est plus vrai."""
+    il_y_a = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=20)).isoformat()
+    (dossier / "etat.json").write_text(json.dumps({"action": "mettre_a_jour", "statut": "en_cours", "debut": il_y_a}))
+    e = maj.etat()                                                       # « vu » frais (fixture) : la boucle tourne
+    assert not e["en_cours"] and e["statut"] == "erreur" and "interrompue" in e["message"]
+    maj.demander("mettre_a_jour")                                        # on peut relancer
+
+
+def test_bandeau_worker_pendant_une_mise_a_jour(client, dossier, monkeypatch):
+    from claunote import main
+    monkeypatch.setattr(main, "etat_service", lambda: {"connu": True, "vivant": False, "vu": dt.datetime.now(dt.timezone.utc)})
+    (dossier / "action-vu").write_text(dt.datetime.now(dt.timezone.utc).isoformat())
+    texte, detail, _ = main.bandeau_service()
+    assert "Mise à jour en cours" in texte and "docker" not in detail
+    (dossier / "action-vu").unlink()
+    texte, detail, _ = main.bandeau_service()
+    assert "ne répond plus" in texte and "si aucune mise à jour n'est en cours" in detail

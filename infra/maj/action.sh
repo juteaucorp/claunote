@@ -83,6 +83,14 @@ decrire() {  # version installée et nouveautés disponibles sur GitHub
   rendre   # fetch et status ont pu écrire dans .git en root
 }
 
+# Pendant l'action, la boucle du service ne signe plus sa présence (/maj/vu) : on la signe ici, dans un
+# fichier à part, toutes les 10 s. Sans ça, le site croyait le service arrêté au bout d'une minute et
+# proposait une commande à lancer à la main… en pleine mise à jour.
+( while :; do date -Iseconds > /maj/action-vu; sleep 10; done ) &
+BATTEMENT=$!
+EN_PAUSE=""   # services mis en pause pour la construction : toujours relancés à la sortie, même après un échec
+trap 'kill $BATTEMENT 2>/dev/null; rm -f /maj/action-vu; [ -n "$EN_PAUSE" ] && docker compose up -d $EN_PAUSE >/dev/null 2>&1' EXIT
+
 ecrire '.action=$a | .statut="en_cours" | .debut=$t | .fin=null | .message=null' \
   --arg a "$action" --arg t "$(maintenant)"
 echo "== $action ($(maintenant))"
@@ -100,10 +108,21 @@ case "$action" in
     for svc in $CONSTRUITS; do a_jour "$svc" || construire="$construire $svc"; done
     a_jour caddy || relancer="caddy"   # Caddyfile changé : « up -d » ne le voit pas, il faut redémarrer
     if [ -n "$construire" ]; then
-      # Construire d'abord : le site reste en ligne pendant la construction, coupé seulement au redémarrage
-      etape "Construction :$construire"
+      # Mémoire basse : Ollama (~2,3 Go) et le service lecture (~1,5 Go) en pause le temps de construire ;
+      # « up -d » plus bas les relance. Une construction (pip, PyTorch) à côté de tout le reste peut sinon
+      # saturer la VM.
+      libre=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
+      if [ "${libre:-0}" -lt 3000 ]; then
+        echo "== mémoire libre : $libre Mo → Ollama et le service lecture en pause pendant la construction"
+        docker compose stop ollama lecture >/dev/null 2>&1 && EN_PAUSE="ollama lecture"
+      fi
+      # Construire d'abord : le site reste en ligne pendant la construction, coupé seulement au redémarrage.
+      # Un service à la fois : plusieurs constructions en parallèle multiplient la mémoire utilisée.
       t=$(date +%s)
-      docker compose build $construire || fin erreur "Échec de la construction : l'ancienne version tourne toujours."
+      for svc in $construire; do
+        etape "Construction de $svc…"
+        docker compose build "$svc" || fin erreur "Échec de la construction de $svc : l'ancienne version tourne toujours."
+      done
       echo "== construit en $(duree $t)"
     else
       echo "== rien à reconstruire : ce qui tourne correspond déjà au code"
