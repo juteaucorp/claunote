@@ -56,6 +56,9 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "niveaux_matieres_comptes", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
     monkeypatch.setattr(db, "documents_matiere", lambda n, m: [DOC] if m == "Réseaux" else [])
     monkeypatch.setattr(db, "documents", lambda ids: [DOC] if 1 in ids else [])
+    monkeypatch.setattr(db, "file_analyse", lambda: [])
+    monkeypatch.setattr(db, "nb_a_relire", lambda: 0)
+    monkeypatch.setattr(db, "file_attente", lambda: {"scans": 0, "revisions": 0, "campagnes": 0, "reclassements": 0})
     monkeypatch.setattr(db, "matieres_par_annee", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
     monkeypatch.setattr(db, "pieces_jointes", lambda revision_id=None, campagne_id=None, contenu=False: [])
     monkeypatch.setattr(db, "ajouter_pieces", lambda f, revision_id=None, campagne_id=None:
@@ -115,7 +118,8 @@ def test_classer_deplace_dans_kdrive(client, monkeypatch):
     assert r.status_code == 303
     assert moves == [("path", ["archives", "BTS2", "Réseaux", "Cours"]), ("move", 77, 500), ("move", 78, 500)]
     assert client.appels[-1] == ("maj", 1, {"statut": "classe", "niveau": "BTS2", "matiere": "Réseaux",
-                                            "type": "Cours", "confiance": 1.0, "note": None, "erreur": None})
+                                            "type": "Cours", "confiance": 1.0, "note": None, "erreur": None,
+                                            "relire": False})
     assert client.post("/doc/1/classer", data={"niveau": "Master", "matiere": "x", "type": "TP"}).status_code == 400
 
 
@@ -461,8 +465,15 @@ def test_agenda_service_absent(agenda, monkeypatch):
         def etat(self):
             raise pronote.ErreurPronote("Le service Pronote ne répond pas (ConnectError).")
     monkeypatch.setattr(pronote, "Client", Panne)
+    from claunote import db
+    synchro = db.etat_valeur
+    monkeypatch.setattr(db, "etat_valeur", lambda k: None)
     r = agenda.get("/agenda")
-    assert "ne répond pas" in r.text and "docker compose up" in r.text
+    assert "ne tourne pas" in r.text and "docker compose up" in r.text and "ConnectError" not in r.text
+    # déjà synchronisé : l'agenda de la dernière synchro reste lisible
+    monkeypatch.setattr(db, "etat_valeur", synchro)
+    r = agenda.get("/agenda")
+    assert "dernière synchronisation" in r.text and "Unit 4" in r.text
 
 
 def test_agenda_preparer(agenda):
@@ -1223,3 +1234,58 @@ def test_matieres_avis_ia(client, monkeypatch):
          "sur": False, "raisons": ["option réseaux"], "source": "ia"}])
     r = client.post("/organiser/matieres/ia")
     assert "Vu par l'IA" in r.text and "option réseaux" in r.text
+
+
+# --- Analyses : pause, arrêt, mode sans Claude, file ------------------------------------
+
+def test_page_analyses(client, monkeypatch):
+    monkeypatch.setattr(db, "file_analyse", lambda: [
+        {"kdrive_id": 5, "nom": "tp.pdf", "chemin": "BTS1/tp.pdf", "lot": "BTS1", "taille": 2_000_000,
+         "decision": "analyser", "local": True, "essais": 2, "cree_le": None, "doc_id": None},
+        {"kdrive_id": 6, "nom": "x.pdf", "chemin": "x.pdf", "lot": "", "taille": 0, "decision": "suspendu",
+         "local": False, "essais": 0, "cree_le": None, "doc_id": None}])
+    monkeypatch.setattr(db, "file_attente", lambda: {"scans": 1, "revisions": 0, "campagnes": 0, "reclassements": 0})
+    monkeypatch.setattr(db, "nb_a_relire", lambda: 3)
+    client.etat["service"] = '{"vu": "2099-01-01T00:00:00+00:00", "en_cours": ["Analyse de « a.pdf »"], ' \
+                             '"local": {"ocr": true, "pret": false, "message": "Ollama n\'est pas installé"}}'
+    r = client.get("/analyses")
+    assert r.status_code == 200
+    assert "1 analyse en cours" in r.text and "Analyse de « a.pdf »" in r.text
+    assert "sans Claude</span>" in r.text and "2 échecs" in r.text and "en attente</span>" in r.text
+    assert "3 documents à relire avec Claude" in r.text and "OCR Tesseract : installé" in r.text
+
+
+def test_pause_arret_et_reprise(client):
+    r = client.post("/analyses/controle", data={"action": "arreter"}, follow_redirects=False)
+    assert r.status_code == 303 and client.etat["analyses_pause"] == "oui" and client.etat["analyses_arreter"] == "oui"
+    assert '<span class="badge">pause</span>' in client.get("/bibliotheque").text
+    client.post("/analyses/controle", data={"action": "reprendre"})
+    assert client.etat.get("analyses_pause") is None
+    assert client.post("/analyses/controle", data={"action": "autre"}).status_code == 400
+
+
+def test_reglages_analyse_locale(client):
+    client.post("/analyses/reglages", data={"mode": "toujours"})
+    assert client.etat["analyse_locale"] == "toujours" and client.etat["relire_avec_claude"] == "non"
+    client.post("/analyses/reglages", data={"mode": "auto", "relire": "1"})
+    assert client.etat["relire_avec_claude"] == "oui"
+    assert client.post("/analyses/reglages", data={"mode": "n'importe"}).status_code == 400
+
+
+def test_actions_de_masse_sur_la_file(client, monkeypatch):
+    faits = []
+    monkeypatch.setattr(db, "file_choisir", lambda ids, action: faits.append((ids, action)) or len(ids))
+    r = client.post("/analyses/file", data={"ids": [5, 6], "action": "local"}, follow_redirects=False)
+    assert faits == [([5, 6], "local")] and "2+fichiers" in r.headers["location"] and "scan" in client.appels
+    assert client.post("/analyses/file", data={"action": "local"}).status_code == 400
+    assert client.post("/analyses/file", data={"ids": [5], "action": "rien"}).status_code == 400
+
+
+def test_demander_repli_sur_ollama(chat, monkeypatch):
+    monkeypatch.setattr(main, "_claude_en_pause", lambda: "limite de ton forfait Claude atteinte")
+    monkeypatch.setattr(main.local, "etat_ollama", lambda reverifier=False: {"pret": True})
+    monkeypatch.setattr(main.question, "repondre_ollama", lambda q, h, c, p="": ("Réponse locale [D1]", {"D1": 1}))
+    chat.post("/demander", data={"question": "vlan", "mode": "ia"})
+    m = chat.msgs[2]
+    assert m["role"] == "ia" and m["modele"] == "local" and "modèle local" in m["contenu"]
+    assert "Modèle local (Ollama)" in chat.get("/demander/1").text

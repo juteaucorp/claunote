@@ -36,7 +36,7 @@ def _faux_claude(monkeypatch, code, sortie, stderr=""):
     def run(cmd, **kw):
         assert cmd[:2] == ["claude", "-p"] and "--allowedTools" in cmd
         return subprocess.CompletedProcess(cmd, code, stdout=json.dumps(sortie), stderr=stderr)
-    monkeypatch.setattr(agent.subprocess, "run", run)
+    monkeypatch.setattr(agent, "_lancer", lambda cmd, cwd, entree, timeout, tache: run(cmd))
 
 
 def test_analyser_ok(monkeypatch, tmp_path):
@@ -150,7 +150,7 @@ def claude(monkeypatch):
         code, sortie = reponses.pop(0)
         stdout = json.dumps(sortie) if isinstance(sortie, dict) else sortie
         return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr="")
-    monkeypatch.setattr(agent.subprocess, "run", run)
+    monkeypatch.setattr(agent, "_lancer", lambda cmd, cwd, entree, timeout, tache: run(cmd))
     yield appels, reponses
     modeles._indisponibles.clear()
 
@@ -336,3 +336,26 @@ def test_long_scan_lu_par_morceaux_en_parallele(tmp_path, monkeypatch):
 def test_decoupage_sans_petit_reste(tmp_path):
     scan = _pdf(tmp_path / "s.pdf", ["p"] * 17)
     assert [(d, f) for _, d, f in agent.decouper_pdf(scan)] == [(1, 8), (9, 17)]
+
+
+def test_interrompre_une_analyse(monkeypatch, tmp_path):
+    """« Arrêter » sur le site : le `claude -p` d'une analyse est tué, l'appel lève Interrompu (pas une panne)."""
+    import threading
+    import time as t
+    faux = tmp_path / "claude"
+    faux.write_text("#!/bin/sh\nsleep 30\n")
+    faux.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{agent.os.environ['PATH']}")
+    monkeypatch.setattr(agent, "ENV_FORFAIT", dict(agent.os.environ))
+    erreurs = []
+    fil = threading.Thread(target=lambda: erreurs.append(pytest.raises(agent.Interrompu, agent.appeler_claude,
+                                                                       "x", tmp_path, tache="scan")))
+    fil.start()
+    for _ in range(50):
+        if agent._processus:
+            break
+        t.sleep(0.05)
+    assert agent.interrompre({"fiche"}) == 0  # une révision n'est pas visée
+    assert agent.interrompre() == 1
+    fil.join(5)
+    assert not fil.is_alive() and erreurs and not agent._processus

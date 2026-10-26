@@ -46,7 +46,8 @@ LIBELLES = {
     "matieres": "Matières en double",
     "sonde": "Test de Claude (bouton Réessayer)",
 }
-NOMS = {"haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus"}
+NOMS = {"haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus",
+        "local": "Local, sans Claude", "ollama": "Ollama (local)"}  # analyse sur la VM (local.py)
 
 INDISPONIBLE_MODELE = dt.timedelta(hours=24)  # modèle refusé par le forfait : on réessaie le lendemain
 

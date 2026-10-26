@@ -474,7 +474,9 @@ def jours_programme(programme: dict | None, faits: list[str], revisions: list[di
     for j in (programme or {}).get("jours", []):
         date = dt.date.fromisoformat(j["date"])
         taches = []
-        for i, t in enumerate(j["taches"]):
+        for i, t in enumerate(j.get("taches") or []):
+            # Un programme d'une ancienne version n'a pas toujours tous les champs
+            t = {"matiere": "", "quoi": "", "duree": 0, **t, "support": t.get("support") or ""}
             cle = f"{j['date']}:{i}"
             lien = None
             if t["support"]:
@@ -482,7 +484,7 @@ def jours_programme(programme: dict | None, faits: list[str], revisions: list[di
                     (r for (m, g), r in supports.items() if g == t["support"] and m and
                      (m.lower() in t["matiere"].lower() or t["matiere"].lower() in m.lower())), None)
             taches.append({**t, "cle": cle, "fait": cle in faits, "revision": lien})
-        jours.append({"date": date, "libelle": f"{JOURS[date.weekday()]} {date:%d/%m}", "titre": j["titre"],
+        jours.append({"date": date, "libelle": f"{JOURS[date.weekday()]} {date:%d/%m}", "titre": j.get("titre") or "",
                       "taches": taches, "minutes": sum(t["duree"] for t in taches)})
     return jours
 

@@ -7,7 +7,7 @@
 {% for d in docs %}
 <div class="carte">
   <a href="/doc/{{ d.id }}"><strong>{{ d.titre or d.nom }}</strong></a>
-  <div class="doux">{{ d.chapitre or '' }}{% if d.date_doc %} · {{ d.date_doc.strftime('%d/%m/%Y') }}{% endif %}</div>
+  <div class="doux">{{ d.chapitre if d.chapitre and d.chapitre != d.titre else '' }}{% if d.date_doc %}{{ ' · ' if d.chapitre and d.chapitre != d.titre }}{{ d.date_doc.strftime('%d/%m/%Y') }}{% endif %}</div>
 </div>
 {% else %}
 <p>Aucun document ici.</p>

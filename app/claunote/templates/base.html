@@ -86,6 +86,10 @@
   .feuille-haut svg { width: 20px; height: 20px; color: var(--doux); }
   .feuille-haut form { margin: 0; }
   .feuille-haut .badge { margin-left: auto; }
+  .titre-menu { grid-column: 1 / -1; padding: 8px 10px 2px; font-size: .7rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--doux); }
+  .titre-menu:first-child { padding-top: 4px; }
+  .feuille-haut { max-height: calc(100vh - 90px); overflow-y: auto; }
   .icone-entete { display: none; }
 
   /* Téléphone : barre du haut réduite, onglets en bas (comme une appli) */
@@ -105,10 +109,11 @@
     nav.onglets > a:active, nav.onglets summary:active { transform: scale(.94); }
     nav.onglets summary::-webkit-details-marker { display: none; }
     nav.onglets .actif { color: var(--accent-fonce); background: var(--accent-pale); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
-    nav.onglets .badge { position: absolute; top: 2px; left: calc(50% + 6px); margin: 0; min-width: 18px; line-height: 18px; font-size: .68rem; padding: 0 5px; }
+    nav.onglets > a .badge, nav.onglets summary .badge { position: absolute; top: 2px; left: calc(50% + 6px); margin: 0; min-width: 18px; line-height: 18px; font-size: .68rem; padding: 0 5px; }
     nav.onglets details { margin: 0; }
     .feuille { position: fixed; left: 12px; right: 12px; margin-left: auto; max-width: 460px; bottom: calc(80px + env(safe-area-inset-bottom));
-      border-radius: 28px; padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; animation: monter .22s cubic-bezier(.2, .9, .3, 1.2); transform-origin: bottom right; }
+      border-radius: 28px; padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 4px;
+      max-height: calc(100dvh - 120px - env(safe-area-inset-bottom) - env(safe-area-inset-top)); overflow-y: auto; animation: monter .22s cubic-bezier(.2, .9, .3, 1.2); transform-origin: bottom right; }
     @keyframes monter { from { transform: scale(.94) translateY(10px); } }  /* sans opacité : le flou reste actif pendant l'animation */
     .feuille a, .feuille button { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 18px; color: var(--texte); text-decoration: none;
       font-weight: 500; font-size: .95rem; border: 0; background: none; width: 100%; text-align: left; }
@@ -152,7 +157,7 @@
   .outils .loupe { display: none; }  /* .outils : sinon .bouton-icone (plus bas) la réaffiche à côté du champ */
   @media (max-width: 1100px) and (min-width: 1001px) { .recherche-entete { display: none; } .outils .loupe { display: inline-flex; } }
 
-  .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
   .grille .carte { margin: 0; }
   .pastilles a { display: inline-block; margin: 6px 6px 0 0; padding: 3px 12px; border-radius: 999px; background: var(--fond-doux); border: 1px solid var(--bord); text-decoration: none; font-size: .88rem; color: var(--texte); }
   .pastilles a:hover { border-color: var(--accent); color: var(--accent-fonce); }
@@ -214,7 +219,8 @@
     main { padding-top: 16px; padding-left: 12px; padding-right: 12px; }
     .carte { padding: 14px 16px; border-radius: 16px; }
     .carte.lignes { padding: 2px 16px; }
-    .grille { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+    .grille { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+    .grille.large { grid-template-columns: 1fr; }  /* cartes avec boutons ou listes : une par ligne */
     .grille .carte { padding: 12px 14px; }
     button, a.bouton, select, input:not([type=checkbox]):not([type=radio]) { min-height: 44px; }
     button, a.bouton { border-radius: 999px; padding-left: 18px; padding-right: 18px; }
@@ -233,18 +239,26 @@
 {% set evals = nb_evaluations_proches() %}
 {% set a_importer = nb_import_a_confirmer() %}
 {% set attente = nb_a_verifier() + a_importer %}
-{% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
+{% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
+{% set en_pause = analyses_en_pause() %}
 {% macro liens_plus() %}
+      <span class="titre-menu">Ajouter</span>
       <a href="/deposer">{{ icone('deposer') }}Déposer</a>
       <a href="/import">{{ icone('organiser') }}Import de dossiers{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
+      <span class="titre-menu">Réviser</span>
+      <a href="/demander">{{ icone('bulle') }}Une question</a>
       <a href="/cartes">{{ icone('cartes') }}Flashcards{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
+      <span class="titre-menu">Ranger</span>
       <a href="/a-verifier">{{ icone('verifier') }}À vérifier{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>
       <a href="/organiser">{{ icone('organiser') }}Organiser</a>
+      <a href="/organiser/matieres">{{ icone('fusion') }}Matières en double</a>
       <a href="/hors-cours">{{ icone('hors') }}Hors cours</a>
-      <a href="/recherche">{{ icone('recherche') }}Rechercher</a>
-      <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" onclick="this.closest('details').open = false">{{ icone('scan') }}Scanner l'inbox</button>
-      <a href="/notifications">{{ icone('cloche') }}Notifications</a>
+      <span class="titre-menu">Suivi</span>
+      <a href="/analyses">{{ icone('scan') }}Analyses{% if en_pause %}<span class="badge">pause</span>{% endif %}</a>
       <a href="/etat">{{ icone('etat') }}État du service</a>
+      <a href="/notifications">{{ icone('cloche') }}Notifications</a>
+      <button hx-post="/scan" hx-target="#retour-scan" hx-swap="innerHTML" onclick="this.closest('details').open = false">{{ icone('relancer') }}Scanner l'inbox</button>
+      <span class="titre-menu">Compte</span>
       <a href="/compte">{{ icone('compte') }}Compte</a>
       <form method="post" action="/deconnexion"><button>{{ icone('sortie') }}Déconnexion</button></form>
 {% endmacro %}

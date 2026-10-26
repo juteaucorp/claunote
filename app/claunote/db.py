@@ -1,4 +1,5 @@
 """Accès PostgreSQL : documents analysés + petit état partagé site/worker."""
+import atexit
 import os
 import secrets
 import threading
@@ -165,6 +166,10 @@ CREATE TABLE IF NOT EXISTS abonnements_push (
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS essais INT NOT NULL DEFAULT 0;     -- pannes de Claude sur ce document
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS modele TEXT;                      -- modèle qui l'a lu
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS avis TEXT;                        -- second avis d'un modèle plus fort
+-- Analyse locale (local.py) : document à relire avec Claude quand il est disponible
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS relire BOOLEAN NOT NULL DEFAULT false;
+-- Fichier de la file d'analyse à lire sans Claude (choisi sur la page Analyses)
+ALTER TABLE import_fichiers ADD COLUMN IF NOT EXISTS local BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS essais INT NOT NULL DEFAULT 0;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS pdf_essais INT NOT NULL DEFAULT 0; -- copie du PDF dans kDrive
 ALTER TABLE import_lots ADD COLUMN IF NOT EXISTS a_comprendre BOOLEAN NOT NULL DEFAULT false;  -- passe IA à faire
@@ -273,7 +278,7 @@ UPDATE messages SET statut = 'erreur', erreur = 'Réponse interrompue (redémarr
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
           "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note",
-          "variante_kdrive_id", "variante_nom", "essais", "modele", "avis"}
+          "variante_kdrive_id", "variante_nom", "essais", "modele", "avis", "relire"}
 
 
 _pool: ConnectionPool | None = None
@@ -290,6 +295,15 @@ def connect():
                                        kwargs={"row_factory": dict_row, "autocommit": True},
                                        check=ConnectionPool.check_connection)
     return _pool.connection()
+
+
+def fermer():
+    """À la sortie : sans ça, le pool attend 5 s par connexion ouverte (arrêt du worker ralenti)."""
+    if _pool is not None:
+        _pool.close()
+
+
+atexit.register(fermer)
 
 
 def init():
@@ -428,9 +442,11 @@ def maj_masse(ids: list[int], **champs) -> int:
         exclus = ["nouveau", "erreur"] if champs.get("statut") == "reclasser" else ["nouveau"]
         return c.execute(
             f"""UPDATE documents SET {cols}, a_ranger = true, maj_le = now(),
-                  confiance = CASE WHEN %s THEN 1.0 ELSE confiance END, note = NULL
+                  confiance = CASE WHEN %s THEN 1.0 ELSE confiance END, note = NULL,
+                  relire = relire AND NOT %s
                 WHERE id = ANY(%s) AND NOT (statut = ANY(%s))""",
-            (*champs.values(), champs.get("statut") != "reclasser", ids, exclus)).rowcount
+            (*champs.values(), champs.get("statut") != "reclasser", champs.get("statut") != "reclasser", ids,
+             exclus)).rowcount
 
 
 def completer_classement(ids: list[int]) -> int:
@@ -1149,9 +1165,9 @@ def import_bilan():
     with connect() as c:
         rows = c.execute(
             """SELECT f.lot, max(f.cree_le) AS le, count(*) AS total,
-                      count(*) FILTER (WHERE f.decision IN ('analyser', 'fait') AND f.categorie = 'document'
+                      count(*) FILTER (WHERE f.decision IN ('analyser', 'fait', 'suspendu') AND f.categorie = 'document'
                                          AND f.principal IS NULL) AS documents,
-                      count(*) FILTER (WHERE f.decision = 'analyser') AS en_attente,
+                      count(*) FILTER (WHERE f.decision IN ('analyser', 'suspendu')) AS en_attente,
                       count(*) FILTER (WHERE f.decision = 'variante' OR (f.decision = 'fait' AND f.principal IS NOT NULL
                                                                          AND f.categorie = 'document')) AS variantes,
                       count(*) FILTER (WHERE f.decision = 'fusionne') AS pages_fusionnees,
@@ -1181,7 +1197,8 @@ def import_dossiers(lot: str) -> dict[str, int]:
 def statuts_kdrive(ids: list[int]) -> dict[int, dict]:
     """{kdrive_id: {statut, essais}} des fichiers déjà connus (une requête pour toute l'inbox)."""
     with connect() as c:
-        rows = c.execute("SELECT kdrive_id, statut, essais FROM documents WHERE kdrive_id = ANY(%s)", (ids,)).fetchall()
+        rows = c.execute("SELECT kdrive_id, statut, essais, relire FROM documents WHERE kdrive_id = ANY(%s)",
+                         (ids,)).fetchall()
     return {r["kdrive_id"]: r for r in rows}
 
 
@@ -1408,3 +1425,76 @@ def maj_message(msg_id: int, statut: str, contenu: str = "", reperes=None, web=N
         c.execute("UPDATE messages SET statut = %s, contenu = %s, reperes = %s, sources_web = %s, modele = %s, "
                   "erreur = %s, role = coalesce(%s, role) WHERE id = %s",
                   (statut, contenu, Jsonb(reperes or {}), Jsonb(web or []), modele, erreur, role, msg_id))
+
+
+def voisins(requete: str, limite: int = 12):
+    """Cours classés qui partagent le plus de mots avec un texte (classement sans IA, local.py)."""
+    if not requete.strip():
+        return []
+    with connect() as c:
+        return c.execute(
+            """SELECT id, niveau, matiere, type, ts_rank(recherche, requete) AS score
+               FROM documents, to_tsquery('french', %s) AS requete
+               WHERE statut = 'classe' AND recherche @@ requete
+               ORDER BY score DESC LIMIT %s""", (requete, limite)).fetchall()
+
+
+# --- File d'analyse (page Analyses) ------------------------------------------------------
+
+def file_analyse(limite: int = 200):
+    """Fichiers de l'inbox qui attendent l'analyse (ou suspendus), les documents des profs d'abord."""
+    with connect() as c:
+        return c.execute(
+            """SELECT f.kdrive_id, f.nom, f.chemin, f.lot, f.taille, f.decision, f.local, f.cree_le,
+                      d.id AS doc_id, coalesce(d.essais, 0) AS essais, coalesce(d.relire, false) AS attend_claude
+               FROM import_fichiers f LEFT JOIN documents d ON d.kdrive_id = f.kdrive_id
+               WHERE f.categorie = 'document' AND f.decision IN ('analyser', 'suspendu') AND NOT f.dossier
+                 AND coalesce(d.statut, 'nouveau') = 'nouveau'
+               ORDER BY f.decision = 'suspendu', f.chemin NOT LIKE 'Pronote/%%', f.cree_le, f.chemin
+               LIMIT %s""", (limite,)).fetchall()
+
+
+def file_choisir(ids: list[int], action: str) -> int:
+    """Action de masse sur la file : suspendre, reprendre, local, claude, supprimer."""
+    sql = {"suspendre": "decision = 'suspendu'", "reprendre": "decision = 'analyser'",
+           "local": "local = true", "claude": "local = false", "supprimer": "decision = 'supprimer'"}[action]
+    avant = {"suspendre": "('analyser')", "reprendre": "('suspendu')"}.get(action, "('analyser', 'suspendu')")
+    with connect() as c, c.transaction():
+        n = c.execute(f"UPDATE import_fichiers SET {sql} WHERE kdrive_id = ANY(%s) AND decision IN {avant}",
+                      (ids,)).rowcount
+        if action == "supprimer":  # analyse jamais finie : rien à garder
+            c.execute("DELETE FROM documents WHERE kdrive_id = ANY(%s) AND statut = 'nouveau'", (ids,))
+    return n
+
+
+def import_suspendus_locaux(ids: list[int]) -> tuple[set[int], set[int]]:
+    """(fichiers suspendus, fichiers à lire sans Claude) parmi ces fichiers de l'inbox."""
+    with connect() as c:
+        rows = c.execute("SELECT kdrive_id, decision, local FROM import_fichiers WHERE kdrive_id = ANY(%s) "
+                         "AND (decision = 'suspendu' OR local)", (ids,)).fetchall()
+    return ({r["kdrive_id"] for r in rows if r["decision"] == "suspendu"},
+            {r["kdrive_id"] for r in rows if r["local"]})
+
+
+def a_relire(limite: int = 10):
+    """Documents analysés sans Claude, à relire par Claude quand il est disponible."""
+    with connect() as c:
+        return c.execute("SELECT * FROM documents WHERE relire AND statut NOT IN ('nouveau', 'reclasser') "
+                         "ORDER BY maj_le LIMIT %s", (limite,)).fetchall()
+
+
+def nb_a_relire() -> int:
+    with connect() as c:
+        return c.execute("SELECT count(*) AS n FROM documents WHERE relire AND statut NOT IN ('nouveau', 'reclasser')"
+                         ).fetchone()["n"]
+
+
+def marquer_relire(ids: list[int], valeur: bool = True) -> int:
+    with connect() as c:
+        return c.execute("UPDATE documents SET relire = %s WHERE id = ANY(%s) AND statut NOT IN ('nouveau', 'reclasser')",
+                         (valeur, ids)).rowcount
+
+
+def annuler_relectures() -> int:
+    with connect() as c:
+        return c.execute("UPDATE documents SET relire = false WHERE relire").rowcount

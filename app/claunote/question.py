@@ -94,6 +94,24 @@ def entree(question: str, historique: list[dict], cours: list[dict]) -> tuple[st
     return texte, reperes
 
 
+PROMPT_LOCAL = """Tu es l'assistant de révision d'un élève. Réponds à sa dernière question, en français, simplement et
+brièvement, à partir de ses cours fournis (repères [D1], [D2]…) : cite le repère des points qui en viennent.
+Si les cours ne contiennent pas la réponse, dis-le en une phrase, puis donne ce que tu sais en restant prudent.
+Markdown simple, sans HTML.{portee}"""
+
+
+def repondre_ollama(question: str, historique: list[dict], cours: list[dict], portee: str = "") -> tuple[str, dict]:
+    """Claude indisponible : même question au modèle local (Ollama, sur le processeur), sans web."""
+    from claunote import local
+    texte, reperes = entree(question, historique, [{**c, "transcription": (c.get("transcription") or "")[:2500]}
+                                                    for c in cours[:4]])
+    reponse = local.ollama(PROMPT_LOCAL.format(portee=f" Sujet choisi : {portee}." if portee else ""), texte,
+                           json_seul=False, timeout=600).strip()
+    if not reponse:
+        raise ErreurAgent("réponse vide du modèle local")
+    return reponse, reperes
+
+
 def repondre_ia(question: str, historique: list[dict], cours: list[dict], portee: str = "") -> tuple[str, dict, list, str]:
     """Réponse de Claude : (Markdown, repères des cours, sources web, modèle).
 

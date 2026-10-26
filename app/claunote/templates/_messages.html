@@ -16,7 +16,7 @@
 </div>
 {% else %}
 <div class="msg reponse {{ m.role }}" id="msg-{{ m.id }}">
-  <div class="qui doux">{% if m.role == 'ia' %}Claude{% if m.modele %} · {{ x.noms.get(m.modele, m.modele) }}{% endif %}{% else %}Tes cours · sans IA{% endif %}</div>
+  <div class="qui doux">{% if m.role == 'ia' and m.modele == 'local' %}Modèle local (Ollama){% elif m.role == 'ia' %}Claude{% if m.modele %} · {{ x.noms.get(m.modele, m.modele) }}{% endif %}{% else %}Tes cours · sans IA{% endif %}</div>
   <div class="texte">{{ x.rendu }}</div>
   {% if m.sources_web %}
   <ul class="web doux">{% for w in m.sources_web %}<li>[{{ w.repere }}] <a href="{{ w.url }}" target="_blank" rel="noopener noreferrer">{{ w.titre }}</a></li>{% endfor %}</ul>
