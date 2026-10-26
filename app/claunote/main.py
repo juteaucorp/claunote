@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, auth, carte_mentale, db, decoupage, formules, importation, index, local, maj, matieres, modeles,
+from claunote import (agent, anki, auth, carte_mentale, cles, db, decoupage, formules, importation, index, local, maj, matieres, modeles,
                       notifications, pdf, progression, pronote, question, rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
@@ -53,7 +53,7 @@ def _noter_appel(**appel):
 
 
 app = FastAPI(title="Claunote", lifespan=lifespan)
-PUBLIC = ("/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
+PUBLIC = ("/connexion", "/cles/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
 
 
 @app.middleware("http")
@@ -239,9 +239,18 @@ def _suite_sure(suite: str) -> str:
     return suite if suite.startswith("/") and not suite.startswith("//") and "\\" not in suite else "/"
 
 
+def _face_id(request: Request) -> bool:
+    """Bouton Face ID sur la page de connexion : adresse compatible et au moins un appareil ajouté."""
+    try:
+        return not cles.possible(request.headers.get("host", ""), _https(request)) and bool(db.cles_acces())
+    except Exception:
+        return False
+
+
 @app.get("/connexion", response_class=HTMLResponse)
 def page_connexion(request: Request, suite: str = "/"):
-    return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "sans_nav": True})
+    return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "sans_nav": True,
+                                                                  "face_id": _face_id(request)})
 
 
 @app.post("/connexion", response_class=HTMLResponse)
@@ -254,7 +263,7 @@ def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str 
         erreur = (f"Trop d'essais : réessaie dans {attente // 60 + 1} min." if attente
                   else "Identifiant ou mot de passe incorrect.")
         return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "erreur": erreur,
-                                                                       "sans_nav": True},
+                                                                       "sans_nav": True, "face_id": _face_id(request)},
                                           status_code=401)
     r = RedirectResponse(_suite_sure(suite), status_code=303)
     _cookie_session(request, r, compte)
@@ -262,14 +271,98 @@ def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str 
 
 
 def _cookie_session(request: Request, reponse: Response, compte: auth.Compte):
-    https = request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
     reponse.set_cookie(auth.COOKIE, compte.creer_session(), max_age=auth.DUREE, httponly=True, samesite="lax",
-                       secure=https)
+                       secure=_https(request))
+
+
+def _https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
+
+
+def _origine(request: Request) -> str:
+    return f"{'https' if _https(request) else request.url.scheme}://{request.headers.get('host', '')}"
+
+
+def _contexte_compte(request: Request, **plus) -> dict:
+    host = request.headers.get("host", "")
+    return {"utilisateur": request.app.state.compte.utilisateur, "cles": db.cles_acces(),
+            "cles_impossible": cles.possible(host, _https(request)), "nom_sslip": cles.nom_sslip(host),
+            "hote": cles.hote(host), **plus}
 
 
 @app.get("/compte", response_class=HTMLResponse)
 def page_compte(request: Request):
-    return templates.TemplateResponse(request, "compte.html", {"utilisateur": request.app.state.compte.utilisateur})
+    return templates.TemplateResponse(request, "compte.html", _contexte_compte(request))
+
+
+# --- Face ID / Touch ID (clés d'accès, voir cles.py) ---------------------------
+
+COOKIE_DEFI = "claunote_defi"
+
+
+def _reponse_options(jeton: str, options: str) -> Response:
+    r = Response(options, media_type="application/json")
+    r.set_cookie(COOKIE_DEFI, jeton, max_age=cles.DUREE_DEFI, httponly=True, samesite="strict")
+    return r
+
+
+@app.post("/cles/inscription/options")
+def cles_inscription_options(request: Request):
+    host = request.headers.get("host", "")
+    if cles.possible(host, _https(request)):
+        raise HTTPException(400, "Face ID demande un nom de site en HTTPS (voir Réglages → Compte)")
+    return _reponse_options(*cles.options_inscription(host, request.app.state.compte.utilisateur,
+                                                      [k["id"] for k in db.cles_acces()]))
+
+
+@app.post("/cles/inscription")
+async def cles_inscription(request: Request):
+    corps = cles.lire(await request.body())
+    try:
+        cle = cles.verifier_inscription(request.cookies.get(COOKIE_DEFI), corps.get("cle") or {},
+                                        request.headers.get("host", ""), _origine(request))
+    except cles.CleRefusee as e:
+        return JSONResponse({"erreur": str(e)}, status_code=400)
+    db.ajouter_cle(cle, (corps.get("nom") or "Appareil").strip()[:60])
+    return {"ok": True}
+
+
+@app.post("/cles/{cle_id}/supprimer")
+def cles_supprimer(cle_id: str):
+    db.supprimer_cle(cle_id)
+    return RedirectResponse("/compte#cles", status_code=303)
+
+
+@app.post("/cles/connexion/options")
+def cles_connexion_options(request: Request):
+    host = request.headers.get("host", "")
+    if cles.possible(host, _https(request)):
+        raise HTTPException(400, "Face ID indisponible à cette adresse")
+    return _reponse_options(*cles.options_connexion(host))
+
+
+@app.post("/cles/connexion")
+async def cles_connexion(request: Request):
+    compte = request.app.state.compte
+    ip = request.client.host if request.client else "?"
+    if compte.bloque(ip):
+        return JSONResponse({"erreur": "Trop d'essais : réessaie dans quelques minutes."}, status_code=429)
+    corps = cles.lire(await request.body())
+    reponse = corps.get("cle") or {}
+    cle = db.cle_acces(cles.identifiant(reponse))
+    try:
+        if cle is None:
+            raise cles.CleRefusee("clé inconnue : ajoute cet appareil depuis Réglages → Compte")
+        compteur = cles.verifier_connexion(request.cookies.get(COOKIE_DEFI), reponse, cle,
+                                           request.headers.get("host", ""), _origine(request))
+    except cles.CleRefusee as e:
+        compte._echecs.setdefault(ip, []).append(time.time())
+        return JSONResponse({"erreur": str(e)}, status_code=400)
+    db.cle_utilisee(cle["id"], compteur)
+    r = JSONResponse({"suite": _suite_sure(str(corps.get("suite") or "/"))})
+    _cookie_session(request, r, compte)
+    r.delete_cookie(COOKIE_DEFI)
+    return r
 
 
 @app.post("/compte", response_class=HTMLResponse)
@@ -287,15 +380,14 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
     elif nouveau == auth.DEFAUT_MOT_DE_PASSE:
         erreur = "Choisis un autre mot de passe que celui par défaut."
     if erreur:
-        return templates.TemplateResponse(request, "compte.html", {"utilisateur": compte.utilisateur, "erreur": erreur},
+        return templates.TemplateResponse(request, "compte.html", _contexte_compte(request, erreur=erreur),
                                           status_code=400)
     hache = auth.hacher(nouveau)
     db.etat_ecrire("mot_de_passe", hache)
     # Nouveau compte = nouvelles signatures : les autres appareils sont déconnectés, pas celui-ci
     request.app.state.compte = auth.Compte(compte.utilisateur, hache, compte.secret)
-    r = templates.TemplateResponse(request, "compte.html", {
-        "utilisateur": compte.utilisateur,
-        "message": "Mot de passe changé. Les autres appareils devront se reconnecter."})
+    r = templates.TemplateResponse(request, "compte.html", _contexte_compte(
+        request, message="Mot de passe changé. Les autres appareils devront se reconnecter."))
     _cookie_session(request, r, request.app.state.compte)
     return r
 

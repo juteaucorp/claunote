@@ -145,6 +145,15 @@ CREATE TABLE IF NOT EXISTS cartes (
 CREATE INDEX IF NOT EXISTS cartes_prochaine ON cartes (prochaine);
 ALTER TABLE cartes ADD COLUMN IF NOT EXISTS echeance TIMESTAMPTZ;   -- FSRS : à la minute près (étapes d'apprentissage)
 ALTER TABLE cartes ADD COLUMN IF NOT EXISTS fsrs JSONB;             -- état FSRS (stabilité, difficulté…)
+CREATE TABLE IF NOT EXISTS cles_acces (                             -- Face ID / Touch ID (passkeys) : clés publiques
+    id           TEXT PRIMARY KEY,                                  -- identifiant de la clé (base64url)
+    cle_publique BYTEA NOT NULL,
+    compteur     BIGINT NOT NULL DEFAULT 0,
+    nom          TEXT NOT NULL DEFAULT '',                          -- « iPhone », « Mac »…
+    rp_id        TEXT NOT NULL,                                     -- nom du site au moment de l'ajout
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    utilisee_le  TIMESTAMPTZ
+);
 CREATE TABLE IF NOT EXISTS revues_cartes (                          -- chaque réponse : statistiques, réglage futur de FSRS
     id          BIGSERIAL PRIMARY KEY,
     carte_id    INT NOT NULL REFERENCES cartes(id) ON DELETE CASCADE,
@@ -952,6 +961,34 @@ def nb_cartes_a_revoir(rev_id: int | None = None) -> int:
     with connect() as c:
         return c.execute(f"SELECT count(*) AS n FROM cartes k WHERE {A_REVOIR} "
                          "AND (%s::int IS NULL OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
+
+
+# --- Clés d'accès (Face ID) ---------------------------------------------------
+
+def cles_acces():
+    with connect() as c:
+        return c.execute("SELECT id, nom, rp_id, cree_le, utilisee_le FROM cles_acces ORDER BY cree_le").fetchall()
+
+
+def cle_acces(cle_id: str):
+    with connect() as c:
+        return c.execute("SELECT * FROM cles_acces WHERE id = %s", (cle_id,)).fetchone()
+
+
+def ajouter_cle(cle: dict, nom: str):
+    with connect() as c:
+        c.execute("INSERT INTO cles_acces (id, cle_publique, compteur, nom, rp_id) VALUES (%s, %s, %s, %s, %s) "
+                  "ON CONFLICT (id) DO NOTHING", (cle["id"], cle["cle_publique"], cle["compteur"], nom, cle["rp_id"]))
+
+
+def cle_utilisee(cle_id: str, compteur: int):
+    with connect() as c:
+        c.execute("UPDATE cles_acces SET compteur = %s, utilisee_le = now() WHERE id = %s", (compteur, cle_id))
+
+
+def supprimer_cle(cle_id: str):
+    with connect() as c:
+        c.execute("DELETE FROM cles_acces WHERE id = %s", (cle_id,))
 
 
 # --- Progression ------------------------------------------------------------
