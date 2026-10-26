@@ -54,22 +54,39 @@ def entete(doc: dict) -> str:
     return f"{doc.get('titre') or doc.get('nom') or ''}\n"
 
 
+_refus = {"dimension": False}   # vecteurs refusés par la base (OLLAMA_EMBED changé) : on arrête d'en calculer
+
+
 def indexer(limite: int = 20, arret=lambda: False) -> int:
-    """Indexe les documents nouveaux ou modifiés ; renvoie combien. Le sens seulement si la VM le permet."""
+    """Indexe les documents nouveaux ou modifiés ; renvoie combien. Le sens seulement si la VM le permet.
+
+    Un document mis à jour sans que son texte change (rangé dans kDrive, reclassé) garde ses vecteurs :
+    seuls les passages nouveaux passent par le modèle d'embeddings, le reste n'est pas recalculé.
+    """
     n = 0
     for doc in db.a_indexer(limite):
         if arret():
             break
         passages = decouper(doc["transcription"])
-        vecteurs = None
-        if passages and not ressources.sature():
-            vecteurs = local.vecteurs([entete(doc) + p for p in passages])
+        anciens = db.passages_existants(doc["id"])
+        connus = {texte: v for texte, v in anciens if v is not None}
+        if passages == [texte for texte, _ in anciens] and (len(connus) == len(set(passages)) or _refus["dimension"]):
+            db.marquer_indexe(doc["id"])   # rien n'a changé dans le texte
+            n += 1
+            continue
+        nouveaux = [p for p in dict.fromkeys(passages) if p not in connus]
+        calcules = {}
+        if nouveaux and not _refus["dimension"] and not ressources.sature():
+            v = local.vecteurs([entete(doc) + p for p in nouveaux])
+            calcules = dict(zip(nouveaux, v)) if v else {}
+        vecteurs = [connus.get(p) or calcules.get(p) for p in passages]
         try:
-            db.remplacer_passages(doc["id"], passages, vecteurs)
+            db.remplacer_passages(doc["id"], passages, vecteurs if any(vecteurs) else None)
         except Exception:
-            if vecteurs is None:
+            if not any(vecteurs):
                 raise
             # vecteurs d'une autre taille (OLLAMA_EMBED changé) : les mots seulement, plutôt que rien
+            _refus["dimension"] = True
             db.remplacer_passages(doc["id"], passages, None)
         n += 1
     return n
@@ -78,7 +95,7 @@ def indexer(limite: int = 20, arret=lambda: False) -> int:
 def vectoriser(limite: int = 128, arret=lambda: False) -> int:
     """Calcule le sens des passages indexés avant que le modèle d'embeddings soit là ; renvoie combien."""
     n = 0
-    while n < limite and not arret() and not ressources.sature():
+    while n < limite and not arret() and not _refus["dimension"] and not ressources.sature():
         lot = db.passages_sans_vecteur(LOT_VECTEURS)
         if not lot:
             break
@@ -88,12 +105,28 @@ def vectoriser(limite: int = 128, arret=lambda: False) -> int:
         try:
             db.poser_vecteurs([p["id"] for p in lot], vecteurs)
         except Exception:
-            break  # vecteurs d'une autre taille que la colonne (OLLAMA_EMBED changé) : on garde les mots
+            # vecteurs d'une autre taille que la colonne (OLLAMA_EMBED changé) : on garde les mots, et on
+            # ne recalcule plus ce lot à chaque tour (jusqu'au prochain démarrage)
+            _refus["dimension"] = True
+            break
         n += len(lot)
     return n
 
 
+_questions: dict[str, list[float]] = {}   # sens des dernières questions : une question reposée ne coûte rien
+QUESTIONS_GARDEES = 256
+
+
 def vecteur_question(question: str) -> list[float] | None:
     """Sens d'une question (pour chercher les passages proches) ; None sans modèle d'embeddings."""
+    cle = " ".join(question.lower().split())
+    if cle in _questions:
+        _questions[cle] = _questions.pop(cle)   # la plus récente passe en dernier
+        return _questions[cle]
     v = local.vecteurs([question])
-    return v[0] if v else None
+    if not v:
+        return None
+    _questions[cle] = v[0]
+    while len(_questions) > QUESTIONS_GARDEES:
+        _questions.pop(next(iter(_questions)))
+    return v[0]

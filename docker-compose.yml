@@ -42,6 +42,7 @@ services:
   worker:
     build: ./app
     restart: unless-stopped
+    cpu_shares: 512    # priorité : le site et la base passent avant le travail de fond (1024 par défaut)
     command: python -m claunote.worker
     env_file: .env
     environment:
@@ -61,6 +62,7 @@ services:
     # ANALYSE_LOCALE=auto dans .env, puis docker compose stop ollama.
     image: ollama/ollama:0.6.8
     restart: unless-stopped
+    cpu_shares: 256    # priorité basse : il prend le processeur libre, pas celui du site
     volumes:
       - ollama:/root/.ollama   # modèles téléchargés
     # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
@@ -71,6 +73,7 @@ services:
     # comme avant. ~1,5 Go de mémoire une fois tout chargé. Pour s'en passer : docker compose stop lecture.
     build: ./lecture
     restart: unless-stopped
+    cpu_shares: 256    # priorité basse, comme Ollama
     environment:
       LECTURE_THREADS: ${LECTURE_THREADS:-2}   # cœurs utilisés par calcul
     volumes:

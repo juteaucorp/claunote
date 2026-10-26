@@ -19,6 +19,9 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 THREADS = int(os.environ.get("LECTURE_THREADS", "2"))
+# Avant tout import de bibliothèque de calcul : sinon chacune prend tous les cœurs de la VM
+for _variable in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+    os.environ.setdefault(_variable, str(THREADS))
 PAGES_MAX = int(os.environ.get("LECTURE_PAGES_MAX", "80"))
 MODELE_CLASSEMENT = os.environ.get("LECTURE_CLASSEMENT", "ms-marco-MultiBERT-L-12")   # multilingue (français)
 MODELES = Path(os.environ.get("LECTURE_MODELES", "/modeles"))
@@ -41,6 +44,14 @@ def _charger(nom: str):
             from docling.datamodel.pipeline_options import PdfPipelineOptions
             from docling.document_converter import DocumentConverter, PdfFormatOption
             options = PdfPipelineOptions(do_ocr=False, do_table_structure=True)  # les scans passent par l'OCR du worker
+            try:   # Docling a son propre réglage de cœurs (4 par défaut)
+                try:
+                    from docling.datamodel.accelerator_options import AcceleratorOptions
+                except ImportError:
+                    from docling.datamodel.pipeline_options import AcceleratorOptions
+                options.accelerator_options = AcceleratorOptions(num_threads=THREADS, device="cpu")
+            except Exception as e:
+                print(f"Docling : cœurs non réglés ({e})", flush=True)
             _modeles[nom] = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)})
         elif nom == "formules":
             _torch()
@@ -48,8 +59,25 @@ def _charger(nom: str):
             _modeles[nom] = LatexOCR()
         elif nom == "classement":
             from flashrank import Ranker
-            _modeles[nom] = Ranker(model_name=MODELE_CLASSEMENT, cache_dir=str(MODELES / "flashrank"), max_length=512)
+            classeur = Ranker(model_name=MODELE_CLASSEMENT, cache_dir=str(MODELES / "flashrank"), max_length=512)
+            _limiter_onnx(classeur)
+            _modeles[nom] = classeur
     return _modeles[nom]
+
+
+def _limiter_onnx(classeur):
+    """FlashRank ouvre sa session ONNX Runtime sur tous les cœurs : on la rouvre sur THREADS."""
+    session = getattr(classeur, "session", None)
+    chemin = getattr(session, "_model_path", None)
+    if not chemin:
+        return
+    try:
+        import onnxruntime as ort
+        options = ort.SessionOptions()
+        options.intra_op_num_threads, options.inter_op_num_threads = THREADS, 1
+        classeur.session = ort.InferenceSession(chemin, sess_options=options, providers=["CPUExecutionProvider"])
+    except Exception as e:   # la session d'origine reste : plus de cœurs, mais le tri marche
+        print(f"FlashRank : cœurs non réglés ({e})", flush=True)
 
 
 @app.get("/sante")

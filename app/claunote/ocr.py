@@ -18,6 +18,14 @@ RESOLUTION_OCR = 150    # dpi : assez pour lire un IBAN, rapide (~1 s par page)
 PARALLELE = max(1, min(4, (os.cpu_count() or 2)))
 
 
+def _doux():
+    """Priorité basse pour la lecture des scans (processus enfant) : le site et la base passent avant."""
+    try:
+        os.nice(10)
+    except OSError:
+        pass
+
+
 def disponible() -> bool:
     return shutil.which("tesseract") is not None
 
@@ -34,7 +42,7 @@ def texte_pdf(chemin: Path, premiere: int = 1, derniere: int | None = None) -> l
     """Texte déjà présent dans le PDF, une entrée par page (vide pour une page scannée)."""
     cmd = ["pdftotext", "-layout", "-f", str(premiere)] + (["-l", str(derniere)] if derniere else []) + [str(chemin), "-"]
     try:
-        p = subprocess.run(cmd, capture_output=True, timeout=300)
+        p = subprocess.run(cmd, capture_output=True, timeout=300, preexec_fn=_doux)
     except (OSError, subprocess.TimeoutExpired):
         return []
     pages = p.stdout.decode("utf-8", errors="replace").split("\f")
@@ -48,7 +56,7 @@ def rendre_pages(chemin: Path, dossier: Path, premiere: int, derniere: int, dpi:
     dossier.mkdir(parents=True, exist_ok=True)
     prefixe = dossier / f"p{premiere:05d}"
     subprocess.run(["pdftoppm", "-r", str(dpi), "-gray", "-png", "-f", str(premiere), "-l", str(derniere),
-                    str(chemin), str(prefixe)], capture_output=True, timeout=600, check=False)
+                    str(chemin), str(prefixe)], capture_output=True, timeout=600, check=False, preexec_fn=_doux)
     return sorted(dossier.glob(f"{prefixe.name}*.png"))
 
 
@@ -58,7 +66,7 @@ def ocr_image(chemin: Path) -> str:
         return ""
     try:
         p = subprocess.run(["tesseract", str(chemin), "stdout", "-l", "fra", "--psm", "3"], capture_output=True,
-                           timeout=120, env={**os.environ, "OMP_THREAD_LIMIT": "1"})
+                           timeout=120, env={**os.environ, "OMP_THREAD_LIMIT": "1"}, preexec_fn=_doux)
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return p.stdout.decode("utf-8", errors="replace")

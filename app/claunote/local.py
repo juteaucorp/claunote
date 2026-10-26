@@ -42,6 +42,8 @@ OLLAMA_URL = (os.environ.get("OLLAMA_URL") or "http://ollama:11434").rstrip("/")
 OLLAMA_MODELE = os.environ.get("OLLAMA_MODELE") or "qwen2.5:3b"
 OLLAMA_EMBED = os.environ.get("OLLAMA_EMBED") or "nomic-embed-text"  # sens des passages (recherche), ~280 Mo
 PARALLELE = min(max(int(os.environ.get("LOCAL_PARALLELE") or 1), 1), 4)  # le CPU est vite saturé
+# Cœurs donnés à Ollama par calcul : tous sauf un, que le site et la base gardent toujours pour eux
+THREADS = int(os.environ.get("OLLAMA_THREADS") or max(ressources.coeurs() - 1, 1))
 TEXTE_MAX = 8_000          # caractères lus par le modèle local (au-delà, un CPU met plusieurs minutes)
 CONFIANCE_MAX = 0.8        # un classement local n'est jamais tout à fait sûr
 CONFIANCE_VOISINS = 0.75   # vote unanime des cours voisins : juste au-dessus du seuil de classement
@@ -141,7 +143,8 @@ def vecteurs(textes: list[str]) -> list[list[float]] | None:
     if not textes or not etat_ollama()["embed"]:
         return None
     try:
-        r = httpx.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBED, "input": textes, "keep_alive": "10m"},
+        r = httpx.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBED, "input": textes, "keep_alive": "10m",
+                                                              "options": {"num_thread": THREADS}},
                        timeout=300)
         r.raise_for_status()
         v = r.json().get("embeddings")
@@ -154,7 +157,7 @@ def ollama(systeme: str, texte: str, json_seul: bool = True, timeout: int = 900)
     """Une réponse du modèle local (CPU : de quelques secondes à quelques minutes)."""
     corps = {"model": OLLAMA_MODELE, "stream": False, "keep_alive": "10m",
              "messages": [{"role": "system", "content": systeme}, {"role": "user", "content": texte}],
-             "options": {"temperature": 0.1, "num_ctx": 8192}}
+             "options": {"temperature": 0.1, "num_ctx": 8192, "num_thread": THREADS}}
     if json_seul:
         corps["format"] = "json"
     debut = time.monotonic()

@@ -145,7 +145,8 @@ de fond, sans rien te coûter de plus.
 
 1. Dépose un ou plusieurs PDF dans `Etudes/inbox` sur kDrive (**un document = un PDF** : un cours,
    un TP, un contrôle).
-2. Clique sur **« Scanner maintenant »** sur le site (ou attends 1 minute).
+2. Clique sur **« Scanner maintenant »** sur le site (ou attends : 1 minute, jusqu'à 5 si rien n'est
+   arrivé dans l'inbox depuis une demi-heure).
 3. Suis l'analyse : `docker compose logs -f worker`.
 4. Le scan est déplacé dans `Etudes/archives/<niveau>/<matière>/<type>/`, renommé
    (`2025-03-12_les-vlan.pdf`), avec sa transcription `.md` à côté. S'il n'est pas sûr du
@@ -492,6 +493,33 @@ que pour aider le modèle local ou le vérifier :
 d'analyse ferait attendre un document plus de 30 min, le surplus part chez Claude (s'il est disponible).
 La page *Activité* montre la charge, la durée moyenne d'une analyse locale et le **taux d'accord avec Claude**
 mesuré par les contrôles : c'est ce qui te dit si tu peux faire confiance au local.
+
+### Processeur : des pics, pas une VM à fond en permanence
+
+```
+occupation ▲   pic toléré (une analyse, une question)     budget dépassé : le fond fait des pauses
+     100 % │  ███                                         ▁▁█▁▁█▁▁█▁▁
+moyenne 60 ┼ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   ← CPU_MOYENNE_MAX
+           └──────────────────────────────────────────────────────────────► temps
+```
+
+- **Budget sur la durée** : le worker mesure l'occupation moyenne du processeur sur 15 min
+  (`CPU_FENETRE_MIN`). Un pic à 100 % est normal (environ 14 min tolérées). Au-delà de 60 % en moyenne
+  (`CPU_MOYENNE_MAX`), le travail de fond (analyses locales, calcul du sens des passages) **fait des
+  pauses** entre deux documents, ou part chez Claude s'il est là, jusqu'à redescendre sous 50 %. Rien
+  n'est perdu, tout est fait un peu plus tard. Les questions du chat et les recherches ne sont jamais freinées.
+- **Un cœur reste au site** : Ollama prend tous les cœurs sauf un (`OLLAMA_THREADS` pour changer),
+  Tesseract un cœur par page, le service lecture `LECTURE_THREADS` (2).
+- **Priorités** : quand le processeur est plein, le site et la base passent avant le worker, Ollama et
+  le service lecture (`cpu_shares` dans `docker-compose.yml`) ; l'OCR tourne en priorité basse.
+- **Rien n'est calculé deux fois** : un document rangé ou reclassé sans changer de texte garde le sens de
+  ses passages ; une question déjà posée ne repasse pas par le modèle.
+- **Moins de réveils** : une page laissée ouverte se rafraîchit toutes les 20 s quand tu t'en sers,
+  puis toutes les minutes, puis toutes les 5 min (12 fois par heure au lieu de 180) ; elle se remet à
+  jour dès que tu y reviens. L'inbox kDrive est relue toutes les 5 min quand rien n'y bouge depuis
+  30 min (le site, lui, réveille le worker tout de suite).
+
+La page *Activité* affiche la moyenne sur la durée et si le travail de fond est en train de ralentir.
 
 ### Mise en place
 
