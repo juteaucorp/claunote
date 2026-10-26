@@ -85,3 +85,13 @@ def test_explique_le_jeton_github(client, dossier):
         "message": "Vérification impossible : GitHub refuse l'accès (dépôt privé) : ajoute GITHUB_TOKEN dans le .env de la VM."}))
     r = client.get("/mise-a-jour")
     assert "Dépôt privé : donne un jeton GitHub" in r.text and "Contents → Read-only" in r.text
+
+
+def test_code_pas_encore_installe(client, dossier):
+    """git pull fait à la main : rien de neuf sur GitHub, mais ce qui tourne est plus ancien que le code."""
+    (dossier / "etat.json").write_text(json.dumps({
+        "statut": "ok", "action": "verifier", "retard": 0, "a_installer": ["web", "worker"],
+        "version": {"id": "abc1234", "le": "2026-10-20T10:00:00+02:00", "titre": "Version"}}))
+    assert maj.disponibles() == 1
+    r = client.get("/mise-a-jour")
+    assert "Pas encore installé" in r.text and "web, worker" in r.text and "À jour." not in r.text

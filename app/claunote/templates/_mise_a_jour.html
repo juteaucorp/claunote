@@ -38,12 +38,17 @@
       {% if e.version.le %}<span class="doux">({{ heure(e.version.le) }})</span>{% endif %}</p>
     {% if e.modifs_locales %}<p class="alerte">{{ e.modifs_locales }} fichier(s) modifié(s) à la main sur la VM :
       la mise à jour sera refusée tant qu'ils ne sont pas remis d'origine (<code>git status</code>).</p>{% endif %}
+    {% if e.a_installer %}
+      <p class="alerte"><strong>Pas encore installé :</strong> {{ e.a_installer|join(', ') }} tourne{{ 'nt' if e.a_installer|length > 1 }}
+        avec une version plus ancienne que le code de la VM (git pull fait à la main, ou mise à jour interrompue).
+        <strong>Tout mettre à jour</strong> les reconstruit.</p>
+    {% endif %}
     {% if e.retard %}
       <p><strong>{{ e.retard }} nouveauté(s) disponible(s)</strong> :</p>
       <ul class="nouveautes">
         {% for n in e.nouveautes %}<li>{{ n.titre }} <span class="doux">{{ heure(n.le) if n.le }}</span></li>{% endfor %}
       </ul>
-    {% else %}
+    {% elif not e.a_installer %}
       <p style="color: var(--ok)">À jour.</p>
     {% endif %}
     {% if e.verifie %}<p class="doux">Vérifié sur GitHub {{ heure(e.verifie) }} (tout seul toutes les 6 h).</p>{% endif %}

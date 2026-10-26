@@ -67,8 +67,9 @@ def demander(action: str) -> None:
 
 
 def disponibles() -> int:
-    """Nombre de nouveautés sur GitHub pas encore installées (0 si inconnu)."""
+    """Nouveautés sur GitHub pas encore récupérées, + 1 si le code de la VM n'est pas celui qui tourne (0 si inconnu)."""
     try:
-        return int(json.loads((DOSSIER / "etat.json").read_text()).get("retard") or 0)
+        e = json.loads((DOSSIER / "etat.json").read_text())
+        return int(e.get("retard") or 0) + (1 if e.get("a_installer") else 0)
     except (OSError, ValueError, TypeError):
         return 0
