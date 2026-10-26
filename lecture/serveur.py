@@ -5,13 +5,18 @@
     POST /classer   question + passages ──► FlashRank (multilingue) ──► un score par passage
     GET  /sante     ce qui est installé et chargé
 
-Chaque modèle est chargé à son premier usage (puis gardé), un seul calcul à la fois par modèle :
-la VM n'a pas de carte graphique, on ne la sature pas. Rien ne sort de la VM.
+Chaque modèle est chargé à son premier usage, un seul calcul à la fois par modèle : la VM n'a pas de
+carte graphique, on ne la sature pas. Un modèle inutilisé depuis LECTURE_GARDER_MIN minutes (10) est
+déchargé et sa mémoire rendue au système ; POST /liberer décharge tout de suite (mémoire de la VM basse).
+Rien ne sort de la VM.
 """
+import ctypes
+import gc
 import io
 import os
 import tempfile
 import threading
+import time
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -25,10 +30,49 @@ for _variable in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
 PAGES_MAX = int(os.environ.get("LECTURE_PAGES_MAX", "80"))
 MODELE_CLASSEMENT = os.environ.get("LECTURE_CLASSEMENT", "ms-marco-MultiBERT-L-12")   # multilingue (français)
 MODELES = Path(os.environ.get("LECTURE_MODELES", "/modeles"))
+GARDER = float(os.environ.get("LECTURE_GARDER_MIN", "10")) * 60
 
 app = FastAPI(title="Claunote lecture")
 _modeles: dict[str, object] = {}
+_utilise: dict[str, float] = {}   # dernier usage de chaque modèle chargé
 _verrous = {nom: threading.Lock() for nom in ("docling", "formules", "classement")}
+
+
+def _rendre_memoire():
+    """Après un déchargement : ramasse-miettes, puis la mémoire libre est vraiment rendue au système."""
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except OSError:
+        pass
+
+
+def decharger(noms=None) -> list[str]:
+    """Décharge les modèles donnés (tous par défaut) qui ne calculent pas en ce moment."""
+    partis = []
+    for nom in list(noms or _modeles):
+        verrou = _verrous[nom]
+        if nom in _modeles and verrou.acquire(blocking=False):   # en plein calcul : on ne touche à rien
+            try:
+                _modeles.pop(nom, None)
+                _utilise.pop(nom, None)
+                partis.append(nom)
+            finally:
+                verrou.release()
+    if partis:
+        _rendre_memoire()
+        print(f"modèles déchargés : {', '.join(partis)}", flush=True)
+    return partis
+
+
+def _surveiller():
+    while True:
+        time.sleep(60)
+        maintenant = time.monotonic()
+        decharger([n for n, t in list(_utilise.items()) if maintenant - t > GARDER])
+
+
+threading.Thread(target=_surveiller, daemon=True, name="dechargement").start()
 
 
 def _torch():
@@ -37,6 +81,7 @@ def _torch():
 
 
 def _charger(nom: str):
+    _utilise[nom] = time.monotonic()
     if nom not in _modeles:
         if nom == "docling":
             _torch()
@@ -85,6 +130,12 @@ def sante():
     installes = {"docling": find_spec("docling") is not None, "formules": find_spec("pix2tex") is not None,
                  "classement": find_spec("flashrank") is not None}
     return {**installes, "charges": sorted(_modeles)}
+
+
+@app.post("/liberer")
+def liberer():
+    """La VM manque de mémoire (le worker le voit) : tout ce qui ne calcule pas est déchargé."""
+    return {"decharges": decharger()}
 
 
 @app.post("/markdown")

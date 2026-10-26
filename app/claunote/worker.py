@@ -30,8 +30,8 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (agent, db, decoupage, importation, index, local, modeles, notifications, ocr, pdf, pronote,
-                      rangement, ressources, revision, sensible)
+from claunote import (agent, db, decoupage, importation, index, lecture, local, modeles, notifications, ocr, pdf,
+                      pronote, rangement, ressources, revision, sensible)
 from claunote.agent import ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive, KDriveIndisponible
 from claunote.matieres import harmoniser
@@ -165,6 +165,25 @@ def activite(texte: str | None):
         pass
 
 
+_liberation = {"le": float("-inf")}
+
+
+def liberer_si_besoin(maintenant: float | None = None) -> bool:
+    """Mémoire de la VM basse : les modèles au repos (Ollama, service lecture) sont déchargés tout de suite
+    au lieu d'attendre leur délai ; ils se rechargent seuls au prochain usage. Au plus une fois par 10 min."""
+    maintenant = time.monotonic() if maintenant is None else maintenant
+    libre = ressources.memoire_libre_mo()
+    if libre is None or libre >= 2 * ressources.MEMOIRE_MIN_MO or ressources.local_actif():
+        return False
+    if maintenant - _liberation["le"] < 600:
+        return False
+    _liberation["le"] = maintenant
+    ollama, lecture_ = local.liberer(), lecture.liberer()
+    log(f"mémoire basse ({libre} Mo libres) : modèles au repos déchargés"
+        f"{' (Ollama)' if ollama else ''}{' (lecture : ' + ', '.join(lecture_) + ')' if lecture_ else ''}")
+    return True
+
+
 def battement():
     """Publie l'état même pendant une longue analyse : le site sait que le worker vit."""
     while True:
@@ -174,6 +193,7 @@ def battement():
             if ressources.BUDGET.freine != freinait:
                 log(ressources.BUDGET.raison() or f"processeur redescendu à {round(ressources.BUDGET.moyenne * 100)} % "
                                                   "en moyenne : le travail de fond reprend à pleine vitesse")
+            liberer_si_besoin()
             ETAT["local"] = {"ocr": ocr.disponible(), **{k: v for k, v in local.etat_ollama().items()
                                                          if k in ("pret", "message")}}
             publier()

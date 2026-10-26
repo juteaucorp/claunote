@@ -10,6 +10,8 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /srv
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Cache de téléchargement gardé entre deux constructions (BuildKit) : une dépendance ajoutée ne fait pas
+# retélécharger toutes les autres
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 COPY claunote ./claunote
 CMD ["uvicorn", "claunote.main:app", "--host", "0.0.0.0", "--port", "8000"]

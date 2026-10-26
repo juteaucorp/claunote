@@ -63,6 +63,14 @@ services:
     image: ollama/ollama:0.6.8
     restart: unless-stopped
     cpu_shares: 256    # priorité basse : il prend le processeur libre, pas celui du site
+    environment:
+      # Mémoire : 2 réponses en même temps au plus (le fond + une question du chat) au lieu de 4 par défaut,
+      # chacune avec ~300 Mo de contexte réservé : ~600 Mo de moins pour qwen2.5:3b
+      OLLAMA_NUM_PARALLEL: 2
+      OLLAMA_MAX_LOADED_MODELS: 2
+      # Contexte compressé (q8_0, moitié moins) quand la version d'Ollama le permet sur processeur ; sinon ignoré
+      OLLAMA_FLASH_ATTENTION: 1
+      OLLAMA_KV_CACHE_TYPE: q8_0
     volumes:
       - ollama:/root/.ollama   # modèles téléchargés
     # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
@@ -70,12 +78,14 @@ services:
   lecture:
     # Petits modèles sur le processeur : PDF lus avec leurs tableaux (Docling), photo d'une formule → LaTeX
     # (pix2tex), meilleurs passages en tête pour le chat (FlashRank). Facultatif : sans lui, tout marche
-    # comme avant. ~1,5 Go de mémoire une fois tout chargé. Pour s'en passer : docker compose stop lecture.
+    # comme avant. ~1,5 Go de mémoire quand tout est chargé, rendue après 10 min sans usage.
+    # Pour s'en passer : docker compose stop lecture.
     build: ./lecture
     restart: unless-stopped
     cpu_shares: 256    # priorité basse, comme Ollama
     environment:
       LECTURE_THREADS: ${LECTURE_THREADS:-2}   # cœurs utilisés par calcul
+      LECTURE_GARDER_MIN: ${LECTURE_GARDER_MIN:-10}   # un modèle inutilisé depuis 10 min est déchargé
     volumes:
       - lecture:/modeles   # modèles téléchargés au premier usage
     # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
@@ -85,6 +95,7 @@ services:
     restart: unless-stopped
     environment:
       TZ: Europe/Paris
+      NODE_OPTIONS: --max-old-space-size=256   # Node garde sinon jusqu'à 2 Go avant de faire le ménage
     volumes:
       - pronote:/data   # jeton de reconnexion Pronote (jamais le mot de passe)
     # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker

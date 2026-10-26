@@ -62,7 +62,7 @@
     <button hx-post="/mise-a-jour/redemarrer" {{ 'disabled' if e.en_cours or not present }}
             title="Redémarre le site et le worker, sans changer de version">Redémarrer</button>
     <button hx-post="/mise-a-jour/nettoyer" {{ 'disabled' if e.en_cours or not present }}
-            title="Supprime les anciennes images Docker et le cache de construction">Libérer de la place</button>
+            title="Supprime les anciennes images Docker et le cache de construction de plus de 30 jours">Libérer de la place</button>
   </div>
   <p class="doux"><strong>Tout mettre à jour</strong> = <code>git pull</code>, puis reconstruction et redémarrage
     de tous les services. Si la construction échoue, l'ancienne version continue de tourner.</p>
