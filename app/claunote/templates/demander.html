@@ -33,10 +33,88 @@
       <label><input type="radio" name="mode" value="{{ k }}" {{ 'checked' if (k == 'local') == (pause is not none) }}>{{ libelle }}</label>
       {% endfor %}
     </div>
+    {% if formules_photo %}
+    <button type="button" id="bouton-formule" title="Photo d'une formule : elle est recopiée en LaTeX dans ta question">{{ icone('deposer', 18) }} Formule</button>
+    <input type="file" id="photo-formule" accept="image/*" capture="environment" hidden>
+    {% endif %}
     <button class="principal">{{ icone('fleche', 18) }} Envoyer</button>
   </div>
   {% if pause %}<p class="doux avertissement">L'IA est en pause ({{ pause }}) : les réponses viennent de tes cours, sans IA.</p>{% endif %}
 </form>
+
+{% if formules_photo %}
+<div class="carte recadrage" id="recadrage" hidden>
+  <strong>Encadre la formule</strong> <span class="doux">glisse le doigt (ou la souris) autour de la formule, seule</span>
+  <div class="zone-photo"><canvas></canvas><div class="cadre-formule" hidden></div></div>
+  <div class="actions">
+    <button type="button" class="principal" data-lire>Lire la formule</button>
+    <button type="button" data-annuler>Annuler</button>
+  </div>
+  <p class="doux" id="etat-formule" role="status"></p>
+</div>
+<script>
+  // Photo d'une formule → recadrage → pix2tex (service lecture) → LaTeX glissé dans la question
+  (() => {
+    const champ = document.getElementById("photo-formule"), panneau = document.getElementById("recadrage");
+    const toile = panneau.querySelector("canvas"), cadre = panneau.querySelector(".cadre-formule");
+    const etat = document.getElementById("etat-formule"), zone = document.querySelector(".saisie textarea");
+    let photo = null, sel = null, depart = null;
+    document.getElementById("bouton-formule").addEventListener("click", () => champ.click());
+    champ.addEventListener("change", () => {
+      const f = champ.files[0];
+      if (!f) return;
+      photo = new Image();
+      photo.onload = () => {
+        panneau.hidden = false;
+        const largeur = Math.min(panneau.clientWidth - 40, photo.naturalWidth);
+        toile.width = largeur; toile.height = Math.round(photo.naturalHeight * largeur / photo.naturalWidth);
+        toile.getContext("2d").drawImage(photo, 0, 0, toile.width, toile.height);
+        sel = toutes();   // par défaut : toute la photo
+        cadre.hidden = true; etat.textContent = "";
+        panneau.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      };
+      photo.src = URL.createObjectURL(f);
+      champ.value = "";
+    });
+    // Tout en pixels affichés (le canevas peut être réduit à l'écran) ; converti en pixels de la photo à la fin
+    const taille = () => toile.getBoundingClientRect();
+    const toutes = () => ({ x: 0, y: 0, l: taille().width, h: taille().height });
+    const point = (e) => { const r = taille(); return { x: Math.max(0, Math.min(e.clientX - r.left, r.width)), y: Math.max(0, Math.min(e.clientY - r.top, r.height)) }; };
+    const dessiner = () => Object.assign(cadre.style, { left: sel.x + "px", top: sel.y + "px", width: sel.l + "px", height: sel.h + "px" });
+    toile.addEventListener("pointerdown", (e) => { depart = point(e); toile.setPointerCapture(e.pointerId); cadre.hidden = false; });
+    toile.addEventListener("pointermove", (e) => {
+      if (!depart) return;
+      const p = point(e);
+      sel = { x: Math.min(depart.x, p.x), y: Math.min(depart.y, p.y), l: Math.abs(p.x - depart.x), h: Math.abs(p.y - depart.y) };
+      dessiner();
+    });
+    toile.addEventListener("pointerup", () => {
+      depart = null;
+      if (sel.l < 12 || sel.h < 8) { sel = toutes(); cadre.hidden = true; }
+    });
+    panneau.querySelector("[data-annuler]").addEventListener("click", () => { panneau.hidden = true; });
+    panneau.querySelector("[data-lire]").addEventListener("click", async (e) => {
+      const bouton = e.target, k = photo.naturalWidth / taille().width;
+      const decoupe = document.createElement("canvas");
+      decoupe.width = Math.round(sel.l * k); decoupe.height = Math.round(sel.h * k);
+      decoupe.getContext("2d").drawImage(photo, sel.x * k, sel.y * k, sel.l * k, sel.h * k, 0, 0, decoupe.width, decoupe.height);
+      const fichier = await new Promise((ok) => decoupe.toBlob(ok, "image/png"));
+      const donnees = new FormData();
+      donnees.append("image", fichier, "formule.png");
+      bouton.disabled = true; etat.textContent = "Lecture de la formule… (quelques secondes sur le processeur)";
+      try {
+        const r = await fetch("/formule", { method: "POST", body: donnees });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.erreur || "erreur");
+        const debut = zone.selectionStart ?? zone.value.length, ajout = ` $${d.latex}$ `;
+        zone.value = zone.value.slice(0, debut) + ajout + zone.value.slice(zone.selectionEnd ?? debut);
+        zone.focus(); panneau.hidden = true;
+      } catch (err) { etat.textContent = err.message; }
+      finally { bouton.disabled = false; }
+    });
+  })();
+</script>
+{% endif %}
 
 {% if conversations %}
 <h2>Questions précédentes</h2>
@@ -91,6 +169,11 @@
   @media (prefers-reduced-motion: reduce) { .points i { animation: none; opacity: .7; } }
   .saisie { display: grid; gap: 10px; position: sticky; bottom: calc(env(safe-area-inset-bottom) + 8px); z-index: 2; }
   .saisie textarea { width: 100%; resize: vertical; min-height: 56px; }
+  #bouton-formule { display: inline-flex; align-items: center; gap: 6px; }
+  .zone-photo { position: relative; margin: 10px 0; touch-action: none; user-select: none; overflow: hidden; border-radius: 8px; width: fit-content; max-width: 100%; }
+  .zone-photo canvas { display: block; max-width: 100%; border-radius: 8px; cursor: crosshair; }
+  .cadre-formule { position: absolute; border: 2px solid var(--accent); border-radius: 4px; pointer-events: none;
+    box-shadow: 0 0 0 9999px color-mix(in srgb, #000 35%, transparent); }
   .saisie .options { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .saisie select { flex: 1 1 200px; min-width: 0; }
   .saisie .options button { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }

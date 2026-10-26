@@ -23,8 +23,9 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, auth, carte_mentale, cles, db, decoupage, formules, importation, index, local, maj, matieres, modeles,
-                      notifications, pdf, progression, pronote, question, rangement, ressources, revision, sensible)
+from claunote import (agent, anki, auth, carte_mentale, cles, db, decoupage, formules, importation, index,
+                      lecture, local, maj, matieres, modeles, notifications, pdf, progression, pronote, question,
+                      rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -600,7 +601,7 @@ def recherche(request: Request, q: str = ""):
         try:
             vecteur = index.vecteur_question(q) if not ressources.sature() else None
             vus = {r["id"] for r in resultats}
-            for p in db.chercher_passages(question.requete(q), vecteur, limite=20):
+            for p in question.reordonner(q, db.chercher_passages(question.requete(q), vecteur, limite=20), 20):
                 if p["document_id"] not in vus:
                     vus.add(p["document_id"])
                     proches.append({**p, "id": p["document_id"]})
@@ -1278,9 +1279,10 @@ def _passages(q: str, conv: dict, limite: int = 10) -> list[dict]:
     """Passages de tous les documents lus (par les mots et par le sens), ou documents entiers si l'index
     n'est pas encore fait."""
     vecteur = index.vecteur_question(q) if not ressources.sature() else None
-    passages = db.chercher_passages(question.requete(q), vecteur, conv["niveau"], conv["matiere"], limite)
+    # Deux fois plus de candidats, puis les meilleurs gardés après relecture (FlashRank, si le service tourne)
+    passages = db.chercher_passages(question.requete(q), vecteur, conv["niveau"], conv["matiere"], limite * 2)
     if passages:
-        return passages
+        return question.reordonner(q, passages, limite)
     return [{**d, "document_id": d["id"], "texte": (d.get("transcription") or "")[:3000]}
             for d in db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], 5,
                                             avec_texte=True, statuts=db.STATUTS_UTILES)]
@@ -1400,7 +1402,19 @@ def page_demander(request: Request, conv_id: int | None = None, matiere: str = "
     return templates.TemplateResponse(request, "demander.html", {
         "conv": conv, "messages": db.messages(conv_id) if conv else [], "conversations": db.conversations(15),
         "choix": db.niveaux_matieres_comptes(), "modes": question.MODES, "pause": _claude_en_pause(),
-        "pre": f"{niveau}|{matiere}" if matiere else ""})
+        "pre": f"{niveau}|{matiere}" if matiere else "", "formules_photo": lecture.etat().get("formules", False)})
+
+
+@app.post("/formule")
+async def lire_formule(image: UploadFile = File(...)):
+    """Photo recadrée d'une formule → LaTeX (pix2tex, service lecture), à glisser dans une question."""
+    contenu = await image.read(8_000_001)
+    if len(contenu) > 8_000_000:
+        return JSONResponse({"erreur": "Photo trop lourde (8 Mo au plus)."}, status_code=413)
+    try:
+        return {"latex": lecture.formule(contenu, image.filename or "formule.png")}
+    except lecture.LectureIndisponible as e:
+        return JSONResponse({"erreur": f"Formule non lue : {e}"}, status_code=503)
 
 
 @app.post("/demander")

@@ -13,5 +13,7 @@ weasyprint==66.0
 pypdf==5.4.0
 fsrs==6.3.2
 webauthn==3.0.1
+# Word, PowerPoint, Excel en Markdown structuré (sans PyTorch ni modèle : extras bureautiques seulement)
+docling-slim[format-office]==2.142.1
 pillow==11.2.1
 pillow-heif==0.22.0

@@ -232,7 +232,7 @@ def preparer_pieces(pieces: list[dict], dossier: Path) -> tuple[list[str], str]:
             if extension in TEXTES_PJ:
                 textes.append(f"Pièce jointe « {p['nom']} » :\n{chemin.read_text(errors='replace')[:30_000]}")
             elif extension in agent.OFFICE:
-                textes.append(f"Pièce jointe « {p['nom']} » :\n{agent.texte_office(chemin)[:30_000]}")
+                textes.append(f"Pièce jointe « {p['nom']} » :\n{agent.texte_bureautique(chemin)[:30_000]}")
             elif extension in agent.VIEUX_OFFICE:
                 textes.append(f"Pièce jointe « {p['nom']} » :\n{agent.texte_vieux_office(chemin)[:30_000]}")
             else:

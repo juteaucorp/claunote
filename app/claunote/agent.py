@@ -25,7 +25,7 @@ import datetime as dt
 from pathlib import Path
 from xml.etree import ElementTree
 
-from claunote import modeles
+from claunote import lecture, modeles
 
 SEUIL_CONFIANCE = 0.7
 SOURCES = {".py", ".sql", ".ipynb", ".html", ".htm", ".js", ".php", ".java", ".c", ".cpp", ".cs", ".sh", ".ps1",
@@ -467,6 +467,12 @@ def illisible(transcription: str) -> bool:
     return n >= 4 or (n >= 2 and n / max(1, len(transcription.split())) > 0.02)
 
 
+def texte_bureautique(chemin: Path) -> str:
+    """Markdown d'un fichier bureautique : Docling si possible (titres, listes, tableaux, équations Word
+    en LaTeX), sinon l'extraction simple, un paragraphe par ligne."""
+    return lecture.office(chemin) or markdown_office(texte_office(chemin))
+
+
 def markdown_office(texte: str) -> str:
     """Texte d'un fichier bureautique en Markdown : un paragraphe par ligne, une diapo par titre."""
     lignes = []
@@ -621,11 +627,13 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
         texte, origine = markdown_office(texte_vieux_office(chemin)), "fichier bureautique"
     elif suffixe in OFFICE:
         try:
-            texte, origine = markdown_office(texte_office(chemin)), "fichier bureautique"
+            texte, origine = texte_bureautique(chemin), "fichier bureautique"
         except (zipfile.BadZipFile, ElementTree.ParseError, KeyError) as e:
             raise ErreurAgent(f"fichier {chemin.suffix} illisible : {e}") from e
     elif suffixe == ".pdf":
         texte, origine = texte_pdf(chemin), "PDF numérique"
+        if texte:   # tableaux et colonnes remis en ordre par Docling (service lecture), s'il tourne
+            texte = lecture.meilleur_pdf(chemin, texte)
     elif suffixe in (".txt", ".md"):
         texte, origine = chemin.read_text(errors="replace"), "fichier texte"
     elif suffixe in SOURCES:

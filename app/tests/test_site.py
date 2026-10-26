@@ -64,6 +64,8 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "matieres_par_annee", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
     monkeypatch.setattr(db, "matieres_distinctes", lambda: {})
     monkeypatch.setattr(db, "cles_acces", lambda: [])
+    monkeypatch.setattr(main.lecture, "etat", lambda: {})                 # service lecture absent
+    monkeypatch.setattr(main.lecture, "classer", lambda *a, **k: None)
     monkeypatch.setattr(db, "pieces_jointes", lambda revision_id=None, campagne_id=None, contenu=False: [])
     monkeypatch.setattr(db, "ajouter_pieces", lambda f, revision_id=None, campagne_id=None:
                         appels.append(("pieces", [n for n, _ in f], revision_id, campagne_id)))

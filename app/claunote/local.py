@@ -34,7 +34,7 @@ from pathlib import Path
 
 import httpx
 
-from claunote import agent, db, ocr, ressources
+from claunote import agent, db, lecture, ocr, ressources
 from claunote.agent import (NIVEAUX, SEUIL_CONFIANCE, TYPES, Analyse, ClaudeIndisponible, ErreurAgent, Interrompu,
                             LimiteAtteinte)
 
@@ -180,7 +180,7 @@ def transcrire(chemin: Path, arret=None) -> tuple[str, str]:
         return agent.markdown_office(agent.texte_vieux_office(chemin)), "fichier bureautique"
     if suffixe in agent.OFFICE:
         try:
-            return agent.markdown_office(agent.texte_office(chemin)), "fichier bureautique"
+            return agent.texte_bureautique(chemin), "fichier bureautique"
         except Exception as e:
             raise ErreurAgent(f"fichier {suffixe} illisible : {e}") from e
     if suffixe in (".txt", ".md"):
@@ -192,7 +192,7 @@ def transcrire(chemin: Path, arret=None) -> tuple[str, str]:
     if suffixe == ".pdf":
         texte = agent.texte_pdf(chemin)
         if texte:
-            return texte, "PDF numérique"
+            return lecture.meilleur_pdf(chemin, texte), "PDF numérique"
         total = ocr.nb_pages(chemin)
         if not total:
             raise ErreurAgent("PDF illisible")

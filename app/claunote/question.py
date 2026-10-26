@@ -17,7 +17,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from claunote import revision
+from claunote import lecture, revision
 from claunote.agent import ErreurAgent, demander
 
 MODES = {"ia": "IA", "local": "Rapide, sans IA"}
@@ -65,6 +65,16 @@ Réponds UNIQUEMENT avec un objet JSON :
 - confiance : de 0 à 1, ta certitude que ta réponse est juste et complète.
 - besoin_aide : true si tu as besoin de l'assistant plus fort (info absente, doute, calcul délicat…).
 """
+
+
+def reordonner(question: str, passages: list[dict], garder: int) -> list[dict]:
+    """Les passages les plus utiles d'abord : FlashRank (service lecture) relit chaque passage avec la question,
+    plus finement que la recherche par mots et par le sens. Sans le service : l'ordre de la recherche."""
+    scores = lecture.classer(question, [p.get("texte") or "" for p in passages])
+    if scores is None:
+        return passages[:garder]
+    ordre = sorted(range(len(passages)), key=lambda i: -scores[i])
+    return [passages[i] for i in ordre[:garder]]
 
 
 def requete(question: str) -> str:
