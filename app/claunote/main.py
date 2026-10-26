@@ -170,6 +170,22 @@ def matiere_lisible(nom_pronote: str | None) -> str:
 
 
 templates.env.filters["matiere"] = matiere_lisible
+
+
+def quand(iso: str | None) -> str:
+    """« 2026-10-26T11:25+01:00 » → « aujourd'hui à 11 h 25 » ou « lun. 26/10 à 11 h 25 »."""
+    try:
+        d = dt.datetime.fromisoformat(iso) if iso else None
+    except ValueError:
+        d = None
+    if d is None:
+        return iso or ""
+    d = d.replace(tzinfo=pronote.PARIS) if d.tzinfo is None else d.astimezone(pronote.PARIS)  # sans fuseau : Paris
+    heure = _heure_fr(d)
+    return f"aujourd'hui à {heure}" if " à " not in heure else heure
+
+
+templates.env.filters["quand"] = quand
 templates.env.filters["paris"] = lambda d: d.astimezone(pronote.PARIS).strftime("%d/%m/%Y %H:%M") if d else ""
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 EXTENSIONS = importation.DOCUMENTS

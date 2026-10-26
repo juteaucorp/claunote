@@ -53,7 +53,7 @@
   <div class="carte">
     <strong>{{ etat.nom }}</strong>{% if etat.classe %} · {{ etat.classe }}{% endif %}
     {% if etat.etablissement %}<span class="doux"> · {{ etat.etablissement }}</span>{% endif %}
-    <div class="doux">Dernière synchronisation : {{ synchro.replace('T', ' à ') if synchro else 'jamais' }}
+    <div class="doux">Dernière synchronisation : {{ synchro|quand if synchro else 'jamais' }}
       {% if erreurs_synchro %} · <span class="alerte">{{ erreurs_synchro }}</span>{% endif %}</div>
     <div class="actions" style="margin-top:10px">
       <form method="post" action="/agenda/synchroniser"><button class="principal">Synchroniser</button></form>

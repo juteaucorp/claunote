@@ -451,7 +451,7 @@ def test_agenda_connecte(agenda):
     assert "Évaluations à venir" in r.text and "tes cours : Réseaux" in r.text
     assert "pas de cours classés pour cette matière" in r.text  # anglais
     assert "Test &lt;b&gt;unit 4&lt;/b&gt;" in r.text
-    assert "15,5/20" in r.text and "coef 2" in r.text and "2026-10-23 à 14:00" in r.text
+    assert "15,5/20" in r.text and "coef 2" in r.text and "ven. 23/10 à 14 h 00" in r.text
     assert 'class="carte evenement fait"' in r.text
     assert '<a href="/doc/12">Les VLAN</a>' in r.text and "classé" in r.text
     assert 'href="https://www.netacad.com/pt"' in r.text and "javascript:" not in r.text
@@ -1289,3 +1289,11 @@ def test_demander_repli_sur_ollama(chat, monkeypatch):
     m = chat.msgs[2]
     assert m["role"] == "ia" and m["modele"] == "local" and "modèle local" in m["contenu"]
     assert "Modèle local (Ollama)" in chat.get("/demander/1").text
+
+
+def test_date_de_synchro_lisible():
+    import datetime as dt
+    maintenant = dt.datetime.now(main.pronote.PARIS)
+    assert main.quand(maintenant.replace(hour=11, minute=5).isoformat(timespec="minutes")) == "aujourd'hui à 11 h 05"
+    assert main.quand("2026-10-19T08:30+02:00") == "lun. 19/10 à 08 h 30"
+    assert main.quand(None) == "" and main.quand("pas une date") == "pas une date"

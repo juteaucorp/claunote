@@ -145,12 +145,14 @@ def niveau_actuel(niveaux_matieres: list[dict], matiere: str, ordre: list[str]) 
 
 
 def libelle_note(valeur: dict | None, sur: dict | None = None) -> str:
-    if not valeur:
+    if not valeur or not isinstance(valeur, dict):
         return "–"
-    if valeur["genre"] != 0:
+    if valeur.get("genre", 0) != 0:
         return LIBELLES_NOTE.get(valeur["genre"], "?")
+    if not isinstance(valeur.get("points"), (int, float)):  # format inattendu : pas de plantage de la page
+        return "?"
     points = f"{valeur['points']:g}".replace(".", ",")
-    if sur and sur.get("genre") == 0:
+    if sur and sur.get("genre") == 0 and isinstance(sur.get("points"), (int, float)):
         return f"{points}/{sur['points']:g}"
     return points
 

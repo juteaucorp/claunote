@@ -454,3 +454,47 @@ comprise) : c'est la VM qui les envoie au service push d'Apple, gratuit, sans co
 - **Envoyer un test** vérifie toute la chaîne. Échec ? `docker compose logs -f worker | grep notif`
   (la VM doit pouvoir joindre `web.push.apple.com`).
 - Désactiver : bouton **Désactiver ici**, ou Réglages iPhone → Notifications → Claunote.
+
+## 14. Analyse sans Claude, pause et arrêt (page Plus → Analyses)
+
+Quand ton forfait Claude atteint sa limite (ou pendant une panne), les scans ne restent plus bloqués :
+ils sont lus **sur la VM**, avec le processeur seul (pas de carte graphique) :
+
+| Étape | Outil libre | Remarque |
+| --- | --- | --- |
+| Texte | Word, PowerPoint, PDF numérique : texte extrait tel quel ; scans et photos : **OCR Tesseract** (français) | déjà dans l'image Docker ; lit bien l'imprimé, mal l'écriture à la main |
+| Classement | **Ollama** avec `qwen2.5:3b` (~2 Go de RAM) s'il est démarré, sinon **vote des cours déjà classés** qui ressemblent le plus | confiance plafonnée à 80 % |
+
+### Mise en place d'Ollama (facultatif)
+
+```bash
+docker compose --profile local up -d   # démarre le service ollama ; le modèle se télécharge tout seul (~2 Go)
+```
+
+- Petite VM (4 Go) : `OLLAMA_MODELE=qwen2.5:1.5b` dans `.env`. Avec 16 Go : `qwen2.5:7b`, plus fin mais plus lent.
+- Sans Ollama, tout marche quand même : le classement se fait par ressemblance avec tes cours.
+- `LOCAL_PARALLELE=1` (défaut) : une analyse locale à la fois. Chaque OCR occupe un cœur.
+
+### Réglages (page Analyses)
+
+- **Analyser sans Claude** :
+  - « Quand Claude n'est pas disponible » (défaut) ;
+  - « Toujours » : jamais Claude pour les analyses, utile pour garder ton forfait aux révisions ;
+  - « Jamais » : attendre Claude.
+- **Faire relire par Claude** les documents lus sans lui, quand il revient et que la file est vide
+  (meilleure transcription). Tu peux annuler ces relectures, ou en demander toi-même depuis
+  *Organiser → Relire avec Claude*.
+- Un scan **illisible sans Claude** (écriture manuscrite) ne part pas en erreur : il reste dans la file
+  avec la mention « attend Claude ».
+- *Une question* : quand Claude est en pause, le modèle local répond s'il est installé (sinon, les passages des cours).
+
+### Pause, arrêt, file d'analyse
+
+- **Mettre en pause** : les analyses en cours se terminent, aucune autre ne démarre. Révisions, rangements et
+  Pronote continuent.
+- **Arrêter maintenant** : coupe tout de suite les analyses en cours. Les appels `claude -p` sont arrêtés et
+  l'OCR s'arrête entre deux pages. Rien n'est perdu ni mis en erreur : les fichiers restent dans la file.
+- **File d'analyse** : coche des fichiers puis choisis une action de masse :
+  - « Ne pas analyser pour l'instant » / « Remettre dans la file » ;
+  - « Analyser sans Claude » / « Analyser avec Claude » ;
+  - « Supprimer » (corbeille kDrive).

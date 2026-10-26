@@ -229,3 +229,9 @@ def test_importer_documents_pas_connecte():
 def test_niveau_du_dossier_de_classe():
     from claunote import rangement
     assert rangement.niveau_depuis_dossier(["BTS SIO 2", "Pronote", "SISR - RESEAUX"]) == "BTS2"
+
+
+def test_libelle_note_format_inattendu():
+    from claunote.pronote import libelle_note
+    assert libelle_note({"genre": 0, "points": 15.5}, {"genre": 0, "points": 20}) == "15,5/20"
+    assert libelle_note({"kind": 0}) == "?" and libelle_note("12") == "–" and libelle_note(None) == "–"
