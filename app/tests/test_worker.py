@@ -813,3 +813,21 @@ def test_besoin_claude_lit_le_scan(worker, monkeypatch):
                                                                modele="sonnet"))
     worker.traiter(KD(), {"id": 5, "name": "cahier.pdf", "dossiers": [], "local": True})
     assert majs[0]["transcription"] == "lu par Claude" and majs[0]["modele"] == "sonnet" and majs[0]["relire"] is False
+
+
+def test_delai_entre_deux_tours(worker):
+    assert worker.delai(True, 99999) == 5                                  # encore du travail : on enchaîne
+    assert worker.delai(False, 60) == worker.INTERVALLE                    # quelque chose vient de bouger
+    assert worker.delai(False, worker.CALME) == worker.INTERVALLE_CALME   # inbox inchangée depuis 30 min
+
+
+def test_analyses_locales_respirent(worker, monkeypatch):
+    """Budget dépassé : une pause avant chaque analyse locale, pas pendant le travail pour Claude."""
+    pauses, faits = [], []
+    monkeypatch.setattr(worker.ressources.BUDGET, "freine", True)
+    monkeypatch.setattr(worker.ressources, "respirer", lambda arret: pauses.append(1) or 0)
+    monkeypatch.setattr(worker, "activite", lambda t: None)
+    worker.en_parallele([1, 2], faits.append, str, 1, continuer=lambda: True, freiner=True)
+    assert faits == [1, 2] and len(pauses) == 2
+    worker.en_parallele([3], faits.append, str, 1, continuer=lambda: True)
+    assert faits == [1, 2, 3] and len(pauses) == 2

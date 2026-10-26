@@ -40,6 +40,10 @@ INBOX_ID = int(os.environ["KDRIVE_INBOX_ID"])
 ETUDES_ID = int(os.environ["KDRIVE_ETUDES_ID"])
 CACHE_DIR = Path(os.environ.get("CACHE_DIR", "/cache"))
 INTERVALLE = 60          # secondes entre deux vérifications de l'inbox
+# Inbox inchangée depuis CALME secondes : on la regarde toutes les INTERVALLE_CALME secondes seulement.
+# Le site réveille le worker tout de suite (dépôt, scan, révision…) : seul un fichier posé directement
+# dans kDrive attend un peu plus.
+CALME, INTERVALLE_CALME = 1800, 300
 PARALLELE = agent.PARALLELE  # analyses menées en même temps (CLAUDE_PARALLELE, 3 par défaut)
 # documents analysés par passage ; au moins 2 par fil (un ancien WORKER_LOT=5 briderait le parallélisme)
 LOT = max(int(os.environ.get("WORKER_LOT") or 4 * PARALLELE), 2 * PARALLELE)
@@ -149,7 +153,8 @@ def publier():
     db.etat_ecrire("service", json.dumps({
         "vu": _iso(time.time()), "demarre": ETAT["demarre"], "arret": ARRET.is_set(), "activite": ETAT["activite"],
         "en_cours": ETAT["en_cours"], "pause": PAUSE.is_set(), "local": ETAT["local"],
-        "claude": CLAUDE.publier(), "kdrive": KDRIVE.publier(), "modeles": modeles.indisponibles(), "sonde": SONDE}))
+        "claude": CLAUDE.publier(), "kdrive": KDRIVE.publier(), "modeles": modeles.indisponibles(), "sonde": SONDE,
+        "processeur": ressources.publier()}))
 
 
 def activite(texte: str | None):
@@ -164,6 +169,11 @@ def battement():
     """Publie l'état même pendant une longue analyse : le site sait que le worker vit."""
     while True:
         try:
+            freinait = ressources.BUDGET.freine
+            ressources.BUDGET.echantillon()   # occupation du processeur, pour le budget sur la durée
+            if ressources.BUDGET.freine != freinait:
+                log(ressources.BUDGET.raison() or f"processeur redescendu à {round(ressources.BUDGET.moyenne * 100)} % "
+                                                  "en moyenne : le travail de fond reprend à pleine vitesse")
             ETAT["local"] = {"ocr": ocr.disponible(), **{k: v for k, v in local.etat_ollama().items()
                                                          if k in ("pret", "message")}}
             publier()
@@ -930,6 +940,13 @@ def nettoyer_inbox(kd: KDrive, dossier_id: int = INBOX_ID, racine: bool = True) 
     return vide and not racine
 
 
+def delai(encore_du_travail: bool, calme_depuis: float) -> int:
+    """Secondes avant le prochain tour : tout de suite s'il reste du travail, plus espacé quand rien ne bouge."""
+    if encore_du_travail:
+        return 5
+    return INTERVALLE_CALME if calme_depuis >= CALME else INTERVALLE
+
+
 def attendre(secondes: int):
     """Dort, mais se réveille tout de suite si le site demande un scan."""
     fin = time.monotonic() + secondes
@@ -1021,8 +1038,11 @@ def sonder_claude():
     log("Claude répond de nouveau (test demandé depuis le site) : la file repart")
 
 
-def en_parallele(items: list, faire, libelle, fils: int = PARALLELE, continuer=None):
+def en_parallele(items: list, faire, libelle, fils: int = PARALLELE, continuer=None, freiner: bool = False):
     """Applique `faire` à chaque élément, `fils` à la fois.
+
+    `freiner` : travail sur le processeur de la VM ; avant chaque élément, on attend que l'occupation
+    moyenne repasse sous la limite (ressources.respirer) : des pics, pas une VM à fond en permanence.
 
     Le premier qui tombe sur la limite du forfait, une panne de Claude ou de kDrive arrête la
     distribution : ceux déjà lancés finissent, les autres restent pour le tour suivant, puis
@@ -1034,6 +1054,11 @@ def en_parallele(items: list, faire, libelle, fils: int = PARALLELE, continuer=N
     def un(item):
         if ARRET.is_set() or echec or not continuer():
             return
+        if freiner and ressources.BUDGET.freine:
+            activite(f"Pause : {ressources.BUDGET.raison()}")
+            ressources.respirer(lambda: ARRET.is_set() or STOP.is_set())
+            if ARRET.is_set() or not continuer():
+                return
         with EN_COURS_VERROU:  # partagé : le modèle local et Claude travaillent en même temps
             EN_COURS.append(libelle(item))
             ETAT["en_cours"] = list(EN_COURS)
@@ -1131,7 +1156,7 @@ def analyser_sans_claude(kd: KDrive, items: list[dict], matieres: list[str] | No
         traiter(kd, {**item, "local": True}, matieres, dossiers)
 
     en_parallele(items, faire, lambda item: f"Analyse locale de « {item['name']} »", local.PARALLELE,
-                 continuer=lambda: not PAUSE.is_set() and not STOP.is_set())
+                 continuer=lambda: not PAUSE.is_set() and not STOP.is_set(), freiner=True)
 
 
 def relire_avec_claude(kd: KDrive):
@@ -1199,6 +1224,8 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     etape("rangement", ranger_en_attente, kd)
     etape("PDF des révisions", pdf_manquants, kd)
     inbox = etape("inbox", lire_inbox, kd)
+    if inbox is not None:
+        ETAT["inbox"] = frozenset(i["id"] for i in inbox)
     if (CLAUDE.disponible() or not local.disponible()) and not ARRET.is_set():
         etape("organisation des imports", comprendre_en_attente)
     ETAT["reste"] = False
@@ -1250,11 +1277,14 @@ def main():
     threading.Thread(target=battement, daemon=True, name="battement").start()
     threading.Thread(target=surveiller, daemon=True, name="surveillance").start()
     prochaine_synchro, dernier_nettoyage = 0.0, float("-inf")
+    dernier_changement, inbox_vue = time.monotonic(), None
     while not ARRET.is_set():
         etape("test de Claude", sonder_claude)
         prochaine_synchro = synchro_pronote(prochaine_synchro)
         dernier_nettoyage = tour(kd, dernier_nettoyage)
-        attendre(5 if ETAT["reste"] and CLAUDE.disponible() else INTERVALLE)
+        if ETAT["reste"] or ETAT.get("inbox") != inbox_vue:
+            dernier_changement, inbox_vue = time.monotonic(), ETAT.get("inbox")
+        attendre(delai(ETAT["reste"] and CLAUDE.disponible(), time.monotonic() - dernier_changement))
     publier()
     log("worker arrêté proprement")
 

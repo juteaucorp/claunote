@@ -361,10 +361,15 @@
   //   « remplacer » : le contenu change sur place, sans clignoter ;
   //   « recharger » : page avec ses propres scripts (quiz…), rechargée quand son contenu a changé.
   (() => {
-    const PERIODE = 20000;
-    let derniere = Date.now(), geste = 0, attente = PERIODE, minuteur = null, en_cours = false;
+    // Page ouverte mais personne devant (onglet oublié) : on espace, sans rien perdre au retour
+    const PERIODE = 20000, LENT = 60000, TRES_LENT = 300000;
+    let derniere = Date.now(), geste = Date.now(), attente = PERIODE, minuteur = null, en_cours = false;
+    const rythme = () => { const calme = Date.now() - geste; return calme > 600000 ? TRES_LENT : calme > 120000 ? LENT : PERIODE; };
     ["pointerdown", "keydown", "wheel", "touchmove", "input"].forEach((t) =>
-      document.addEventListener(t, () => { geste = Date.now(); }, { passive: true, capture: true }));
+      document.addEventListener(t, () => {
+        geste = Date.now();
+        if (attente > PERIODE) { attente = PERIODE; planifier(Date.now() - derniere > PERIODE ? 300 : PERIODE); }
+      }, { passive: true, capture: true }));
     const modifie = (zone) => {
       const actif = document.activeElement;
       if (actif && zone.contains(actif) && actif.matches("input, textarea, select, [contenteditable]")) return true;
@@ -403,7 +408,7 @@
           if (window.htmx) htmx.process(zone);
           window.scrollTo(0, y);
         }
-        attente = PERIODE;
+        attente = rythme();
       } catch (_) {
         attente = Math.min(attente * 2, 120000);  // réseau coupé (VPN) : on espace les essais
       } finally {

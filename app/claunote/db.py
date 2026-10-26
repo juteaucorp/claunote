@@ -1703,12 +1703,27 @@ def a_indexer(limite: int = 20):
                          "ORDER BY maj_le DESC LIMIT %s", (list(STATUTS_UTILES), limite)).fetchall()
 
 
+def passages_existants(doc_id: int) -> list[tuple[str, str | None]]:
+    """(texte, vecteur) des passages déjà indexés d'un document, dans l'ordre (vecteur en texte pgvector)."""
+    with connect() as c:
+        colonne = "vecteur::text" if vecteurs_possibles() else "NULL"
+        return [(r["texte"], r["v"]) for r in c.execute(
+            f"SELECT texte, {colonne} AS v FROM passages WHERE document_id = %s ORDER BY rang", (doc_id,)).fetchall()]
+
+
+def marquer_indexe(doc_id: int):
+    """Texte inchangé depuis le dernier index : rien à refaire, on note seulement la date."""
+    with connect() as c:
+        c.execute("UPDATE documents SET indexe_le = now() WHERE id = %s", (doc_id,))
+
+
 def remplacer_passages(doc_id: int, textes: list[str], vecteurs: list | None = None):
+    """`vecteurs` : un par passage (None pour un passage dont le sens sera calculé plus tard), ou None."""
     avec = vecteurs is not None and vecteurs_possibles()
     with connect() as c, c.transaction():
         c.execute("DELETE FROM passages WHERE document_id = %s", (doc_id,))
         for rang, texte in enumerate(textes):
-            if avec:
+            if avec and vecteurs[rang] is not None:
                 c.execute("INSERT INTO passages (document_id, rang, texte, vecteur) VALUES (%s, %s, %s, %s::vector)",
                           (doc_id, rang, texte, str(vecteurs[rang])))
             else:

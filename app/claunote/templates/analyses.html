@@ -69,6 +69,11 @@
     <ul class="etat-outils">
       <li><span class="point {{ 'ko' if vm.sature else 'ok' }}"></span>{{ vm.sature or 'Disponible pour le modèle local' }}</li>
       <li>Processeur : {{ (vm.charge * 100)|round|int }} % de {{ vm.coeurs }} cœur{{ 's' if vm.coeurs > 1 }}{% if vm.memoire_libre_mo is not none %} · {{ vm.memoire_libre_mo }} Mo libres{% endif %}</li>
+      {% set p = s.processeur or {} %}
+      {% if p.moyenne is defined %}
+      <li><span class="point {{ 'pause' if p.freine else 'ok' }}"></span>Sur la durée : {{ (p.moyenne * 100)|round|int }} % en moyenne sur {{ vm.fenetre_min }} min
+        (limite {{ (vm.moyenne_max * 100)|round|int }} %){% if p.freine %} — <strong>le travail de fond ralentit</strong> (ou part chez Claude) pour laisser souffler la VM{% else %} — les pics à 100 % sont normaux{% endif %}</li>
+      {% endif %}
       <li class="doux">≈ {{ vm.duree_moyenne_s }} s par document sur la VM ; au-delà de {{ vm.attente_max_min }} min de file, Claude prend le surplus.</li>
     </ul>
   </div>
