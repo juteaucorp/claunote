@@ -312,17 +312,13 @@ def etat_mise_a_jour(request: Request):
 
 
 @app.post("/mise-a-jour/{action}", response_class=HTMLResponse)
-def demander_mise_a_jour(request: Request, action: str, mot_de_passe: str = Form("")):
-    """Réservé à l'admin : tout sauf « Vérifier » redemande le mot de passe du compte."""
+def demander_mise_a_jour(request: Request, action: str):
+    """Réservé à l'admin, c'est-à-dire au compte connecté (le seul du site)."""
     if action not in maj.ACTIONS:
         raise HTTPException(404)
-    compte = request.app.state.compte
-    ip = request.client.host if request.client else "?"
     erreur = None
     if not maj.present():
         erreur = "Le service maj ne tourne pas sur la VM (voir l'installation ci-dessous)."
-    elif action != "verifier" and (compte.bloque(ip) or not compte.verifier(ip, compte.utilisateur, mot_de_passe)):
-        erreur = "Mot de passe incorrect : action réservée à l'admin."
     else:
         try:
             maj.demander(action)

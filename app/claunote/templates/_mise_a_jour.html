@@ -46,9 +46,6 @@
 
 <form class="carte admin-maj" hx-post="/mise-a-jour/mettre_a_jour" hx-target="#bloc-maj" hx-swap="outerHTML">
   <strong>Actions admin</strong>
-  <input type="text" name="utilisateur" autocomplete="username" hidden>
-  <p><label>Mot de passe du compte<br>
-    <input type="password" name="mot_de_passe" autocomplete="current-password" required style="width: 100%; max-width: 320px"></label></p>
   <div class="actions">
     <button class="principal" {{ 'disabled' if e.en_cours or not present }}>Tout mettre à jour</button>
     <button hx-post="/mise-a-jour/redemarrer" {{ 'disabled' if e.en_cours or not present }}
@@ -72,6 +69,6 @@
   .ok-maj { color: var(--ok); }
   .action-maj { border-color: var(--accent); }
   .nouveautes { margin: 0 0 10px; padding-left: 20px; }
-  .admin-maj .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .admin-maj .actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
 </style>
 </div>

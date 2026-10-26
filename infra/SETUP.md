@@ -516,7 +516,7 @@ la touche `/` place le curseur dans la recherche.
 ## 15. Mise à jour depuis le site
 
 *Plus → Réglages → Mise à jour* : version installée, nouveautés disponibles sur GitHub (vérifiées toutes
-les 6 h, badge sur le menu Réglages) et trois actions **réservées à l'admin** (mot de passe du compte redemandé) :
+les 6 h, badge sur le menu Réglages) et trois actions **réservées à l'admin** (le compte connecté) :
 
 - **Tout mettre à jour** : `git pull`, construction des nouvelles images (le site reste en ligne pendant ce
   temps), puis redémarrage de tous les services. Le site se coupe environ une minute : la page se reconnecte
@@ -530,7 +530,8 @@ site ◀── état + journal ────────────────�
 ```
 
 Le service `maj` pilote Docker (socket monté) : il n'exécute **que ces actions**, jamais une commande venue
-du site. git tourne sous le propriétaire du dossier (les fichiers ne passent pas à root). Si un fichier a été
+du site. git tourne en root puis rend `.git` et les fichiers du dépôt au propriétaire du dossier Claunote
+(ça répare aussi les fichiers laissés à root par un ancien `sudo git pull`). Si un fichier a été
 modifié à la main sur la VM, la mise à jour est refusée sans rien toucher (`git status` pour voir lequel).
 
 **Première fois** : le service n'existe pas encore, il faut une dernière mise à jour à la main, depuis le
