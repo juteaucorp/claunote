@@ -3,6 +3,8 @@
 {% block titre %}État du service{% endblock %}
 {% block vivant %}remplacer{% endblock %}
 {% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('activite', 'etat') }}
 <h1>État du service</h1>
 {% set c, k = s.claude, s.kdrive %}
 

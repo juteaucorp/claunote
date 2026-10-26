@@ -246,7 +246,7 @@ matière d'une année) et qui répond :
 ### Matières en double
 
 L'IA de classement donne parfois deux noms à la même matière la même année (« Maths » et « Mathématiques »,
-« Réseau » et « Réseaux », « SLAM » et « Développement »). Page **Organiser → Matières en double** (un rappel
+« Réseau » et « Réseaux », « SLAM » et « Développement »). Page **Plus → Ranger → Matières** (un rappel
 s'affiche aussi sur **Cours** quand il y en a) :
 
 - **Sans IA** : noms rapprochés par accents/pluriels/ponctuation, abréviations connues (Maths, HG, LV1, CEJM…),
@@ -435,12 +435,12 @@ comprise) : c'est la VM qui les envoie au service push d'Apple, gratuit, sans co
 2. `git pull && docker compose up -d --build` : le service **caddy** crée l'autorité de certification
    « Claunote » (volume `caddy`, à ne pas supprimer : sinon il faut réinstaller le certificat).
 3. Sur l'iPhone, VPN allumé, ouvre **`http://<BIND_ADDR>:8000/installer`** dans Safari et suis les 5 étapes :
-   certificat → confiance → `https://…` → **Partager → Sur l'écran d'accueil** → **Plus → Notifications → Activer**.
+   certificat → confiance → `https://…` → **Partager → Sur l'écran d'accueil** → **Plus → Réglages → Notifications → Activer**.
 
 > ⚠️ Utilise **toujours la même adresse** (celle de `CLAUNOTE_HOTE`) : l'iPhone considère une autre IP
 > comme une autre appli, avec ses propres réglages de notifications.
 
-### Ce que tu reçois (page **Plus → Notifications**)
+### Ce que tu reçois (page **Plus → Réglages → Notifications**)
 
 | Notification | Quand | En la touchant |
 |---|---|---|
@@ -455,38 +455,38 @@ comprise) : c'est la VM qui les envoie au service push d'Apple, gratuit, sans co
   (la VM doit pouvoir joindre `web.push.apple.com`).
 - Désactiver : bouton **Désactiver ici**, ou Réglages iPhone → Notifications → Claunote.
 
-## 14. Analyse sans Claude, pause et arrêt (page Plus → Analyses)
+## 14. Local d'abord, pause et arrêt (Plus → Activité)
 
-Quand ton forfait Claude atteint sa limite (ou pendant une panne), les scans ne restent plus bloqués :
-ils sont lus **sur la VM**, avec le processeur seul (pas de carte graphique) :
+Le travail interne est fait **sur la VM**, avec le processeur seul (pas de carte graphique) ; Claude n'intervient
+que pour aider le modèle local ou le vérifier :
 
-| Étape | Outil libre | Remarque |
+| Étape | Sur la VM (outils libres) | Quand Claude intervient |
 | --- | --- | --- |
-| Texte | Word, PowerPoint, PDF numérique : texte extrait tel quel ; scans et photos : **OCR Tesseract** (français) | déjà dans l'image Docker ; lit bien l'imprimé, mal l'écriture à la main |
-| Classement | **Ollama** avec `qwen2.5:3b` (~2 Go de RAM) s'il est démarré, sinon **vote des cours déjà classés** qui ressemblent le plus | confiance plafonnée à 80 % |
+| Texte | Word, PowerPoint, PDF numérique, scripts et notebooks : texte extrait tel quel ; scans et photos : **OCR Tesseract** | OCR pauvre (écriture manuscrite, scan flou) : Claude lit le fichier lui-même |
+| Classement | **Ollama** (`qwen2.5:3b`), sinon vote des cours déjà classés | confiance sous 70 % : Claude (Haiku, texte seul) vérifie et corrige ; 1 analyse sûre sur 10 : contrôle |
+| Reclassement, noms de dossiers, matières en double | Ollama | réponse inutilisable ou doute |
+| Chat (*Une question*) | Ollama, sur les passages de tous les documents et l'agenda | doute, ou le modèle local demande de l'aide : Claude vérifie et complète son brouillon |
+| Recherche | passages par les mots (PostgreSQL) et par le sens (pgvector + `nomic-embed-text`) | jamais |
 
-### Mise en place d'Ollama (facultatif)
+**La VM ne sature pas** : si la mémoire manque, si le processeur est occupé par autre chose, ou si la file
+d'analyse ferait attendre un document plus de 30 min, le surplus part chez Claude (s'il est disponible).
+La page *Activité* montre la charge, la durée moyenne d'une analyse locale et le **taux d'accord avec Claude**
+mesuré par les contrôles : c'est ce qui te dit si tu peux faire confiance au local.
 
-```bash
-docker compose --profile local up -d   # démarre le service ollama ; le modèle se télécharge tout seul (~2 Go)
-```
+### Mise en place
 
-- Petite VM (4 Go) : `OLLAMA_MODELE=qwen2.5:1.5b` dans `.env`. Avec 16 Go : `qwen2.5:7b`, plus fin mais plus lent.
-- Sans Ollama, tout marche quand même : le classement se fait par ressemblance avec tes cours.
-- `LOCAL_PARALLELE=1` (défaut) : une analyse locale à la fois. Chaque OCR occupe un cœur.
+Ollama démarre avec le reste (`docker compose up -d`) et télécharge ses deux modèles au premier lancement
+(~2,3 Go). Pour une petite VM (4 Go) : `OLLAMA_MODELE=qwen2.5:1.5b`. Avec 16 Go : `qwen2.5:7b`, plus fin mais plus lent.
+Pour t'en passer : `ANALYSE_LOCALE=auto` dans `.env`, puis `docker compose stop ollama`.
 
-### Réglages (page Analyses)
+### Réglages (Activité → Qui fait le travail)
 
-- **Analyser sans Claude** :
-  - « Quand Claude n'est pas disponible » (défaut) ;
-  - « Toujours » : jamais Claude pour les analyses, utile pour garder ton forfait aux révisions ;
-  - « Jamais » : attendre Claude.
-- **Faire relire par Claude** les documents lus sans lui, quand il revient et que la file est vide
-  (meilleure transcription). Tu peux annuler ces relectures, ou en demander toi-même depuis
-  *Organiser → Relire avec Claude*.
-- Un scan **illisible sans Claude** (écriture manuscrite) ne part pas en erreur : il reste dans la file
-  avec la mention « attend Claude ».
-- *Une question* : quand Claude est en pause, le modèle local répond s'il est installé (sinon, les passages des cours).
+- **Local d'abord** (défaut) : comme ci-dessus.
+- **Claude d'abord** : Claude fait tout, le local seulement pendant une limite ou une panne.
+- **Local uniquement** : jamais Claude pour les analyses (ton forfait reste aux révisions).
+- **Claude uniquement** : attendre Claude.
+- **Faire relire par Claude** les documents douteux lus pendant une absence de Claude, à son retour.
+  Tu peux annuler ces relectures, ou en demander toi-même : *Ranger → Tous les documents → Relire avec Claude*.
 
 ### Pause, arrêt, file d'analyse
 
@@ -496,5 +496,16 @@ docker compose --profile local up -d   # démarre le service ollama ; le modèle
   l'OCR s'arrête entre deux pages. Rien n'est perdu ni mis en erreur : les fichiers restent dans la file.
 - **File d'analyse** : coche des fichiers puis choisis une action de masse :
   - « Ne pas analyser pour l'instant » / « Remettre dans la file » ;
-  - « Analyser sans Claude » / « Analyser avec Claude » ;
+  - « Modèle local » / « Claude directement » / « Selon le réglage » ;
   - « Supprimer » (corbeille kDrive).
+
+### Menus
+
+Le menu **Plus** a quatre entrées, chacune avec ses onglets :
+- **Ajouter** : Déposer, Import de dossiers ;
+- **Ranger** : À vérifier, Tous les documents, Matières, Hors cours ;
+- **Activité** : Analyses, État du service ;
+- **Réglages** : Compte, Notifications.
+
+La barre de recherche de l'accueil sert aussi à **poser une question à l'IA** (bouton *Demander*). Sur ordinateur,
+la touche `/` place le curseur dans la recherche.

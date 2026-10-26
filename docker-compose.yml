@@ -55,10 +55,10 @@ services:
       pronote: {condition: service_started}
 
   ollama:
-    # Analyse sans Claude (facultatif) : petit modèle de langue sur le processeur, pas de carte graphique.
-    # Démarrage : docker compose --profile local up -d (le modèle se télécharge tout seul, ~2 Go)
+    # Modèle local (« local d'abord ») : petit modèle de langue sur le processeur, pas de carte graphique.
+    # Les modèles se téléchargent tout seuls au premier lancement (~2,3 Go). Pour s'en passer :
+    # ANALYSE_LOCALE=auto dans .env, puis docker compose stop ollama.
     image: ollama/ollama:0.6.8
-    profiles: [local]
     restart: unless-stopped
     volumes:
       - ollama:/root/.ollama   # modèles téléchargés

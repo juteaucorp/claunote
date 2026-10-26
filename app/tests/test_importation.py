@@ -128,3 +128,24 @@ def test_interpreter_arborescence(monkeypatch):
     assert resume == "Par année scolaire." and "Cours/2023-2024/SISR (2)" in vu["entree"]
     assert compris == {"Cours/2023-2024": {"niveau": "BTS1", "matiere": None, "type": None},
                        "Cours/2023-2024/SISR": {"niveau": "BTS1", "matiere": "Réseaux", "type": "TP"}}
+
+
+def test_code_seul_d_un_tp_est_un_document(tmp_path):
+    """Un script SQL ou un notebook isolé est un cours ; le même fichier dans un projet de code reste écarté."""
+    from claunote import agent
+    fichiers = importation.trier([
+        importation.Fichier(1, "tp-requetes.sql", ["BTS1", "SQL"], 2_000),
+        importation.Fichier(2, "exo.ipynb", ["BTS1", "Python"], 5_000),
+        importation.Fichier(3, "index.js", ["BTS1", "Site"], 1_000),
+        importation.Fichier(4, "package.json", ["BTS1", "Site"], 500),
+        importation.Fichier(5, "enorme.js", ["BTS1"], 2_000_000)])
+    decision = {f.nom: (f.categorie, f.decision) for f in fichiers}
+    assert decision["tp-requetes.sql"] == ("document", "analyser") and decision["exo.ipynb"] == ("document", "analyser")
+    assert decision["index.js"][1] == "inutile" and decision["enorme.js"][1] == "inutile"
+    nb = tmp_path / "exo.ipynb"
+    nb.write_text('{"cells": [{"cell_type": "markdown", "source": ["# Boucles"]}, '
+                  '{"cell_type": "code", "source": ["for i in range(3):\\n", "    print(i)"]}]}')
+    assert agent.texte_source(nb) == "# Boucles\n\n```python\nfor i in range(3):\n    print(i)\n```"
+    sql = tmp_path / "tp.sql"
+    sql.write_text("SELECT * FROM eleve;")
+    assert agent.texte_source(sql) == "# tp.sql\n\n```sql\nSELECT * FROM eleve;\n```"

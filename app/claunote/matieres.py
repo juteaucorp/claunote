@@ -207,9 +207,21 @@ def lire_ia(texte: str, comptes: list[dict]) -> list[dict]:
     return groupes
 
 
-def demander_ia(comptes: list[dict], titres: dict[tuple, list[str]]) -> list[dict]:
-    """Un appel court (Haiku) sur la liste des matières ; lève LimiteAtteinte, ClaudeIndisponible…"""
-    from claunote.agent import demander
+def demander_ia(comptes: list[dict], titres: dict[tuple, list[str]], essai_local=None) -> list[dict]:
+    """Le modèle local d'abord (`essai_local(prompt, entree)`), sinon un appel court à Claude (Haiku).
+
+    Lève LimiteAtteinte, ClaudeIndisponible… si Claude est appelé et ne répond pas.
+    """
+    from claunote.agent import ErreurAgent, demander
+    if essai_local:
+        d = essai_local(PROMPT_IA, entree_ia(comptes, titres)[:12_000])
+        if d:
+            try:
+                groupes = lire_ia(json.dumps(d), comptes)
+                if groupes:
+                    return [{**g, "raisons": g["raisons"] + ["vu par le modèle local"]} for g in groupes]
+            except ErreurAgent:
+                pass
     with tempfile.TemporaryDirectory() as vide:
         groupes, _ = demander("matieres", PROMPT_IA, Path(vide), lire=lambda t: lire_ia(t, comptes),
                               entree=entree_ia(comptes, titres)[:40_000], timeout=300)

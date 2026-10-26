@@ -21,7 +21,11 @@ EDITABLES = {".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".odp", ".xlsx", 
 EDITABLES_LISIBLES = {".docx", ".odt", ".xlsx", ".ods", ".doc", ".xls"}
 IMAGES = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".bmp"}
 TEXTES = {".txt", ".md"}
-DOCUMENTS = PDF | EDITABLES | IMAGES | TEXTES
+# Code d'un TP ou d'un exercice (BTS SIO) : lu comme un document s'il est seul, hors d'un projet de code
+SOURCES = {".py", ".sql", ".ipynb", ".html", ".htm", ".js", ".php", ".java", ".c", ".cpp", ".cs", ".sh", ".ps1",
+           ".bat", ".vb", ".kt", ".r", ".css", ".ts"}
+SOURCE_MAX = 300_000  # octets : au-delà, c'est un fichier généré ou une bibliothèque, pas un exercice
+DOCUMENTS = PDF | EDITABLES | IMAGES | TEXTES | SOURCES
 
 CODE = {".py", ".pyc", ".ipynb", ".js", ".mjs", ".ts", ".jsx", ".tsx", ".vue", ".html", ".htm", ".css", ".scss",
         ".php", ".java", ".class", ".jar", ".kt", ".c", ".h", ".cpp", ".hpp", ".cs", ".vb", ".go", ".rs", ".rb",
@@ -40,7 +44,7 @@ DOSSIERS_INUTILES = {".vscode", ".idea", ".vs", ".git", ".svn", ".hg", "node_mod
 MARQUEURS_PROJET = {"package.json", "composer.json", "pom.xml", "build.gradle", "requirements.txt", "pyproject.toml",
                     "makefile", "cmakelists.txt", "dockerfile", "docker-compose.yml", "cargo.toml", "go.mod",
                     "index.html", "index.php", "manage.py", "app.py", "main.py", "readme.md", ".gitignore"}
-EXTENSIONS_PROJET = {".sln", ".csproj", ".vbproj", ".ipynb"}
+EXTENSIONS_PROJET = {".sln", ".csproj", ".vbproj"}  # un notebook (.ipynb) est un cours, pas un projet
 
 LIBELLES = {"code": "Code ou configuration", "systeme": "Fichier système", "doublon": "Copie exacte",
             "projet": "Fichier d'un projet de code", "autre": "Format non lu"}
@@ -184,11 +188,13 @@ def categorie(f: Fichier, projets: set[tuple]) -> tuple[str, str | None]:
         return "systeme", "fichier créé par Windows, macOS ou Office"
     if dossier_inutile:
         return "code", f"dans le dossier « {dossier_inutile} » (outil de développement)"
+    dans_projet = any(tuple(f.dossiers[:i]) in projets for i in range(len(f.dossiers) + 1))
+    if ext in SOURCES and not dans_projet and f.taille <= SOURCE_MAX:
+        return "document", None  # script SQL d'un TP, notebook, page HTML d'exercice : du cours
     if ext in CODE or (not ext and nom.startswith(".")):
         return "code", "code source ou fichier de configuration"
     if ext not in DOCUMENTS:
         return "autre", f"format {ext or 'sans extension'} non lu par l'agent"
-    dans_projet = any(tuple(f.dossiers[:i]) in projets for i in range(len(f.dossiers) + 1))
     if dans_projet and ext in IMAGES | TEXTES:
         return "projet", "image ou texte d'un projet de code (icône, README…)"
     if ext in IMAGES and 0 < f.taille < 15_000:

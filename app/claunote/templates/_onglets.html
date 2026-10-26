@@ -1,0 +1,28 @@
+{# Onglets des pages regroupées du menu Plus : une entrée par groupe, les pages du groupe en onglets #}
+{% macro onglets(groupe, actif) -%}
+{% if groupe == 'ajouter' %}
+  {% set a_importer = nb_import_a_confirmer() %}
+  {% set liste = [('deposer', '/deposer', 'Déposer', 0), ('import', '/import', 'Import de dossiers', a_importer)] %}
+{% elif groupe == 'ranger' %}
+  {% set liste = [('verifier', '/a-verifier', 'À vérifier', nb_a_verifier()), ('organiser', '/organiser', 'Tous les documents', 0),
+                  ('matieres', '/organiser/matieres', 'Matières', nb_matieres_en_double()), ('hors', '/hors-cours', 'Hors cours', 0)] %}
+{% elif groupe == 'activite' %}
+  {% set liste = [('analyses', '/analyses', 'Analyses', 0), ('etat', '/etat', 'État du service', 0)] %}
+{% else %}
+  {% set liste = [('compte', '/compte', 'Compte', 0), ('notifications', '/notifications', 'Notifications', 0)] %}
+{% endif %}
+<nav class="onglets-page" aria-label="Pages de la rubrique">
+  {% for cle, url, libelle, n in liste %}
+  <a href="{{ url }}" class="{{ 'actif' if cle == actif }}" {{ 'aria-current=page' if cle == actif }}>{{ libelle }}{% if n %}<span class="badge">{{ n }}</span>{% endif %}</a>
+  {% endfor %}
+</nav>
+<style>
+  .onglets-page { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 0 14px; padding: 2px 0; }
+  .onglets-page::-webkit-scrollbar { display: none; }
+  .onglets-page a { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 999px;
+    border: 1px solid var(--bord); background: var(--carte); color: var(--texte); text-decoration: none; font-weight: 500; font-size: .92rem; }
+  .onglets-page a.actif { border-color: var(--accent); background: var(--accent-pale); color: var(--accent-fonce); }
+  .onglets-page .badge { margin: 0; }
+  @media (max-width: 760px) { .onglets-page { margin-left: -12px; margin-right: -12px; padding-left: 12px; padding-right: 12px; } }
+</style>
+{%- endmacro %}

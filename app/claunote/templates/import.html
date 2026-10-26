@@ -2,6 +2,8 @@
 {% block titre %}Import{% endblock %}
 {% block vivant %}recharger{% endblock %}
 {% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('ajouter', 'import') }}
 <h1>Import de dossiers</h1>
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
 

@@ -130,3 +130,87 @@ def test_etat_ollama(monkeypatch):
     monkeypatch.setattr(local.httpx, "get", absent)
     assert "pas installé" in local.etat_ollama(reverifier=True)["message"]
     local._ollama.update(vu=0.0, telechargement=False, pret=False)
+
+
+# --- Local d'abord : Claude aide et vérifie ---------------------------------------------
+
+def test_qualite_ocr():
+    assert local.qualite_ocr("Un VLAN est un réseau local virtuel.") > 0.9
+    assert local.qualite_ocr("l1 |Ii ;c rn 3# ~ Il ll 1l") < local.OCR_PAUVRE
+    assert local.qualite_ocr("") == 0
+
+
+def test_ocr_pauvre_demande_claude(tmp_path, monkeypatch):
+    f = tmp_path / "cahier.jpg"
+    f.write_bytes(b"x")
+    monkeypatch.setattr(local, "transcrire", lambda chemin, arret=None: ("l1 |Ii ;c rn 3# ~", "OCR d'une photo (Tesseract)"))
+    with pytest.raises(local.BesoinClaude):
+        local.analyser(f, claude=True)
+    monkeypatch.setattr(local.db, "voisins", lambda q, n: [])
+    a = local.analyser(f, claude=False)  # sans Claude : gardé, à relire par Claude plus tard
+    assert a.a_relire and a.modele == "local"
+
+
+def _voisins_surs(monkeypatch):
+    monkeypatch.setattr(local.db, "voisins", lambda q, n: [{"niveau": "BTS1", "matiere": "Réseaux", "type": "Cours",
+                                                            "score": 0.5}] * 3)
+
+
+def test_doute_verifie_par_claude(tmp_path, monkeypatch):
+    monkeypatch.setattr(local.db, "voisins", lambda q, n: [])  # aucun voisin : confiance nulle
+    controles, prompts = [], []
+    monkeypatch.setattr(local.db, "noter_controle", lambda t, accord, detail="": controles.append(accord))
+
+    def demander(tache, prompt, cwd, lire, entree, timeout):
+        prompts.append((tache, entree))
+        return lire('{"titre": "Les VLAN", "niveau": "BTS1", "matiere": "Réseaux", "type": "Cours", '
+                    '"confiance": 0.9, "accord": false, "remarque": "c\'est un cours de réseaux"}'), "haiku"
+
+    monkeypatch.setattr(local.agent, "demander", demander)
+    f = tmp_path / "vlan.txt"
+    f.write_text(TEXTE)
+    a = local.analyser(f, claude=True, matieres=["Réseaux"])
+    assert (a.matiere, a.confiance, a.transcription) == ("Réseaux", 0.9, TEXTE)
+    assert "vérifié par Claude Haiku : corrigé" in a.avis and not a.a_relire
+    assert prompts[0][0] == "controle" and '"matiere": null' in prompts[0][1] and controles == [False]
+
+
+def test_sur_de_lui_pas_de_claude_sauf_controle(tmp_path, monkeypatch):
+    _voisins_surs(monkeypatch)
+    monkeypatch.setattr(local.agent, "demander", lambda *a, **k: pytest.fail("Claude ne doit pas être appelé"))
+    monkeypatch.setattr(local.random, "random", lambda: 0.99)
+    f = tmp_path / "vlan.txt"
+    f.write_text(TEXTE)
+    a = local.analyser(f, claude=True)
+    assert a.matiere == "Réseaux" and not a.a_relire and "vérifié" not in a.avis
+    # 1 fois sur 10 : contrôle par échantillon
+    monkeypatch.setattr(local.random, "random", lambda: 0.01)
+    monkeypatch.setattr(local.db, "noter_controle", lambda *a, **k: None)
+    monkeypatch.setattr(local.agent, "demander", lambda tache, prompt, cwd, lire, entree, timeout: (lire(
+        '{"niveau": "BTS1", "matiere": "Réseaux", "type": "Cours", "confiance": 0.95, "accord": true}'), "haiku"))
+    assert "confirmé" in local.analyser(f, claude=True).avis
+
+
+def test_claude_tombe_pendant_la_verification(tmp_path, monkeypatch):
+    monkeypatch.setattr(local.db, "voisins", lambda q, n: [])
+    from claunote.agent import LimiteAtteinte
+
+    def limite(*a, **k):
+        raise LimiteAtteinte("usage limit reached")
+
+    monkeypatch.setattr(local.agent, "demander", limite)
+    echecs = []
+    f = tmp_path / "vlan.txt"
+    f.write_text(TEXTE)
+    a = local.analyser(f, claude=True, claude_echec=echecs.append)
+    assert a.modele == "local" and a.a_relire and len(echecs) == 1  # le résultat local est gardé
+
+
+def test_essayer_json(monkeypatch):
+    monkeypatch.setattr(local, "disponible", lambda: "modèle local pas installé")
+    assert local.essayer_json("s", "t") is None
+    monkeypatch.setattr(local, "disponible", lambda: None)
+    monkeypatch.setattr(local, "ollama", lambda s, t, timeout=600: '{"ok": 1}')
+    assert local.essayer_json("s", "t") == {"ok": 1}
+    monkeypatch.setattr(local, "ollama", lambda s, t, timeout=600: "pas du json")
+    assert local.essayer_json("s", "t") is None

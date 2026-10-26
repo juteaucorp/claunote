@@ -7,7 +7,7 @@
 {% elif m.statut == 'en_attente' %}
 <div class="msg reponse attente" id="msg-{{ m.id }}" hx-get="/demander/message/{{ m.id }}" hx-trigger="every 2s" hx-swap="outerHTML">
   <span class="points" aria-hidden="true"><i></i><i></i><i></i></span>
-  <span class="doux">{{ 'Claude lit tes cours et répond…' if m.role == 'ia' else 'Je cherche dans tes cours…' }}</span>
+  <span class="doux">{{ 'L\'IA lit tes documents et répond…' if m.role == 'ia' else 'Je cherche dans tes documents…' }}</span>
 </div>
 {% elif m.statut == 'erreur' %}
 <div class="msg reponse erreur" id="msg-{{ m.id }}">
@@ -16,7 +16,7 @@
 </div>
 {% else %}
 <div class="msg reponse {{ m.role }}" id="msg-{{ m.id }}">
-  <div class="qui doux">{% if m.role == 'ia' and m.modele == 'local' %}Modèle local (Ollama){% elif m.role == 'ia' %}Claude{% if m.modele %} · {{ x.noms.get(m.modele, m.modele) }}{% endif %}{% else %}Tes cours · sans IA{% endif %}</div>
+  <div class="qui doux">{% if m.detail %}{{ m.detail }}{% elif m.role == 'ia' and m.modele == 'local' %}Modèle local (Ollama){% elif m.role == 'ia' %}Claude{% if m.modele %} · {{ x.noms.get(m.modele, m.modele) }}{% endif %}{% else %}Tes documents · sans IA{% endif %}</div>
   <div class="texte">{{ x.rendu }}</div>
   {% if m.sources_web %}
   <ul class="web doux">{% for w in m.sources_web %}<li>[{{ w.repere }}] <a href="{{ w.url }}" target="_blank" rel="noopener noreferrer">{{ w.titre }}</a></li>{% endfor %}</ul>

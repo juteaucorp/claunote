@@ -14,7 +14,7 @@ def worker(monkeypatch):
 
     from claunote import db, worker as w
     monkeypatch.setattr(db, "sensible_decision", lambda kdrive_id: None)
-    monkeypatch.setattr(db, "import_suspendus_locaux", lambda ids: (set(), set()))
+    monkeypatch.setattr(db, "import_choix", lambda ids: (set(), {}))
     monkeypatch.setattr(db, "etat_valeur", lambda cle: None)
     monkeypatch.delenv("ANALYSE_LOCALE", raising=False)
     return importlib.reload(w)
@@ -280,7 +280,7 @@ def test_comprendre_organisation_une_passe_ia(worker, monkeypatch):
     monkeypatch.setattr(worker.db, "import_lot_maj", lambda lot, r, c: sauves.append((lot, r, c)))
     monkeypatch.setattr(worker.db, "lot_compris", lambda lot: finis.append(lot))
     monkeypatch.setattr(worker.agent, "interpreter_arborescence",
-                        lambda dossiers, m: ("Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}}))
+                        lambda dossiers, m, essai_local=None: ("Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}}))
     worker.comprendre_en_attente()
     assert sauves == [("V", "Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}})] and finis == ["V"]
 
@@ -472,7 +472,7 @@ def test_documents_perdus_hors_de_l_inbox_sont_repris(worker, monkeypatch):
                 raise httpx.HTTPStatusError("404", request=None, response=httpx.Response(404))
             return {"id": fid, "name": "a.pdf"}
     items = worker.a_traiter(KD({}), [])
-    assert items == [{"id": 70, "name": "a.pdf", "type": "file", "dossiers": ["BTS1", "Réseaux"], "local": False}]
+    assert items == [{"id": 70, "name": "a.pdf", "type": "file", "dossiers": ["BTS1", "Réseaux"], "moteur": None}]
     assert supprimes == [2]  # le fichier n'existe plus : on oublie le document
 
 
@@ -489,29 +489,35 @@ def test_priorites_de_l_inbox(worker, monkeypatch):
     assert [i["id"] for i in worker.a_traiter(FauxKD({}), items)] == [2, 1, 3]
 
 
+def _tour(worker, monkeypatch, fait):
+    monkeypatch.setattr(worker.db, "etat_ecrire", lambda k, v: None)
+    for nom in ("revisions_en_attente", "reclasser_en_attente", "comprendre_en_attente", "relire_avec_claude",
+                "ranger_en_attente", "pdf_manquants", "nettoyer_inbox"):
+        monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
+    monkeypatch.setattr(worker, "lire_inbox", lambda kd: fait.append("inbox") or [])
+    monkeypatch.setattr(worker, "a_traiter", lambda kd, items, sans_claude=False: fait.append(
+        f"a_traiter sans_claude={sans_claude}") or [])
+    monkeypatch.setattr(worker, "analyser_inbox", lambda kd, items, mode, claude_ok: fait.append(
+        f"analyses {mode} claude={claude_ok}"))
+
+
 def test_tour_sans_claude_continue_le_reste(worker, monkeypatch):
     fait = []
-    monkeypatch.setattr(worker.db, "etat_ecrire", lambda k, v: None)
+    _tour(worker, monkeypatch, fait)
     monkeypatch.setattr(worker, "CLAUDE", worker.Garde("Claude"))
     monkeypatch.setattr(worker, "KDRIVE", worker.Garde("kDrive"))
     worker.CLAUDE.echec("limite", "usage limit", time.time() + 3600)
-    for nom in ("revisions_en_attente", "reclasser_en_attente", "comprendre_en_attente", "analyser_inbox",
-                "analyser_sans_claude", "relire_avec_claude"):
-        monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
-    for nom in ("ranger_en_attente", "pdf_manquants", "nettoyer_inbox"):
-        monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
-    monkeypatch.setattr(worker, "lire_inbox", lambda kd: fait.append("inbox") or [])
-    monkeypatch.setattr(worker, "a_traiter", lambda kd, items, sans_claude=False: [])
     worker.tour(None, float("-inf"))
-    # Claude en pause : les scans sont lus sur la VM (OCR + classement local)
-    assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "analyser_sans_claude", "nettoyer_inbox"]
+    # Claude en pause : les scans sont lus sur la VM, sans attendre la passe IA sur les dossiers
+    assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "a_traiter sans_claude=True",
+                    "analyses local claude=False", "nettoyer_inbox"]
     fait.clear()
     monkeypatch.setattr(worker, "reglages_analyse", lambda: {"mode": "jamais", "relire": True})
     worker.tour(None, float("-inf"))
     assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "nettoyer_inbox"]
     fait.clear()
     worker.PAUSE.set()  # analyses en pause : ni Claude ni local
-    monkeypatch.setattr(worker, "reglages_analyse", lambda: {"mode": "auto", "relire": True})
+    monkeypatch.setattr(worker, "reglages_analyse", lambda: {"mode": "local", "relire": True})
     worker.tour(None, float("-inf"))
     worker.PAUSE.clear()
     assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "nettoyer_inbox"]
@@ -519,20 +525,44 @@ def test_tour_sans_claude_continue_le_reste(worker, monkeypatch):
 
 def test_tour_avec_claude_et_mode_toujours_local(worker, monkeypatch):
     fait = []
-    monkeypatch.setattr(worker.db, "etat_ecrire", lambda k, v: None)
+    _tour(worker, monkeypatch, fait)
     monkeypatch.setattr(worker, "CLAUDE", worker.Garde("Claude"))
     monkeypatch.setattr(worker, "KDRIVE", worker.Garde("kDrive"))
-    for nom in ("revisions_en_attente", "reclasser_en_attente", "comprendre_en_attente", "analyser_inbox",
-                "analyser_sans_claude", "relire_avec_claude", "ranger_en_attente", "pdf_manquants", "nettoyer_inbox"):
-        monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
-    monkeypatch.setattr(worker, "lire_inbox", lambda kd: [])
-    monkeypatch.setattr(worker, "a_traiter", lambda kd, items, sans_claude=False: [])
-    worker.tour(None, 0.0 + time.monotonic())
-    assert "analyser_inbox" in fait and "relire_avec_claude" in fait and "analyser_sans_claude" not in fait
+    worker.tour(None, time.monotonic())
+    assert "analyses local claude=True" in fait and "relire_avec_claude" in fait
     fait.clear()
     monkeypatch.setattr(worker, "reglages_analyse", lambda: {"mode": "toujours", "relire": False})
     worker.tour(None, time.monotonic())
-    assert "analyser_sans_claude" in fait and "analyser_inbox" not in fait and "relire_avec_claude" not in fait
+    assert "analyses toujours claude=False" in fait and "relire_avec_claude" not in fait
+
+
+def test_repartir_local_d_abord(worker, monkeypatch):
+    items = [{"id": i, "name": f"{i}.pdf", "dossiers": []} for i in range(10)]
+    monkeypatch.setattr(worker.ressources, "sature", lambda: None)
+    monkeypatch.setattr(worker.ressources.DUREES, "moyenne", 60.0)  # 10 documents : 10 min, sous les 30 min
+    loc, cla = worker.repartir(items, "local", True)
+    assert [i["id"] for i in loc] == list(range(worker.LOT_LOCAL)) and cla == []  # le reste attend le local
+    monkeypatch.setattr(worker.ressources.DUREES, "moyenne", 600.0)  # 100 min de file : Claude prend le surplus
+    loc, cla = worker.repartir(items, "local", True)
+    assert len(loc) == worker.LOT_LOCAL and [i["id"] for i in cla] == list(range(worker.LOT_LOCAL, 10))[:worker.LOT]
+    monkeypatch.setattr(worker.ressources, "sature", lambda: "mémoire presque pleine")
+    loc, cla = worker.repartir(items, "local", True)
+    assert loc == [] and len(cla) == min(10, worker.LOT)
+    loc, cla = worker.repartir(items, "local", False)  # sans Claude, le local fait tout, à son rythme
+    assert len(loc) == worker.LOT_LOCAL and cla == []
+
+
+def test_repartir_choix_a_la_main_et_autres_modes(worker, monkeypatch):
+    monkeypatch.setattr(worker.ressources, "sature", lambda: None)
+    items = [{"id": 1, "name": "a", "dossiers": [], "moteur": "claude"},
+             {"id": 2, "name": "b", "dossiers": [], "moteur": "local"},
+             {"id": 3, "name": "c", "dossiers": []}]
+    ids = lambda l: [i["id"] for i in l]
+    assert tuple(map(ids, worker.repartir(items, "local", True))) == ([2, 3], [1])
+    assert tuple(map(ids, worker.repartir(items, "auto", True))) == ([2], [1, 3])
+    assert tuple(map(ids, worker.repartir(items, "jamais", True))) == ([2], [1, 3])
+    assert tuple(map(ids, worker.repartir(items, "toujours", False))) == ([2, 3], [])
+    assert tuple(map(ids, worker.repartir(items, "auto", False))) == ([2, 3], [])  # le choix « Claude » attend
 
 
 def test_analyses_en_parallele_et_arret_a_la_limite(worker, monkeypatch):
@@ -555,7 +585,7 @@ def test_analyses_en_parallele_et_arret_a_la_limite(worker, monkeypatch):
     monkeypatch.setattr(worker, "traiter", traiter)
     items = [{"id": i, "name": f"{i}.pdf", "dossiers": []} for i in range(20)]
     with pytest.raises(LimiteAtteinte):
-        worker.analyser_inbox(None, items)
+        worker.analyser_inbox(None, items, "auto", True)
     # la limite arrête la distribution : les documents suivants attendent le tour d'après
     assert 1 not in faits and len(faits) < len(items[:worker.LOT]) - 1
 
@@ -731,6 +761,55 @@ def test_lot_mixte_claude_et_local(worker, monkeypatch):
     monkeypatch.setattr(worker.db, "matieres", lambda: [])
     vus = []
     monkeypatch.setattr(worker, "traiter", lambda kd, item, m, d: vus.append((item["name"], bool(item.get("local")))))
-    items = [{"id": 1, "name": "a.pdf", "dossiers": []}, {"id": 2, "name": "b.jpg", "dossiers": [], "local": True}]
-    worker.analyser_inbox(None, items)
+    items = [{"id": 1, "name": "a.pdf", "dossiers": [], "moteur": "claude"},
+             {"id": 2, "name": "b.jpg", "dossiers": [], "moteur": "local"}]
+    worker.analyser_inbox(None, items, "local", True)
     assert sorted(vus) == [("a.pdf", False), ("b.jpg", True)]
+
+
+def test_reclasser_local_d_abord(worker, monkeypatch):
+    majs = []
+    monkeypatch.setattr(worker.db, "maj", lambda i, **k: majs.append(k))
+    monkeypatch.setattr(worker.db, "marquer_a_ranger", lambda ids, v=True: None)
+    monkeypatch.setattr(worker.agent, "reclasser", lambda doc, m: pytest.fail("Claude ne doit pas être appelé"))
+    monkeypatch.setattr(worker.local, "reclasser", lambda doc, m, claude, claude_echec: Analyse(
+        "t", niveau="BTS1", matiere="Réseaux", type="TP", confiance=0.8, modele="local", avis="Reclassé sur la VM."))
+    worker.reclasser({"id": 1, "nom": "a.pdf", "titre": None, "chapitre": None}, ["Réseaux"])
+    assert majs[0]["matiere"] == "Réseaux" and majs[0]["statut"] == "classe" and majs[0]["modele"] == "local"
+    # local indisponible et Claude en pause : le document attend
+    monkeypatch.setattr(worker.local, "reclasser", lambda *a, **k: None)
+    monkeypatch.setattr(worker, "CLAUDE", worker.Garde("Claude"))
+    worker.CLAUDE.echec("limite", "x", time.time() + 3600)
+    majs.clear()
+    worker.reclasser({"id": 1, "nom": "a.pdf", "titre": None, "chapitre": None}, ["Réseaux"])
+    assert majs == []
+
+
+def test_besoin_claude_lit_le_scan(worker, monkeypatch):
+    majs = []
+    monkeypatch.setattr(worker.db, "creer", lambda i, n: 7)
+    monkeypatch.setattr(worker.db, "maj", lambda i, **k: majs.append(k))
+    monkeypatch.setattr(worker, "avant_analyse", lambda *a: False)
+    monkeypatch.setattr(worker, "indice", lambda dossiers, nom: "")
+    monkeypatch.setattr(worker, "ranger_doc", lambda *a: None)
+    for nom in ("marquer_a_ranger", "import_marquer"):
+        monkeypatch.setattr(worker.db, nom, lambda *a, **k: None)
+    monkeypatch.setattr(worker.db, "document", lambda i: {"id": 7, "statut": "classe", "niveau": "BTS1",
+                                                          "matiere": "Réseaux", "type": "Cours"})
+
+    class KD:
+        def download(self, fid, chemin):
+            return chemin
+
+        def rename(self, *a):
+            pass
+
+    def besoin(*a, **k):
+        raise worker.local.BesoinClaude("manuscrit")
+
+    monkeypatch.setattr(worker.local, "analyser", besoin)
+    monkeypatch.setattr(worker, "analyser", lambda *a: Analyse("lu par Claude", titre="VLAN", niveau="BTS1",
+                                                               matiere="Réseaux", type="Cours", confiance=0.9,
+                                                               modele="sonnet"))
+    worker.traiter(KD(), {"id": 5, "name": "cahier.pdf", "dossiers": [], "local": True})
+    assert majs[0]["transcription"] == "lu par Claude" and majs[0]["modele"] == "sonnet" and majs[0]["relire"] is False

@@ -6,6 +6,7 @@ import json
 import mimetypes
 import re
 import os
+import random
 import tempfile
 import threading
 import time
@@ -22,8 +23,8 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, auth, db, decoupage, importation, local, matieres, modeles, notifications, pdf,
-                      pronote, question, rangement, revision, sensible)
+from claunote import (agent, anki, auth, db, decoupage, importation, index, local, matieres, modeles, notifications,
+                      pdf, pronote, question, rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -126,7 +127,7 @@ def bandeau_service() -> tuple[str, str, bool] | None:
     if s.get("arret"):
         return "Le worker redémarre : il termine le travail en cours.", "", False
     c, k = s["claude"], s["kdrive"]
-    sans_claude = (db.etat_valeur("analyse_locale") or os.environ.get("ANALYSE_LOCALE") or "auto") != "jamais"
+    sans_claude = local.reglages()["mode"] != "jamais"
     if c["etat"] == "limite":
         quand = f" vers {_heure_fr(c['jusqu_a'])}" if c["jusqu_a"] else " dans un moment"
         return (f"Limite de ton forfait Claude atteinte : l'IA reprend{quand}.",
@@ -200,6 +201,8 @@ def surligner(extrait: str | None) -> Markup:
 
 
 templates.env.filters["surligner"] = surligner
+# Extraits des passages : les mots trouvés sont entre ** (ts_headline), rendus en gras
+templates.env.filters["surligner_md"] = lambda extrait: surligner(re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", extrait or ""))
 
 
 def rendu_markdown(texte: str | None) -> str:
@@ -444,8 +447,21 @@ def _filtres_depot() -> dict:
 
 @app.get("/recherche", response_class=HTMLResponse)
 def recherche(request: Request, q: str = ""):
+    """Résultats exacts (tous les mots), puis « aussi en rapport » : passages proches par les mots ou le sens."""
     resultats = db.recherche(q) if q.strip() else []
-    return templates.TemplateResponse(request, "recherche.html", {"q": q, "resultats": resultats})
+    proches = []
+    if q.strip():
+        try:
+            vecteur = index.vecteur_question(q) if not ressources.sature() else None
+            vus = {r["id"] for r in resultats}
+            for p in db.chercher_passages(question.requete(q), vecteur, limite=20):
+                if p["document_id"] not in vus:
+                    vus.add(p["document_id"])
+                    proches.append({**p, "id": p["document_id"]})
+        except Exception as e:  # index pas encore créé : la recherche exacte suffit
+            print(f"recherche par passages impossible : {e}", flush=True)
+    return templates.TemplateResponse(request, "recherche.html", {"q": q, "resultats": resultats,
+                                                                  "proches": proches[:8]})
 
 
 @app.get("/a-verifier", response_class=HTMLResponse)
@@ -1102,41 +1118,91 @@ def _claude_en_pause() -> str | None:
     return None
 
 
+def _passages(q: str, conv: dict, limite: int = 10) -> list[dict]:
+    """Passages de tous les documents lus (par les mots et par le sens), ou documents entiers si l'index
+    n'est pas encore fait."""
+    vecteur = index.vecteur_question(q) if not ressources.sature() else None
+    passages = db.chercher_passages(question.requete(q), vecteur, conv["niveau"], conv["matiere"], limite)
+    if passages:
+        return passages
+    return [{**d, "document_id": d["id"], "texte": (d.get("transcription") or "")[:3000]}
+            for d in db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], 5,
+                                            avec_texte=True, statuts=db.STATUTS_UTILES)]
+
+
+def _agenda_texte(jours: int = 30) -> str:
+    """Contrôles et devoirs à venir, pour les questions d'organisation (« qu'est-ce que je révise ce soir ? »)."""
+    try:
+        lignes = []
+        for e in db.evenements_a_venir(None, jours)[:25]:
+            le = e["le"].astimezone(pronote.PARIS)
+            quoi = "évaluation" if e["genre"] == "evaluation" else "devoir"
+            lignes.append(f"- {notifications.JOURS[le.weekday()]} {le:%d/%m} : {quoi} de {matiere_lisible(e['matiere'])}"
+                          f" — {e['titre']}{' (fait)' if e.get('fait') else ''}")
+        return "\n".join(lignes)
+    except Exception:
+        return ""
+
+
 def _repondre_localement(msg_id: int, q: str, conv: dict, pourquoi: str = ""):
-    cours = db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"])
-    contenu, reperes = question.reponse_locale(q, cours, _portee(conv["niveau"], conv["matiere"]))
+    contenu, reperes = question.reponse_locale(q, _passages(q, conv, 8), _portee(conv["niveau"], conv["matiere"]))
     if pourquoi:
         contenu = f"*L'IA ne peut pas répondre maintenant ({pourquoi}) : voici ce que j'ai trouvé sans elle.*\n\n{contenu}"
     db.maj_message(msg_id, "pret", contenu, reperes, role="local")
 
 
-def _sans_claude(msg_id: int, q: str, conv: dict, historique: list[dict], pourquoi: str):
-    """Claude indisponible : le modèle local (Ollama) s'il est installé, sinon les passages des cours."""
-    if local.etat_ollama()["pret"]:
-        try:
-            cours = db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], 4, avec_texte=True)
-            contenu, reperes = question.repondre_ollama(q, historique, cours,
-                                                        _portee(conv["niveau"], conv["matiere"]).strip())
-            db.maj_message(msg_id, "pret", f"*Claude ne peut pas répondre ({pourquoi}) : réponse du modèle local, "
-                                            f"plus lent et moins fiable.*\n\n{contenu}", reperes, modele="local")
-            return
-        except Exception as e:
-            print(f"modèle local indisponible pour Demander : {e}", flush=True)
-    _repondre_localement(msg_id, q, conv, pourquoi)
+def _local_libre() -> str | None:
+    """Pourquoi le modèle local ne doit pas répondre au chat maintenant (pas installé, saturé, occupé), ou None."""
+    pourquoi = local.disponible()
+    if pourquoi:
+        return pourquoi
+    if any(e.startswith("Analyse locale") for e in etat_service().get("en_cours") or []):
+        return "modèle local occupé par une analyse"
+    return None
 
 
 def _repondre_ia(msg_id: int, q: str, conv: dict, historique: list[dict]):
-    """Lancé dans un fil à part : la page interroge /demander/message/<id> jusqu'à la réponse."""
+    """Lancé dans un fil à part : la page interroge /demander/message/<id> jusqu'à la réponse.
+
+    Selon le réglage (page Activité) : le modèle local d'abord, Claude seulement s'il doute ou demande de
+    l'aide (et 1 fois sur 10 pour contrôler) ; ou Claude d'abord, le local en secours.
+    """
+    portee = _portee(conv["niveau"], conv["matiere"]).strip()
     try:
-        cours = db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], question.COURS_MAX,
-                                       avec_texte=True)
-        contenu, reperes, web, modele = question.repondre_ia(q, historique, cours,
-                                                             _portee(conv["niveau"], conv["matiere"]).strip())
-        db.maj_message(msg_id, "pret", contenu, reperes, web, modele)
+        passages, agenda = _passages(q, conv), _agenda_texte()
+        mode, pause = local.reglages()["mode"], _claude_en_pause()
+        brouillon = None
+        if mode in ("local", "toujours") or pause:
+            if not _local_libre():
+                try:
+                    brouillon = question.repondre_local(q, historique, passages, agenda, portee)
+                except ErreurAgent as e:
+                    print(f"modèle local indisponible pour Demander : {e}", flush=True)
+            if brouillon and (mode == "toujours" or pause or (not brouillon["aide"]
+                                                              and random.random() >= local.CONTROLE)):
+                avertissement = ""
+                if brouillon["aide"]:
+                    raison = f"Claude n'est pas disponible ({pause})" if pause else "le réglage « local uniquement »"
+                    avertissement = (f"*Réponse du modèle local, qui n'est pas sûr de lui ; {raison}.*\n\n")
+                db.maj_message(msg_id, "pret", avertissement + brouillon["reponse"], brouillon["reperes"],
+                               modele="local", detail=f"Modèle local · confiance {brouillon['confiance']:.0%}")
+                return
+            if pause:
+                _repondre_localement(msg_id, q, conv, pause)
+                return
+        contenu, reperes, web, modele, verdict = question.repondre_ia(q, historique, passages, portee, agenda,
+                                                                      brouillon)
+        detail = None
+        if brouillon:
+            detail = ("Brouillon du modèle local, confirmé par Claude" if verdict
+                      else "Brouillon du modèle local, corrigé et complété par Claude")
+            if verdict is not None:
+                db.noter_controle("question", verdict, q[:200])
+        db.maj_message(msg_id, "pret", contenu, reperes, web, modele, detail=detail)
     except LimiteAtteinte:
-        _sans_claude(msg_id, q, conv, historique, "limite de ton forfait Claude atteinte")
+        _repondre_localement(msg_id, q, conv, "limite de ton forfait Claude atteinte")
     except ClaudeIndisponible as e:
-        _sans_claude(msg_id, q, conv, historique, f"Claude ne répond pas : {str(e)[:120]}")
+        _repondre_localement(msg_id, q, conv, f"Claude ne répond pas : {str(e)[:120]}")
     except Exception as e:  # ErreurAgent, base momentanément injoignable…
         try:
             db.maj_message(msg_id, "erreur", erreur=str(e)[:300])
@@ -1145,14 +1211,13 @@ def _repondre_ia(msg_id: int, q: str, conv: dict, historique: list[dict]):
 
 
 def _lancer_reponse(conv: dict, q: str, mode: str) -> int:
-    """Crée la réponse : tout de suite sans IA, sinon en attente pendant que Claude travaille."""
+    """Crée la réponse : tout de suite sans IA, sinon en attente pendant que l'IA travaille."""
     pause = _claude_en_pause() if mode == "ia" else None
-    if mode == "ia" and (not pause or local.etat_ollama()["pret"]):
+    if mode == "ia" and (not pause or not _local_libre()):
         historique = [m for m in db.messages(conv["id"]) if m["statut"] == "pret"][:-1]  # sans la question
         msg_id = db.ajouter_message(conv["id"], "ia", statut="en_attente")
-        cible, args = (_sans_claude, (msg_id, q, conv, historique, pause)) if pause else \
-            (_repondre_ia, (msg_id, q, conv, historique))
-        threading.Thread(target=cible, args=args, daemon=True, name=f"demander-{msg_id}").start()
+        threading.Thread(target=_repondre_ia, args=(msg_id, q, conv, historique), daemon=True,
+                         name=f"demander-{msg_id}").start()
         return msg_id
     msg_id = db.ajouter_message(conv["id"], "local", statut="en_attente")
     _repondre_localement(msg_id, q, conv, pause or "")
@@ -1183,9 +1248,10 @@ def page_demander(request: Request, conv_id: int | None = None, matiere: str = "
 
 
 @app.post("/demander")
-def poser_question(request: Request, q: str = Form(..., alias="question"), mode: str = Form("ia"),
-                   portee: str = Form(""), conversation: int | None = Form(None)):
-    q = q.strip()[:4000]
+def poser_question(request: Request, question_: str = Form("", alias="question"), q: str = Form(""),
+                   mode: str = Form("ia"), portee: str = Form(""), conversation: int | None = Form(None)):
+    """`q` : la même question tapée dans une barre de recherche (« Demander à l'IA » de l'accueil)."""
+    q = (question_ or q).strip()[:4000]
     if not q:
         raise HTTPException(400, "pose une question")
     mode = mode if mode in question.MODES else "ia"
@@ -1239,15 +1305,12 @@ def supprimer_conversation(conv_id: int):
 # --- Analyses : file, pause, arrêt, analyse sans Claude (local.py) --------------------
 
 ACTIONS_FILE = {"suspendre": "Ne pas analyser pour l'instant", "reprendre": "Remettre dans la file",
-                "local": "Analyser sans Claude (sur la VM)", "claude": "Analyser avec Claude",
-                "supprimer": "Supprimer (corbeille kDrive)"}
+                "local": "Modèle local (sur la VM)", "claude": "Claude directement",
+                "auto": "Selon le réglage", "supprimer": "Supprimer (corbeille kDrive)"}
 
 
 def reglages_analyse() -> dict:
-    mode = db.etat_valeur("analyse_locale") or os.environ.get("ANALYSE_LOCALE") or "auto"
-    return {"mode": mode if mode in local.MODES else "auto",
-            "relire": (db.etat_valeur("relire_avec_claude") or "oui") == "oui",
-            "pause": db.etat_valeur("analyses_pause") == "oui"}
+    return local.reglages()
 
 
 templates.env.globals["analyses_en_pause"] = lambda: db.etat_valeur("analyses_pause") == "oui"
@@ -1259,7 +1322,8 @@ def page_analyses(request: Request, message: str = ""):
     return templates.TemplateResponse(request, "analyses.html", {
         "s": s, "r": reglages_analyse(), "modes": local.MODES, "file": db.file_analyse(),
         "attente": db.file_attente(), "nb_relire": db.nb_a_relire(), "actions": ACTIONS_FILE, "message": message,
-        "modele_local": local.OLLAMA_MODELE, "heure": _heure_fr})
+        "modele_local": local.OLLAMA_MODELE, "heure": _heure_fr, "vm": ressources.etat(),
+        "fiabilite": db.fiabilite_locale(), "index": db.bilan_index()})
 
 
 @app.post("/analyses/controle")
@@ -1345,7 +1409,8 @@ def matieres_ia(request: Request):
         ia = []
     else:
         try:
-            ia = matieres.demander_ia(comptes, db.titres_par_matiere())
+            ia = matieres.demander_ia(comptes, db.titres_par_matiere(),
+                                      local.essayer_json if local.reglages()["mode"] != "jamais" else None)
         except LimiteAtteinte:
             ia, erreur = [], "Limite de ton forfait Claude atteinte : réessaie plus tard."
         except (ClaudeIndisponible, ErreurAgent) as e:

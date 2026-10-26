@@ -2,8 +2,10 @@
 {% block titre %}Recherche : {{ q }}{% endblock %}
 {% block contenu %}
 <h1>Recherche</h1>
-<form action="/recherche" class="actions"><input type="search" name="q" value="{{ q }}" placeholder="ex. suites géométriques" aria-label="Recherche" enterkeyhint="search" style="flex: 1; min-width: 0" {{ 'autofocus' if not q }}> <button class="principal">Chercher</button></form>
-{% if q %}<p class="doux">{{ resultats|length }} résultat{{ 's' if resultats|length > 1 }}</p>{% endif %}
+<form action="/recherche" class="actions form-recherche"><input type="search" name="q" value="{{ q }}" placeholder="ex. suites géométriques, ou une question" aria-label="Recherche" enterkeyhint="search" {{ 'autofocus' if not q }}>
+  <button class="principal">Chercher</button>
+  <button formaction="/demander" formmethod="post">Demander à l'IA</button></form>
+{% if q %}<p class="doux">{{ resultats|length }} résultat{{ 's' if resultats|length > 1 }}{% if not resultats and not proches %} : essaie <strong>Demander à l'IA</strong>, elle lit tous tes documents.{% endif %}</p>{% endif %}
 {% for r in resultats %}
 <div class="carte">
   <a href="/doc/{{ r.id }}"><strong>{{ r.titre or r.nom }}</strong></a>
@@ -11,4 +13,19 @@
   <p>{{ r.extrait|surligner }}</p>
 </div>
 {% endfor %}
+{% if proches %}
+<h2>Aussi en rapport</h2>
+{% for r in proches %}
+<div class="carte">
+  <a href="/doc/{{ r.id }}"><strong>{{ r.titre or r.nom }}</strong></a>
+  <div class="doux">{{ r.niveau or '?' }} · {{ r.matiere or '?' }} · {{ r.type or '?' }}{% if r.statut == 'hors_cours' %} · hors cours{% endif %}</div>
+  <p>{{ r.extrait|surligner_md }}</p>
+</div>
+{% endfor %}
+{% endif %}
+<style>
+  .form-recherche { flex-wrap: wrap; }
+  .form-recherche input { flex: 1 1 260px; min-width: 0; }
+  @media (max-width: 640px) { .form-recherche button { flex: 1; } }
+</style>
 {% endblock %}

@@ -2,7 +2,8 @@
 {% block titre %}Hors cours{% endblock %}
 {% block vivant %}remplacer{% endblock %}
 {% block contenu %}
-<p class="fil"><a href="/bibliotheque">Bibliothèque</a> › Hors cours</p>
+{% from "_onglets.html" import onglets %}
+{{ onglets('ranger', 'hors') }}
 <h1>Hors cours</h1>
 <p class="doux">Documents administratifs ou sans intérêt pour réviser (bulletins, convocations, attestations…).
   Ils restent consultables ici et dans <code>Etudes/hors-cours</code> sur kDrive, mais ne sont pas utilisés pour les
