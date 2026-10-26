@@ -11,6 +11,10 @@
     <span class="pastille-genre">{{ icone('nouveau') }}</span>
     <span><strong>Une révision</strong><span class="doux">Fiche, quiz, flashcards, épreuve blanche ou plan sur un chapitre</span></span>
   </a>
+  <a class="carte tuile tuile-question" href="/demander">
+    <span class="pastille-genre">{{ icone('bulle') }}</span>
+    <span><strong>Une question</strong><span class="doux">Une info, une notion à réexpliquer : l'IA ou tes cours répondent dans un chat</span></span>
+  </a>
   <a class="carte tuile tuile-campagne" href="/campagne/nouvelle">
     <span class="pastille-genre">{{ icone('campagne') }}</span>
     <span><strong>Une campagne</strong><span class="doux">Plusieurs matières d'un coup + un programme jour par jour (ex. semaine de BTS blanc)</span></span>
@@ -107,7 +111,8 @@
 
 
 <style>
-  .lancer { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .lancer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+  .tuile-question { --g: var(--g-quiz); }
   .tuile { display: flex; gap: 12px; align-items: flex-start; margin: 0; text-decoration: none; color: var(--texte); transition: border-color .15s, transform .15s; }
   .tuile:hover { border-color: var(--accent); }
   .tuile:active { transform: scale(.98); }
@@ -122,6 +127,7 @@
   .defile { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x mandatory; }
   .campagne { margin: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; text-decoration: none; color: var(--texte); scroll-snap-align: start; }
   .campagne:hover { border-color: var(--accent); }
+  @media (max-width: 900px) and (min-width: 641px) { .lancer { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 640px) {
     .lancer { grid-template-columns: 1fr; gap: 8px; }
     .tuile { padding: 12px 16px; align-items: center; }

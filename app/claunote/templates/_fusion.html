@@ -1,0 +1,23 @@
+{# Une proposition de fusion de matières (page Matières en double) #}
+{% macro groupe(g, cle) -%}
+<form method="post" action="/organiser/matieres/fusionner" class="carte groupe">
+  <input type="hidden" name="niveau" value="{{ g.niveau }}">
+  <div class="entete-groupe">
+    <span class="etiquette">{{ g.niveau }}</span>
+    {% if g.source == 'ia' %}<span class="etat attente">Vu par l'IA</span>
+    {% elif g.sur %}<span class="etat ok">Évident</span>{% else %}<span class="etat">À confirmer</span>{% endif %}
+    <span class="doux raison">{{ g.raisons|join(' · ') }}</span>
+  </div>
+  <div class="noms">
+    {% for n in g.noms %}
+    <label><input type="checkbox" name="noms" value="{{ n.nom }}" checked> {{ n.nom }} <span class="doux">({{ n.n }})</span></label>
+    {% endfor %}
+  </div>
+  <div class="garder">
+    <label>Nom à garder
+      <input name="nom" value="{{ g.nom }}" list="noms-{{ cle }}" required></label>
+    <datalist id="noms-{{ cle }}">{% for n in g.noms %}<option value="{{ n.nom }}">{% endfor %}</datalist>
+    <button class="principal">Fusionner</button>
+  </div>
+</form>
+{%- endmacro %}

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Demander{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/reviser">Réviser</a> › Demander</p>
+<h1>{{ conv.titre if conv else 'Demander' }}</h1>
+{% if conv %}
+<p class="doux portee">{% if conv.matiere %}Dans tes cours de <strong>{{ conv.matiere }}</strong> ({{ conv.niveau }}){% else %}Dans tous tes cours{% endif %}
+  · <a href="/demander">Nouvelle question</a></p>
+{% else %}
+<p class="doux">Une info rapide, une notion à réexpliquer, une commande oubliée… Claude répond à partir de tes cours
+  (et du web si besoin). En mode <strong>Rapide, sans IA</strong>, tu as tout de suite les passages de tes cours qui en parlent.</p>
+{% endif %}
+
+<div id="fil" class="fil-chat">
+  {% with liste = messages %}{% include "_messages.html" %}{% endwith %}
+</div>
+
+<form class="carte saisie" hx-post="/demander" hx-target="#fil" hx-swap="beforeend" hx-disabled-elt="find button"
+      hx-on::after-request="if (event.detail.successful) { this.reset(); }">
+  {% if conv %}<input type="hidden" name="conversation" value="{{ conv.id }}">{% endif %}
+  <textarea name="question" rows="2" required placeholder="{{ 'Une autre question ?' if conv else 'ex. C\'est quoi la différence entre un switch et un routeur ?' }}"
+            enterkeyhint="send" aria-label="Ta question"></textarea>
+  <div class="options">
+    {% if not conv %}
+    <select name="portee" aria-label="Dans quels cours chercher">
+      <option value="">Tous mes cours</option>
+      {% for c in choix %}<option value="{{ c.niveau }}|{{ c.matiere }}" {{ 'selected' if pre == c.niveau ~ '|' ~ c.matiere }}>{{ c.niveau }} · {{ c.matiere }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    <div class="modes" role="radiogroup" aria-label="Qui répond">
+      {% for k, libelle in modes.items() %}
+      <label><input type="radio" name="mode" value="{{ k }}" {{ 'checked' if (k == 'local') == (pause is not none) }}>{{ libelle }}</label>
+      {% endfor %}
+    </div>
+    <button class="principal">{{ icone('fleche', 18) }} Envoyer</button>
+  </div>
+  {% if pause %}<p class="doux avertissement">L'IA est en pause ({{ pause }}) : les réponses viennent de tes cours, sans IA.</p>{% endif %}
+</form>
+
+{% if conversations %}
+<h2>Questions précédentes</h2>
+<ul class="carte lignes">
+  {% for k in conversations %}
+  <li class="{{ 'actif' if conv and k.id == conv.id }}">
+    <span class="pastille-genre">{{ icone('bulle', 20) }}</span>
+    <div class="corps"><a href="/demander/{{ k.id }}">{{ k.titre }}</a>
+      <div class="doux">{{ k.matiere ~ ' · ' if k.matiere }}{{ k.nb }} message{{ 's' if k.nb > 1 }} · {{ k.maj_le|paris }}</div></div>
+    <form method="post" action="/demander/{{ k.id }}/supprimer" class="fin" onsubmit="return confirm('Supprimer cette conversation ?')">
+      <button class="icone-seule" title="Supprimer" aria-label="Supprimer">{{ icone('corbeille', 18) }}</button></form>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<script>
+  (() => {
+    const fil = document.getElementById("fil");
+    const enBas = () => { const d = fil.lastElementChild; if (d) d.scrollIntoView({block: "nearest", behavior: "smooth"}); };
+    document.body.addEventListener("htmx:afterSwap", (e) => { if (fil.contains(e.target) || e.target === fil) enBas(); });
+    // Entrée envoie, Maj+Entrée va à la ligne (sur ordinateur)
+    const zone = document.querySelector(".saisie textarea");
+    zone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer: fine)").matches) {
+        e.preventDefault(); zone.form.requestSubmit();
+      }
+    });
+    if (fil.children.length) enBas();
+  })();
+</script>
+<style>
+  .portee { margin-top: -12px; }
+  .fil-chat { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .msg { max-width: 92%; padding: 10px 14px; border-radius: 18px; line-height: 1.55; overflow-wrap: anywhere; }
+  .msg p:first-child, .msg .texte > :first-child { margin-top: 0; }
+  .msg p:last-child, .msg .texte > :last-child { margin-bottom: 0; }
+  .msg.eleve { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 6px; }
+  .msg.eleve a { color: #fff; }
+  .msg.reponse { align-self: flex-start; background: var(--carte); border: 1px solid var(--bord); border-bottom-left-radius: 6px; box-shadow: var(--ombre); }
+  .msg.local { background: var(--fond-doux); }
+  .msg.erreur { border-color: var(--alerte); }
+  .msg .qui { font-size: .78rem; font-weight: 600; margin-bottom: 4px; }
+  .msg blockquote { margin: 6px 0 12px; padding: 4px 12px; border-left: 3px solid var(--accent); color: var(--doux); }
+  .msg .web { margin: 8px 0 0; padding-left: 18px; font-size: .85rem; }
+  .msg button.petit { margin-top: 8px; display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: .88rem; }
+  .attente { display: flex; align-items: center; gap: 10px; }
+  .points { display: inline-flex; gap: 4px; }
+  .points i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: saut 1.2s infinite ease-in-out; }
+  .points i:nth-child(2) { animation-delay: .15s; } .points i:nth-child(3) { animation-delay: .3s; }
+  @keyframes saut { 0%, 80%, 100% { opacity: .3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-4px); } }
+  @media (prefers-reduced-motion: reduce) { .points i { animation: none; opacity: .7; } }
+  .saisie { display: grid; gap: 10px; position: sticky; bottom: calc(env(safe-area-inset-bottom) + 8px); z-index: 2; }
+  .saisie textarea { width: 100%; resize: vertical; min-height: 56px; }
+  .saisie .options { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .saisie select { flex: 1 1 200px; min-width: 0; }
+  .saisie .options button { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+  .modes { display: inline-flex; border: 1px solid var(--bord); border-radius: 999px; overflow: hidden; }
+  .modes label { position: relative; padding: 6px 12px; font-size: .88rem; cursor: pointer; white-space: nowrap; }
+  .modes label:has(input:checked) { background: var(--accent-pale); color: var(--accent-fonce); font-weight: 600; }
+  .modes input { position: absolute; opacity: 0; pointer-events: none; }
+  .avertissement { margin: 0; font-size: .88rem; }
+  .lignes li.actif { background: var(--accent-pale); }
+  .icone-seule { padding: 6px; border: 0; background: none; color: var(--doux); }
+  @media (max-width: 760px) {
+    .msg { max-width: 100%; }
+    .saisie { bottom: calc(env(safe-area-inset-bottom) + 84px); padding: 12px; gap: 8px; }  /* au-dessus des onglets du bas */
+    .saisie textarea { min-height: 44px; }
+    .saisie .options button { flex: 1 0 100%; justify-content: center; }
+  }
+</style>
+{% endblock %}

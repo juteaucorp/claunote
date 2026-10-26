@@ -37,6 +37,8 @@ Papier ──scan 300 dpi──▶ kDrive Etudes/inbox
 - [x] Appli iPhone (HTTPS local, style Liquid Glass) et notifications push (voir infra/SETUP.md §13)
 - [x] Réviser : historique, épreuves blanches, campagnes multi-matières avec programme jour par jour, PDF à partager
 - [x] Réviser : fichiers joints au contexte (emploi du temps, planning d'épreuves…), plus de limite de cours (condensés par groupes)
+- [x] Réviser : « Une question » (chat avec l'IA ou recherche locale sans IA dans les cours)
+- [x] Matières en double sur une même année (« Maths » / « Mathématiques ») : détection, fusion, et plus de nouveaux doublons
 
 ## Installation et utilisation
 

@@ -565,17 +565,20 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
         indices += f"D'après l'organisation de ses dossiers (imparfaite, à confirmer par le contenu) : {indice}.\n"
     if indices:
         contexte += "\n" + indices
+    # Sans la liste, l'agent invente parfois un autre nom (« Maths » à côté de « Mathématiques »)
+    pour_classer = contexte + (f"\nMatières déjà utilisées dans ses cours : {', '.join(matieres)}. Si le document "
+                               "relève de l'une d'elles, reprends exactement ce nom.\n" if matieres else "")
 
     prompt, tache = None, "texte"
     if texte is not None:
-        a, classeur = classer_texte(texte, nom, origine, contexte)
+        a, classeur = classer_texte(texte, nom, origine, pour_classer)
         a.transcription, lecteur = texte, classeur
     elif suffixe == ".pdf" and pages_pdf(chemin) > SEUIL_MORCEAUX:
         transcription, lecteur = transcrire_par_morceaux(chemin, memoire, contexte)
-        a, classeur = classer_texte(transcription, nom, "transcription d'un scan", contexte)
+        a, classeur = classer_texte(transcription, nom, "transcription d'un scan", pour_classer)
         a.transcription, lecteur = transcription, lecteur or classeur
     else:
-        prompt, tache = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES)) + contexte, "scan"
+        prompt, tache = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES)) + pour_classer, "scan"
         a, classeur = demander(tache, prompt, chemin.parent, lire=parse_reponse, outils=["Read"])
         lecteur = classeur
     a.modele = lecteur

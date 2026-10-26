@@ -243,6 +243,34 @@ CREATE TABLE IF NOT EXISTS decoupages (
 );
 """
 
+# « Demander » : questions posées dans un chat (question.py)
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS conversations (
+    id         SERIAL PRIMARY KEY,
+    titre      TEXT NOT NULL,                        -- la première question
+    niveau     TEXT,                                 -- portée choisie (vide : tous les cours)
+    matiere    TEXT,
+    cree_le    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS messages (
+    id               SERIAL PRIMARY KEY,
+    conversation_id  INT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role             TEXT NOT NULL,                  -- eleve, ia, local (réponse sans IA)
+    contenu          TEXT NOT NULL DEFAULT '',       -- Markdown
+    statut           TEXT NOT NULL DEFAULT 'pret',   -- en_attente, pret, erreur
+    reperes          JSONB NOT NULL DEFAULT '{}',    -- {"D1": id du document, …}
+    sources_web      JSONB NOT NULL DEFAULT '[]',
+    modele           TEXT,
+    erreur           TEXT,
+    cree_le          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS messages_conversation ON messages (conversation_id, id);
+-- Réponse interrompue par un redémarrage du site (elle prend 5 min au plus)
+UPDATE messages SET statut = 'erreur', erreur = 'Réponse interrompue (redémarrage du site) : renvoie la question.'
+ WHERE statut = 'en_attente' AND cree_le < now() - interval '10 minutes';
+"""
+
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
           "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note",
           "variante_kdrive_id", "variante_nom", "essais", "modele", "avis"}
@@ -457,6 +485,45 @@ def matieres() -> list[str]:
     with connect() as c:
         rows = c.execute("SELECT DISTINCT matiere FROM documents WHERE matiere IS NOT NULL ORDER BY 1").fetchall()
         return [r["matiere"] for r in rows]
+
+
+def matieres_par_annee() -> list[dict]:
+    """Documents par année et matière (tous statuts sauf hors cours), pour repérer les doublons."""
+    with connect() as c:
+        return c.execute("SELECT niveau, matiere, count(*) AS n FROM documents WHERE niveau IS NOT NULL "
+                         "AND matiere IS NOT NULL AND statut <> 'hors_cours' GROUP BY niveau, matiere "
+                         "ORDER BY niveau, matiere").fetchall()
+
+
+def titres_par_matiere(par_matiere: int = 4) -> dict[tuple, list[str]]:
+    """Quelques titres de cours par (année, matière), pour que l'IA comprenne ce que recouvre chaque nom."""
+    with connect() as c:
+        rows = c.execute(
+            """SELECT niveau, matiere, titre FROM (
+                 SELECT niveau, matiere, coalesce(titre, nom) AS titre,
+                        row_number() OVER (PARTITION BY niveau, matiere ORDER BY cree_le DESC) AS rang
+                 FROM documents WHERE niveau IS NOT NULL AND matiere IS NOT NULL AND statut <> 'hors_cours') t
+               WHERE rang <= %s""", (par_matiere,)).fetchall()
+    titres: dict[tuple, list[str]] = {}
+    for r in rows:
+        titres.setdefault((r["niveau"], r["matiere"]), []).append(r["titre"])
+    return titres
+
+
+def fusionner_matieres(niveau: str, anciennes: list[str], nouvelle: str) -> int:
+    """Une seule matière pour une année : documents et révisions renommés ; le worker déplace les fichiers."""
+    anciennes = [m for m in anciennes if m != nouvelle]
+    if not anciennes:
+        return 0
+    with connect() as c, c.transaction():
+        n = c.execute("""UPDATE documents SET matiere = %s, maj_le = now(), a_ranger = (statut = 'classe' OR a_ranger)
+                         WHERE niveau = %s AND matiere = ANY(%s) AND statut <> 'nouveau'""",
+                      (nouvelle, niveau, anciennes)).rowcount
+        c.execute("UPDATE revisions SET matiere = %s WHERE niveau = %s AND matiere = ANY(%s)",
+                  (nouvelle, niveau, anciennes))
+        c.execute("UPDATE conversations SET matiere = %s WHERE niveau = %s AND matiere = ANY(%s)",
+                  (nouvelle, niveau, anciennes))
+    return n
 
 
 def secret_session() -> str:
@@ -1266,3 +1333,78 @@ def decoupages(limite: int = 10):
     with connect() as c:
         return c.execute("SELECT kdrive_id, nom, chemin, pages, statut, plan, coupes, maj_le FROM decoupages "
                          "ORDER BY maj_le DESC LIMIT %s", (limite,)).fetchall()
+
+
+# --- Demander (chat) -----------------------------------------------------------
+
+def cours_pour_question(requete: str, niveau: str | None = None, matiere: str | None = None, limite: int = 5,
+                        avec_texte: bool = False):
+    """Cours classés qui contiennent des mots de la question (« mot1 | mot2 »), les plus pertinents d'abord,
+    avec un extrait où les mots sont entre ** (Markdown gras)."""
+    if not requete.strip():
+        return []
+    texte = ", transcription" if avec_texte else ""
+    with connect() as c:
+        return c.execute(
+            f"""SELECT id, nom, titre, niveau, matiere, type, resume{texte},
+                       ts_headline('french', coalesce(transcription, ''), requete,
+                                   'StartSel=**, StopSel=**, MaxFragments=2, MaxWords=35, MinWords=12, '
+                                   'FragmentDelimiter=" … "') AS extrait
+                FROM documents, to_tsquery('french', %(q)s) AS requete
+                WHERE statut = 'classe' AND recherche @@ requete
+                  AND (%(niveau)s::text IS NULL OR niveau = %(niveau)s)
+                  AND (%(matiere)s::text IS NULL OR matiere = %(matiere)s)
+                ORDER BY ts_rank(recherche, requete) DESC LIMIT %(limite)s""",
+            {"q": requete, "niveau": niveau or None, "matiere": matiere or None, "limite": limite}).fetchall()
+
+
+def creer_conversation(titre: str, niveau: str | None = None, matiere: str | None = None) -> int:
+    with connect() as c:
+        return c.execute("INSERT INTO conversations (titre, niveau, matiere) VALUES (%s, %s, %s) RETURNING id",
+                         (titre, niveau or None, matiere or None)).fetchone()["id"]
+
+
+def conversation(conv_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM conversations WHERE id = %s", (conv_id,)).fetchone()
+
+
+def conversations(limite: int = 20):
+    with connect() as c:
+        return c.execute("SELECT k.*, count(m.id) AS nb FROM conversations k LEFT JOIN messages m "
+                         "ON m.conversation_id = k.id GROUP BY k.id ORDER BY k.maj_le DESC LIMIT %s",
+                         (limite,)).fetchall()
+
+
+def supprimer_conversation(conv_id: int):
+    with connect() as c:
+        c.execute("DELETE FROM conversations WHERE id = %s", (conv_id,))
+
+
+def ajouter_message(conv_id: int, role: str, contenu: str = "", statut: str = "pret", reperes=None, web=None,
+                    modele: str | None = None) -> int:
+    with connect() as c, c.transaction():
+        c.execute("UPDATE conversations SET maj_le = now() WHERE id = %s", (conv_id,))
+        return c.execute(
+            "INSERT INTO messages (conversation_id, role, contenu, statut, reperes, sources_web, modele) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (conv_id, role, contenu, statut, Jsonb(reperes or {}), Jsonb(web or []), modele)).fetchone()["id"]
+
+
+def message(msg_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM messages WHERE id = %s", (msg_id,)).fetchone()
+
+
+def messages(conv_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM messages WHERE conversation_id = %s ORDER BY id", (conv_id,)).fetchall()
+
+
+def maj_message(msg_id: int, statut: str, contenu: str = "", reperes=None, web=None, modele: str | None = None,
+                erreur: str | None = None, role: str | None = None):
+    """`role` : « local » quand l'IA, en pause, a été remplacée par la recherche dans les cours."""
+    with connect() as c:
+        c.execute("UPDATE messages SET statut = %s, contenu = %s, reperes = %s, sources_web = %s, modele = %s, "
+                  "erreur = %s, role = coalesce(%s, role) WHERE id = %s",
+                  (statut, contenu, Jsonb(reperes or {}), Jsonb(web or []), modele, erreur, role, msg_id))

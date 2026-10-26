@@ -26,6 +26,7 @@
     <button name="genre" value="cartes">Flashcards</button>
     <button name="genre" value="examen">Épreuve blanche</button>
     <a href="/reviser/nouvelle?doc={{ doc.id }}">Plus d'options…</a>
+    <a href="/demander?{{ {'niveau': doc.niveau, 'matiere': doc.matiere}|urlencode }}">Poser une question</a>
   </div>
 </form>
 {% endif %}

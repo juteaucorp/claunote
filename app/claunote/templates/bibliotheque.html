@@ -8,6 +8,11 @@
 <div class="carte accent"><strong>{{ attente }} document{{ 's' if attente > 1 }} à vérifier.</strong>
   Classement incertain ou analyse en échec : <a href="/a-verifier">règle-les</a> en un clic.</div>
 {% endif %}
+{% set doublons = nb_matieres_en_double() %}
+{% if doublons %}
+<div class="carte accent"><strong>{{ doublons }} groupe{{ 's' if doublons > 1 }} de matières en double</strong>
+  (ex. « Maths » et « Mathématiques » la même année) : <a href="/organiser/matieres">fusionne-les</a>.</div>
+{% endif %}
 {% if not niveaux %}
 <div class="carte">Aucun document classé pour l'instant. <a href="/deposer">Dépose des scans</a> ici,
   ou dans <code>Etudes/inbox</code> sur kDrive.</div>

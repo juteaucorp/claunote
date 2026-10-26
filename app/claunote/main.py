@@ -7,6 +7,7 @@ import mimetypes
 import re
 import os
 import tempfile
+import threading
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
@@ -20,9 +21,9 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (anki, auth, db, decoupage, importation, modeles, notifications, pdf, pronote, rangement,
-                      revision, sensible)
-from claunote.agent import NIVEAUX, TYPES
+from claunote import (agent, anki, auth, db, decoupage, importation, matieres, modeles, notifications, pdf, pronote,
+                      question, rangement, revision, sensible)
+from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
 INBOX_ID = int(os.environ.get("KDRIVE_INBOX_ID", "0"))
@@ -35,10 +36,18 @@ async def lifespan(app):
     db.init()
     secret = os.environ.get("CLAUNOTE_SECRET") or db.secret_session()
     app.state.compte = auth.Compte.from_env(secret.encode(), db.etat_valeur("mot_de_passe"))
+    agent.journal = _noter_appel  # les appels faits par le site (Demander, matières) vont sur la page État
     if app.state.compte.par_defaut:
         print("ATTENTION : mot de passe par défaut (admin / claunote), "
               "change-le sur la page Compte du site", flush=True)
     yield
+
+
+def _noter_appel(**appel):
+    try:
+        db.journal_ia(**appel)
+    except Exception as e:
+        print(f"appel à Claude non noté : {e}", flush=True)
 
 
 app = FastAPI(title="Claunote", lifespan=lifespan)
@@ -1029,6 +1038,200 @@ def campagne_pdf(campagne_id: int, corrige: int = 1, telecharger: int = 0):
         reperes.update({f"{r['id']}:{k}": v for k, v in (r["reperes"] or {}).items()})
     contenu = pdf.campagne_pdf(campagne, revs, _sources(reperes), corrige=bool(corrige))
     return _pdf(contenu, pdf.nom(campagne["titre"]), bool(telecharger))
+
+
+# --- Demander : questions dans un chat (question.py) ---------------------------
+
+def _portee(niveau: str | None, matiere: str | None) -> str:
+    return f" de {matiere} ({niveau})" if matiere else ""
+
+
+def _claude_en_pause() -> str | None:
+    """Pourquoi l'IA ne peut pas répondre en ce moment (limite du forfait, jeton refusé), ou None."""
+    c = etat_service()["claude"]
+    if c["etat"] == "limite":
+        quand = f" (reprise vers {_heure_fr(c['jusqu_a'])})" if c["jusqu_a"] else ""
+        return f"limite de ton forfait Claude atteinte{quand}"
+    if c["etat"] == "connexion":
+        return "Claude refuse le jeton du forfait"
+    return None
+
+
+def _repondre_localement(msg_id: int, q: str, conv: dict, pourquoi: str = ""):
+    cours = db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"])
+    contenu, reperes = question.reponse_locale(q, cours, _portee(conv["niveau"], conv["matiere"]))
+    if pourquoi:
+        contenu = f"*L'IA ne peut pas répondre maintenant ({pourquoi}) : voici ce que j'ai trouvé sans elle.*\n\n{contenu}"
+    db.maj_message(msg_id, "pret", contenu, reperes, role="local")
+
+
+def _repondre_ia(msg_id: int, q: str, conv: dict, historique: list[dict]):
+    """Lancé dans un fil à part : la page interroge /demander/message/<id> jusqu'à la réponse."""
+    try:
+        cours = db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], question.COURS_MAX,
+                                       avec_texte=True)
+        contenu, reperes, web, modele = question.repondre_ia(q, historique, cours, _portee(conv["niveau"], conv["matiere"]).strip())
+        db.maj_message(msg_id, "pret", contenu, reperes, web, modele)
+    except LimiteAtteinte:
+        _repondre_localement(msg_id, q, conv, "limite de ton forfait Claude atteinte")
+    except ClaudeIndisponible as e:
+        _repondre_localement(msg_id, q, conv, f"Claude ne répond pas : {str(e)[:120]}")
+    except Exception as e:  # ErreurAgent, base momentanément injoignable…
+        try:
+            db.maj_message(msg_id, "erreur", erreur=str(e)[:300])
+        except Exception:
+            pass
+
+
+def _lancer_reponse(conv: dict, q: str, mode: str) -> int:
+    """Crée la réponse : tout de suite sans IA, sinon en attente pendant que Claude travaille."""
+    pause = _claude_en_pause() if mode == "ia" else None
+    if mode == "ia" and not pause:
+        historique = [m for m in db.messages(conv["id"]) if m["statut"] == "pret"][:-1]  # sans la question
+        msg_id = db.ajouter_message(conv["id"], "ia", statut="en_attente")
+        threading.Thread(target=_repondre_ia, args=(msg_id, q, conv, historique), daemon=True,
+                         name=f"demander-{msg_id}").start()
+        return msg_id
+    msg_id = db.ajouter_message(conv["id"], "local", statut="en_attente")
+    _repondre_localement(msg_id, q, conv, pause or "")
+    return msg_id
+
+
+def _contexte_message(m: dict) -> dict:
+    rendu = avec_sources(rendu_markdown(m["contenu"]), m["reperes"], m["sources_web"]) if m["contenu"] else ""
+    return {"m": m, "rendu": rendu, "noms": modeles.NOMS}
+
+
+templates.env.globals["contexte_message"] = _contexte_message
+
+
+@app.get("/demander", response_class=HTMLResponse)
+@app.get("/demander/{conv_id}", response_class=HTMLResponse)
+def page_demander(request: Request, conv_id: int | None = None, matiere: str = "", niveau: str = ""):
+    """Chat : une conversation, ou une nouvelle (préremplie avec une matière depuis un lien)."""
+    conv = None
+    if conv_id is not None:
+        conv = db.conversation(conv_id)
+        if conv is None:
+            raise HTTPException(404)
+    return templates.TemplateResponse(request, "demander.html", {
+        "conv": conv, "messages": db.messages(conv_id) if conv else [], "conversations": db.conversations(15),
+        "choix": db.niveaux_matieres_comptes(), "modes": question.MODES, "pause": _claude_en_pause(),
+        "pre": f"{niveau}|{matiere}" if matiere else ""})
+
+
+@app.post("/demander")
+def poser_question(request: Request, q: str = Form(..., alias="question"), mode: str = Form("ia"),
+                   portee: str = Form(""), conversation: int | None = Form(None)):
+    q = q.strip()[:4000]
+    if not q:
+        raise HTTPException(400, "pose une question")
+    mode = mode if mode in question.MODES else "ia"
+    conv = db.conversation(conversation) if conversation else None
+    nouvelle = conv is None
+    if nouvelle:
+        niveau, _, matiere = portee.partition("|")
+        conv = db.conversation(db.creer_conversation(question.titre(q), niveau, matiere))
+    eleve_id = db.ajouter_message(conv["id"], "eleve", q)
+    reponse_id = _lancer_reponse(conv, q, mode)
+    if nouvelle or not request.headers.get("HX-Request"):
+        url = f"/demander/{conv['id']}"
+        if request.headers.get("HX-Request"):
+            return Response(status_code=204, headers={"HX-Redirect": url})
+        return RedirectResponse(url, status_code=303)
+    return templates.TemplateResponse(request, "_messages.html", {
+        "liste": [db.message(eleve_id), db.message(reponse_id)]})
+
+
+@app.get("/demander/message/{msg_id}", response_class=HTMLResponse)
+def voir_message(request: Request, msg_id: int):
+    m = db.message(msg_id)
+    if m is None:
+        raise HTTPException(404)
+    return templates.TemplateResponse(request, "_messages.html", {"liste": [m]})
+
+
+@app.post("/demander/message/{msg_id}/ia", response_class=HTMLResponse)
+def demander_a_l_ia(request: Request, msg_id: int):
+    """Sous une réponse sans IA (ou en erreur) : la même question, cette fois à Claude."""
+    m = db.message(msg_id)
+    if m is None:
+        raise HTTPException(404)
+    conv = db.conversation(m["conversation_id"])
+    precedentes = [x for x in db.messages(conv["id"]) if x["role"] == "eleve" and x["id"] < msg_id]
+    if not precedentes:
+        raise HTTPException(400, "pas de question à reposer")
+    q = precedentes[-1]["contenu"]
+    eleve_id = db.ajouter_message(conv["id"], "eleve", q)
+    reponse_id = _lancer_reponse(conv, q, "ia")
+    return templates.TemplateResponse(request, "_messages.html", {
+        "liste": [db.message(eleve_id), db.message(reponse_id)]})
+
+
+@app.post("/demander/{conv_id}/supprimer")
+def supprimer_conversation(conv_id: int):
+    db.supprimer_conversation(conv_id)
+    return RedirectResponse("/demander", status_code=303)
+
+
+# --- Matières en double (matieres.py) -----------------------------------------
+
+def _propositions_matieres() -> tuple[list[dict], list[dict]]:
+    comptes = db.matieres_par_annee()
+    toutes: dict[str, int] = defaultdict(int)
+    for r in comptes:
+        toutes[r["matiere"]] += r["n"]
+    return comptes, matieres.proposer(comptes, toutes)
+
+
+templates.env.globals["nb_matieres_en_double"] = lambda: len(_propositions_matieres()[1])
+
+
+@app.get("/organiser/matieres", response_class=HTMLResponse)
+def page_matieres(request: Request, message: str = ""):
+    comptes, groupes = _propositions_matieres()
+    par_niveau = defaultdict(list)
+    for r in comptes:
+        par_niveau[r["niveau"]].append(r)
+    niveaux = [n for n in reversed(NIVEAUX) if n in par_niveau]
+    return templates.TemplateResponse(request, "matieres.html", {
+        "groupes": groupes, "par_niveau": par_niveau, "niveaux": niveaux, "message": message,
+        "pause": _claude_en_pause()})
+
+
+@app.post("/organiser/matieres/ia", response_class=HTMLResponse)
+def matieres_ia(request: Request):
+    """Second avis de l'IA (court appel Haiku) ; les propositions locales restent affichées."""
+    comptes, groupes = _propositions_matieres()
+    erreur = None
+    if not comptes:
+        ia = []
+    else:
+        try:
+            ia = matieres.demander_ia(comptes, db.titres_par_matiere())
+        except LimiteAtteinte:
+            ia, erreur = [], "Limite de ton forfait Claude atteinte : réessaie plus tard."
+        except (ClaudeIndisponible, ErreurAgent) as e:
+            ia, erreur = [], f"L'IA n'a pas pu répondre : {str(e)[:200]}"
+    nouvelles = matieres.fusionner_propositions(groupes, ia)[len(groupes):]
+    return templates.TemplateResponse(request, "_matieres_ia.html", {"groupes": nouvelles, "erreur": erreur})
+
+
+@app.post("/organiser/matieres/fusionner")
+async def fusionner_matieres(request: Request):
+    """Fusionne des matières d'une même année sous un seul nom (choisi ou tapé)."""
+    f = await request.form()
+    niveau, nom = f.get("niveau", ""), " ".join((f.get("nom") or "").split())
+    noms = [n for n in f.getlist("noms") if n]
+    if niveau not in NIVEAUX or not nom or len(set(noms) | {nom}) < 2:
+        raise HTTPException(400, "choisis au moins deux matières de la même année et le nom à garder")
+    n = db.fusionner_matieres(niveau, noms, nom)
+    if n:
+        db.demander_scan()  # réveille le worker : il déplace les fichiers dans kDrive
+    message = (f"{niveau} : {', '.join(m for m in noms if m != nom)} → {nom}. "
+               f"{n} document{'s' if n > 1 else ''} renommé{'s' if n > 1 else ''}, "
+               "les fichiers sont déplacés dans kDrive en arrière-plan.")
+    return RedirectResponse(f"/organiser/matieres?{urlencode({'message': message})}", status_code=303)
 
 
 # --- Flashcards --------------------------------------------------------------

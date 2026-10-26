@@ -34,6 +34,7 @@ from claunote import (agent, db, decoupage, importation, modeles, notifications,
                       revision, sensible)
 from claunote.agent import ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive, KDriveIndisponible
+from claunote.matieres import harmoniser
 
 INBOX_ID = int(os.environ["KDRIVE_INBOX_ID"])
 ETUDES_ID = int(os.environ["KDRIVE_ETUDES_ID"])
@@ -223,6 +224,7 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dos
         shutil.rmtree(dossier_local, ignore_errors=True)
 
     note = appliquer_dossier(a, dossiers)
+    a.matiere = harmoniser(a.matiere, matieres or [])  # « Maths » → « Mathématiques » s'il existe déjà
     statut, note = statut_et_note(a, note)
     if statut == "a_verifier" and a.avis:
         note = f"{note} {a.avis}"
@@ -499,6 +501,7 @@ def reclasser(doc: dict, matieres: list[str]):
     """Reclassement demandé depuis la page Organiser : relit la transcription, pas le scan."""
     try:
         a = agent.reclasser(doc, matieres)
+        a.matiere = harmoniser(a.matiere, matieres)
     except ErreurAgent as e:
         db.maj(doc["id"], statut="a_verifier", note=f"Reclassement impossible : {e}")
         db.marquer_a_ranger([doc["id"]])

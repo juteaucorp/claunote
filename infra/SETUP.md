@@ -198,7 +198,7 @@ directement dans l'inbox avec l'appli kDrive.
 
 ## 7. Réviser (phase 3)
 
-Page **Réviser** du site : deux boutons en haut, **Une révision** et **Une campagne**, puis ce qui
+Page **Réviser** du site : trois boutons en haut, **Une révision**, **Une question** et **Une campagne**, puis ce qui
 est au programme et l'historique **Déjà fait** (filtres par type, matière, recherche).
 
 | Support | Ce que tu obtiens |
@@ -225,6 +225,38 @@ est au programme et l'historique **Déjà fait** (filtres par type, matière, re
 - Chaque support est aussi déposé en PDF dans `Etudes/fiches/<matière ou campagne>/` sur kDrive.
 - Les révisions passent **avant** les scans dans la file du worker ; avec le forfait Pro elles sont
   générées l'une après l'autre (2 à 3 min chacune), et reprennent seules après une limite d'usage.
+
+### Une question (chat)
+
+**Réviser → Une question** (ou **Poser une question** sur la page d'un cours) : un chat pour une info
+rapide, une notion à réexpliquer, une commande oubliée. Tu choisis dans quels cours chercher (tous, ou une
+matière d'une année) et qui répond :
+
+| Mode | Comment | Quand |
+| --- | --- | --- |
+| **IA (Claude)** | les cours qui contiennent les mots de ta question (6 au plus) + la discussion, réponse courte qui cite `[D1]`, le web si utile `[W1]` | explication, reformulation, question de suivi |
+| **Rapide, sans IA** | recherche plein texte dans PostgreSQL : les passages de tes cours où apparaissent tes mots, surlignés | instantané, gratuit, marche même pendant une pause de Claude |
+
+- La réponse IA est faite par le site lui-même (pas par le worker, qui peut être occupé par un gros scan) :
+  elle arrive en 10 à 30 s et s'affiche toute seule. Modèle : Sonnet (tâche `question`, voir `CLAUDE_MODELES`).
+- Si Claude est en pause (limite du forfait) ou ne répond pas, la réponse vient automatiquement des cours, sans IA.
+- Sous une réponse sans IA, **Demander à l'IA** repose la même question à Claude.
+- Les conversations sont gardées (liste **Questions précédentes**), supprimables une par une.
+
+### Matières en double
+
+L'IA de classement donne parfois deux noms à la même matière la même année (« Maths » et « Mathématiques »,
+« Réseau » et « Réseaux », « SLAM » et « Développement »). Page **Organiser → Matières en double** (un rappel
+s'affiche aussi sur **Cours** quand il y en a) :
+
+- **Sans IA** : noms rapprochés par accents/pluriels/ponctuation, abréviations connues (Maths, HG, LV1, CEJM…),
+  sigles, fautes de frappe, nom contenu dans l'autre. « Évident » ou « À confirmer ». Nom proposé : le plus utilisé.
+- **Demander à l'IA d'en chercher d'autres** : un appel court (Haiku) qui voit les noms et quelques titres de cours.
+- **Fusionner** : tu choisis le nom gardé ; documents, révisions et conversations sont renommés, les fichiers
+  déplacés dans `archives/<année>/<matière>/` par le worker. **Fusionner à la main** : n'importe quelles matières d'une année.
+- **Plus de nouveaux doublons** : l'agent reçoit la liste des matières existantes, et un nom évidemment
+  identique à une matière existante (« Maths » quand « Mathématiques » existe) est remplacé avant rangement.
+- Les anciens dossiers kDrive vidés par une fusion restent (vides) : supprime-les à la main si tu veux.
 
 ## 8. Pronote (phase 4)
 
