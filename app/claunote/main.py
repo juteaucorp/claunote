@@ -23,8 +23,9 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, auth, db, decoupage, importation, index, local, maj, matieres, modeles,
-                      notifications, pdf, pronote, question, rangement, ressources, revision, sensible)
+from claunote import (agent, anki, auth, carte_mentale, cles, db, decoupage, formules, importation, index,
+                      lecture, local, maj, matieres, modeles, notifications, pdf, progression, pronote, question,
+                      rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -53,7 +54,7 @@ def _noter_appel(**appel):
 
 
 app = FastAPI(title="Claunote", lifespan=lifespan)
-PUBLIC = ("/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
+PUBLIC = ("/connexion", "/cles/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
 
 
 @app.middleware("http")
@@ -207,9 +208,15 @@ templates.env.filters["surligner_md"] = lambda extrait: surligner(re.sub(r"\*\*(
 
 
 def rendu_markdown(texte: str | None) -> str:
+    # Formules mises à l'abri du Markdown, puis rendues par KaTeX dans le navigateur (voir formules.py)
+    texte, maths = formules.proteger(texte or "")
     # Le HTML brut éventuel de la transcription est neutralisé avant le rendu
-    texte = (texte or "").replace("&", "&amp;").replace("<", "&lt;")
-    return markdown.markdown(texte, extensions=["tables", "fenced_code"])
+    texte = texte.replace("&", "&amp;").replace("<", "&lt;")
+    return formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths)
+
+
+# Texte simple (questions de quiz, flashcards) avec des formules $…$
+templates.env.filters["maths"] = formules.en_ligne
 
 
 def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Markup:
@@ -233,9 +240,18 @@ def _suite_sure(suite: str) -> str:
     return suite if suite.startswith("/") and not suite.startswith("//") and "\\" not in suite else "/"
 
 
+def _face_id(request: Request) -> bool:
+    """Bouton Face ID sur la page de connexion : adresse compatible et au moins un appareil ajouté."""
+    try:
+        return not cles.possible(request.headers.get("host", ""), _https(request)) and bool(db.cles_acces())
+    except Exception:
+        return False
+
+
 @app.get("/connexion", response_class=HTMLResponse)
 def page_connexion(request: Request, suite: str = "/"):
-    return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "sans_nav": True})
+    return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "sans_nav": True,
+                                                                  "face_id": _face_id(request)})
 
 
 @app.post("/connexion", response_class=HTMLResponse)
@@ -248,7 +264,7 @@ def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str 
         erreur = (f"Trop d'essais : réessaie dans {attente // 60 + 1} min." if attente
                   else "Identifiant ou mot de passe incorrect.")
         return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "erreur": erreur,
-                                                                       "sans_nav": True},
+                                                                       "sans_nav": True, "face_id": _face_id(request)},
                                           status_code=401)
     r = RedirectResponse(_suite_sure(suite), status_code=303)
     _cookie_session(request, r, compte)
@@ -256,14 +272,98 @@ def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str 
 
 
 def _cookie_session(request: Request, reponse: Response, compte: auth.Compte):
-    https = request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
     reponse.set_cookie(auth.COOKIE, compte.creer_session(), max_age=auth.DUREE, httponly=True, samesite="lax",
-                       secure=https)
+                       secure=_https(request))
+
+
+def _https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
+
+
+def _origine(request: Request) -> str:
+    return f"{'https' if _https(request) else request.url.scheme}://{request.headers.get('host', '')}"
+
+
+def _contexte_compte(request: Request, **plus) -> dict:
+    host = request.headers.get("host", "")
+    return {"utilisateur": request.app.state.compte.utilisateur, "cles": db.cles_acces(),
+            "cles_impossible": cles.possible(host, _https(request)), "nom_sslip": cles.nom_sslip(host),
+            "hote": cles.hote(host), **plus}
 
 
 @app.get("/compte", response_class=HTMLResponse)
 def page_compte(request: Request):
-    return templates.TemplateResponse(request, "compte.html", {"utilisateur": request.app.state.compte.utilisateur})
+    return templates.TemplateResponse(request, "compte.html", _contexte_compte(request))
+
+
+# --- Face ID / Touch ID (clés d'accès, voir cles.py) ---------------------------
+
+COOKIE_DEFI = "claunote_defi"
+
+
+def _reponse_options(jeton: str, options: str) -> Response:
+    r = Response(options, media_type="application/json")
+    r.set_cookie(COOKIE_DEFI, jeton, max_age=cles.DUREE_DEFI, httponly=True, samesite="strict")
+    return r
+
+
+@app.post("/cles/inscription/options")
+def cles_inscription_options(request: Request):
+    host = request.headers.get("host", "")
+    if cles.possible(host, _https(request)):
+        raise HTTPException(400, "Face ID demande un nom de site en HTTPS (voir Réglages → Compte)")
+    return _reponse_options(*cles.options_inscription(host, request.app.state.compte.utilisateur,
+                                                      [k["id"] for k in db.cles_acces()]))
+
+
+@app.post("/cles/inscription")
+async def cles_inscription(request: Request):
+    corps = cles.lire(await request.body())
+    try:
+        cle = cles.verifier_inscription(request.cookies.get(COOKIE_DEFI), corps.get("cle") or {},
+                                        request.headers.get("host", ""), _origine(request))
+    except cles.CleRefusee as e:
+        return JSONResponse({"erreur": str(e)}, status_code=400)
+    db.ajouter_cle(cle, (corps.get("nom") or "Appareil").strip()[:60])
+    return {"ok": True}
+
+
+@app.post("/cles/{cle_id}/supprimer")
+def cles_supprimer(cle_id: str):
+    db.supprimer_cle(cle_id)
+    return RedirectResponse("/compte#cles", status_code=303)
+
+
+@app.post("/cles/connexion/options")
+def cles_connexion_options(request: Request):
+    host = request.headers.get("host", "")
+    if cles.possible(host, _https(request)):
+        raise HTTPException(400, "Face ID indisponible à cette adresse")
+    return _reponse_options(*cles.options_connexion(host))
+
+
+@app.post("/cles/connexion")
+async def cles_connexion(request: Request):
+    compte = request.app.state.compte
+    ip = request.client.host if request.client else "?"
+    if compte.bloque(ip):
+        return JSONResponse({"erreur": "Trop d'essais : réessaie dans quelques minutes."}, status_code=429)
+    corps = cles.lire(await request.body())
+    reponse = corps.get("cle") or {}
+    cle = db.cle_acces(cles.identifiant(reponse))
+    try:
+        if cle is None:
+            raise cles.CleRefusee("clé inconnue : ajoute cet appareil depuis Réglages → Compte")
+        compteur = cles.verifier_connexion(request.cookies.get(COOKIE_DEFI), reponse, cle,
+                                           request.headers.get("host", ""), _origine(request))
+    except cles.CleRefusee as e:
+        compte._echecs.setdefault(ip, []).append(time.time())
+        return JSONResponse({"erreur": str(e)}, status_code=400)
+    db.cle_utilisee(cle["id"], compteur)
+    r = JSONResponse({"suite": _suite_sure(str(corps.get("suite") or "/"))})
+    _cookie_session(request, r, compte)
+    r.delete_cookie(COOKIE_DEFI)
+    return r
 
 
 @app.post("/compte", response_class=HTMLResponse)
@@ -281,15 +381,14 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
     elif nouveau == auth.DEFAUT_MOT_DE_PASSE:
         erreur = "Choisis un autre mot de passe que celui par défaut."
     if erreur:
-        return templates.TemplateResponse(request, "compte.html", {"utilisateur": compte.utilisateur, "erreur": erreur},
+        return templates.TemplateResponse(request, "compte.html", _contexte_compte(request, erreur=erreur),
                                           status_code=400)
     hache = auth.hacher(nouveau)
     db.etat_ecrire("mot_de_passe", hache)
     # Nouveau compte = nouvelles signatures : les autres appareils sont déconnectés, pas celui-ci
     request.app.state.compte = auth.Compte(compte.utilisateur, hache, compte.secret)
-    r = templates.TemplateResponse(request, "compte.html", {
-        "utilisateur": compte.utilisateur,
-        "message": "Mot de passe changé. Les autres appareils devront se reconnecter."})
+    r = templates.TemplateResponse(request, "compte.html", _contexte_compte(
+        request, message="Mot de passe changé. Les autres appareils devront se reconnecter."))
     _cookie_session(request, r, request.app.state.compte)
     return r
 
@@ -384,6 +483,20 @@ def document(request: Request, doc_id: int):
         "doc": doc, "transcription": rendu_markdown(doc["transcription"]), "apercu": apercu, "variante": variante,
         "format": PurePosixPath(doc["nom"]).suffix.lstrip(".").upper(),
         "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
+
+
+def _page_carte_mentale(request: Request, texte: str, titre: str, retour: str) -> HTMLResponse:
+    racine, branches = carte_mentale.arbre(texte, titre)
+    return templates.TemplateResponse(request, "carte_mentale.html", {
+        "racine": racine, "branches": branches, "titre": titre, "retour": retour})
+
+
+@app.get("/doc/{doc_id}/carte-mentale", response_class=HTMLResponse)
+def carte_mentale_document(request: Request, doc_id: int):
+    doc = db.document(doc_id)
+    if doc is None:
+        raise HTTPException(404)
+    return _page_carte_mentale(request, doc["transcription"] or "", doc["titre"] or doc["nom"], f"/doc/{doc_id}")
 
 
 @app.get("/doc/{doc_id}/fichier")
@@ -488,7 +601,7 @@ def recherche(request: Request, q: str = ""):
         try:
             vecteur = index.vecteur_question(q) if not ressources.sature() else None
             vus = {r["id"] for r in resultats}
-            for p in db.chercher_passages(question.requete(q), vecteur, limite=20):
+            for p in question.reordonner(q, db.chercher_passages(question.requete(q), vecteur, limite=20), 20):
                 if p["document_id"] not in vus:
                     vus.add(p["document_id"])
                     proches.append({**p, "id": p["document_id"]})
@@ -972,6 +1085,16 @@ def _pdf(contenu: bytes, nom: str, telecharger: bool) -> Response:
         "Content-Disposition": f"{mode}; filename*=UTF-8''{quote(nom)}", "Cache-Control": "private, max-age=60"})
 
 
+@app.get("/revision/{rev_id}/carte-mentale", response_class=HTMLResponse)
+def carte_mentale_revision(request: Request, rev_id: int):
+    rev = db.revision(rev_id)
+    if rev is None or rev["statut"] != "pret" or rev["genre"] not in revision.GENRES_TEXTE:
+        raise HTTPException(404)
+    texte = revision.separer_corrige(rev["contenu"])[0] if rev["genre"] == "examen" else rev["contenu"]
+    texte = revision.separer_web(texte)[0]
+    return _page_carte_mentale(request, texte, rev["sujet"], f"/revision/{rev_id}")
+
+
 @app.get("/revision/{rev_id}/pdf")
 def revision_pdf(rev_id: int, corrige: int = 1, telecharger: int = 0):
     rev = db.revision(rev_id)
@@ -1156,9 +1279,10 @@ def _passages(q: str, conv: dict, limite: int = 10) -> list[dict]:
     """Passages de tous les documents lus (par les mots et par le sens), ou documents entiers si l'index
     n'est pas encore fait."""
     vecteur = index.vecteur_question(q) if not ressources.sature() else None
-    passages = db.chercher_passages(question.requete(q), vecteur, conv["niveau"], conv["matiere"], limite)
+    # Deux fois plus de candidats, puis les meilleurs gardés après relecture (FlashRank, si le service tourne)
+    passages = db.chercher_passages(question.requete(q), vecteur, conv["niveau"], conv["matiere"], limite * 2)
     if passages:
-        return passages
+        return question.reordonner(q, passages, limite)
     return [{**d, "document_id": d["id"], "texte": (d.get("transcription") or "")[:3000]}
             for d in db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], 5,
                                             avec_texte=True, statuts=db.STATUTS_UTILES)]
@@ -1278,7 +1402,19 @@ def page_demander(request: Request, conv_id: int | None = None, matiere: str = "
     return templates.TemplateResponse(request, "demander.html", {
         "conv": conv, "messages": db.messages(conv_id) if conv else [], "conversations": db.conversations(15),
         "choix": db.niveaux_matieres_comptes(), "modes": question.MODES, "pause": _claude_en_pause(),
-        "pre": f"{niveau}|{matiere}" if matiere else ""})
+        "pre": f"{niveau}|{matiere}" if matiere else "", "formules_photo": lecture.etat().get("formules", False)})
+
+
+@app.post("/formule")
+async def lire_formule(image: UploadFile = File(...)):
+    """Photo recadrée d'une formule → LaTeX (pix2tex, service lecture), à glisser dans une question."""
+    contenu = await image.read(8_000_001)
+    if len(contenu) > 8_000_000:
+        return JSONResponse({"erreur": "Photo trop lourde (8 Mo au plus)."}, status_code=413)
+    try:
+        return {"latex": lecture.formule(contenu, image.filename or "formule.png")}
+    except lecture.LectureIndisponible as e:
+        return JSONResponse({"erreur": f"Formule non lue : {e}"}, status_code=503)
 
 
 @app.post("/demander")
@@ -1507,9 +1643,8 @@ def session_cartes(request: Request, paquet: int | None = None):
     return templates.TemplateResponse(request, "session_cartes.html", {
         "carte": carte, "paquet": paquet, "notes": revision.NOTES, "reperes": reperes,
         "reste": db.nb_cartes_a_revoir(paquet),
-        # Dans combien de jours la carte reviendra, pour chaque bouton
-        "apercu": {n: revision.repetition(carte["facilite"], carte["intervalle"], carte["repetitions"], n)[1]
-                   for n in revision.NOTES} if carte else {}})
+        # Quand la carte reviendra, pour chaque bouton (FSRS)
+        "apercu": {n: revision.delai(carte, n) for n in revision.NOTES} if carte else {}})
 
 
 @app.post("/cartes/{carte_id}/noter")
@@ -1517,8 +1652,16 @@ def noter_carte(carte_id: int, note: int = Form(...), paquet: int | None = Form(
     carte = db.carte(carte_id)
     if carte is None or note not in revision.NOTES:
         raise HTTPException(400, "carte ou note invalide")
-    db.maj_carte(carte_id, *revision.repetition(carte["facilite"], carte["intervalle"], carte["repetitions"], note))
+    db.maj_carte(carte_id, note, revision.repetition(carte, note))
     return RedirectResponse("/cartes/session" + (f"?paquet={paquet}" if paquet else ""), status_code=303)
+
+
+@app.get("/progression", response_class=HTMLResponse)
+def page_progression(request: Request):
+    """Régularité, mémoire des flashcards, réussite par matière et notes Pronote."""
+    maintenant = dt.datetime.now(pronote.PARIS)
+    p = progression.calculer(db.progression_donnees(), maintenant.date(), maintenant)
+    return templates.TemplateResponse(request, "progression.html", {"p": p})
 
 
 @app.get("/cartes/anki")

@@ -11,5 +11,29 @@
     <p><label>Mot de passe<br><input type="password" name="mot_de_passe" autocomplete="current-password" required></label></p>
     <button class="principal">Se connecter</button>
   </form>
+  {% if face_id %}
+  <div class="face-id" hidden>
+    <span class="doux">ou</span>
+    <button type="button" id="bouton-face-id" class="carte">Se connecter avec Face ID ou Touch ID</button>
+    <p class="alerte" id="erreur-face-id" hidden></p>
+  </div>
+  <script src="/static/cles.js"></script>
+  <script>
+    (() => {
+      if (!clesPossibles()) return;
+      const bloc = document.querySelector(".face-id"), erreur = document.getElementById("erreur-face-id");
+      bloc.hidden = false;
+      document.getElementById("bouton-face-id").addEventListener("click", async () => {
+        erreur.hidden = true;
+        try { location.href = (await connexionCle({{ suite|tojson }})).suite; }
+        catch (e) { erreur.textContent = e.message; erreur.hidden = false; }
+      });
+    })();
+  </script>
+  <style>
+    .face-id { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 14px; }
+    .face-id button { width: 100%; margin: 0; font-weight: 600; padding: 14px; cursor: pointer; }
+  </style>
+  {% endif %}
 </div>
 {% endblock %}

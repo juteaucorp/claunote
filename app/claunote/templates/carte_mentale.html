@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block titre %}Carte mentale · {{ titre }}{% endblock %}
+{% block contenu %}
+{% include "_reviser.html" %}
+<p class="fil"><a href="{{ retour }}">{{ titre }}</a> › Carte mentale</p>
+{% if branches < 2 %}
+<div class="carte accent"><strong>Pas assez de structure pour une carte mentale.</strong>
+  <p class="doux">Il faut des titres (« ## … ») ou des listes. Une <strong>fiche de révision</strong> en a toujours :
+    <a href="{{ retour }}">retour</a>.</p></div>
+{% else %}
+<div class="outils-carte">
+  <button type="button" data-action="ajuster">Ajuster</button>
+  <button type="button" data-action="deplier">Tout déplier</button>
+  <button type="button" data-action="replier">Replier</button>
+  <span class="doux">Touche une branche pour la plier ou la déplier · pince ou molette pour zoomer.</span>
+</div>
+<div class="carte cadre-carte"><svg id="carte-mentale" aria-label="Carte mentale : {{ titre }}"></svg></div>
+<script src="/static/vendor/d3.min.js"></script>
+<script src="/static/vendor/markmap-view.js"></script>
+<script>
+  (async () => {
+    const racine = {{ racine|tojson }};
+    // Les formules $…$ sont dessinées avant le tracé (la taille des branches en dépend)
+    if (/\$/.test(JSON.stringify(racine))) { try { await chargerKatex(); } catch (e) { /* LaTeX laissé tel quel */ } }
+    // Une couleur par grande branche, toujours dans le même ordre (celles des genres de révision)
+    const style = getComputedStyle(document.documentElement);
+    const teintes = ["--g-fiche", "--g-quiz", "--g-cartes", "--g-examen", "--g-plan", "--accent"]
+      .map((v) => style.getPropertyValue(v).trim() || "#c4623f");
+    const decodeur = document.createElement("textarea");
+    // Sur téléphone, on ouvre moins de niveaux : la carte reste lisible, le reste se déplie au doigt
+    const etroit = window.innerWidth < 700;
+    function preparer(noeud, branche, profondeur) {
+      if (window.katex) {  // formules $…$ rendues par KaTeX avant le dessin (la taille des nœuds en dépend)
+        noeud.content = noeud.content.replace(/\$\$([^$]+)\$\$|\$([^$\n]+?)\$/g, (m, bloc, ligne) => {
+          decodeur.innerHTML = bloc || ligne;  // le texte arrive échappé (&gt;) : KaTeX veut le LaTeX brut
+          try { return katex.renderToString(decodeur.value, { throwOnError: false }); } catch (e) { return m; }
+        });
+      }
+      noeud.payload = { branche, fold: profondeur >= (etroit ? 2 : 3) ? 1 : 0 };
+      noeud.children.forEach((enfant, i) => preparer(enfant, profondeur === 0 ? i : branche, profondeur + 1));
+    }
+    preparer(racine, 0, 0);
+    const mm = markmap.Markmap.create("#carte-mentale", {
+      autoFit: true, duration: 300, maxWidth: etroit ? 190 : 320, spacingVertical: 8, spacingHorizontal: 90, paddingX: 10,
+      color: (n) => (n.state && n.state.depth === 0) ? "var(--texte)" : teintes[(n.payload && n.payload.branche || 0) % teintes.length],
+    }, racine);
+    function plier(noeud, profondeur, limite) {
+      noeud.payload = { ...noeud.payload, fold: profondeur >= limite ? 1 : 0 };
+      noeud.children.forEach((e) => plier(e, profondeur + 1, limite));
+    }
+    document.querySelector(".outils-carte").addEventListener("click", async (e) => {
+      const action = e.target.dataset.action;
+      if (action === "deplier" || action === "replier") {
+        plier(racine, 0, action === "deplier" ? 99 : 1);
+        await mm.setData(racine);
+      }
+      if (action) mm.fit();
+    });
+  })();
+</script>
+<style>
+  .outils-carte { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .outils-carte .doux { font-size: .85rem; }
+  .cadre-carte { padding: 0; overflow: hidden; }
+  #carte-mentale { display: block; width: 100%; height: calc(100vh - 230px); min-height: 420px;
+    --markmap-text-color: var(--texte); --markmap-code-bg: var(--fond-doux); --markmap-code-color: var(--texte);
+    --markmap-circle-open-bg: var(--carte); --markmap-font: 500 15px/1.35 system-ui, -apple-system, sans-serif; }
+  @media (max-width: 760px) { #carte-mentale { height: calc(100vh - 260px); } }
+</style>
+{% endif %}
+{% endblock %}

@@ -358,8 +358,15 @@ Réviser ─► « Flashcards » ─► Claude tire ~20 cartes de tes cours ─�
 
 - **Créer** : page **Réviser**, choisis la matière (et un sujet), coche **Flashcards**.
 - **Réviser** : page **Cartes** (le badge donne le nombre de cartes du jour). Tu retournes la carte
-  (espace), puis tu notes **À revoir / Difficile / Bien / Facile** (touches 1 à 4). Algorithme SM-2,
-  comme Anki : une carte sue revient de plus en plus tard, une carte ratée revient tout de suite.
+  (espace), puis tu notes **À revoir / Difficile / Bien / Facile** (touches 1 à 4). Algorithme **FSRS**
+  (celui d'Anki depuis 2023) : une carte sue revient de plus en plus tard, une carte ratée revient dans
+  quelques minutes. Sous chaque bouton : quand la carte reviendra. Les cartes suivies avec l'ancien SM-2
+  gardent leur rythme. `FSRS_RETENTION` (défaut `0.9`) : part des cartes qu'on veut encore savoir au
+  moment où elles reviennent.
+- **Progression** (*Réviser → Ta progression*) : série de jours de travail, flashcards par jour, mémoire
+  estimée, cartes sues par matière, réussite aux cartes et aux quiz, moyennes et tendance Pronote.
+- **Carte mentale** : bouton sur une fiche, une épreuve ou un plan, lien « carte mentale » sur un cours.
+  Les titres et les listes deviennent des branches ; touche une branche pour la plier.
 - **Anki** : bouton **Anki** sur un paquet, ou **Tout exporter**. Le fichier `.apkg` s'ouvre dans Anki
   (ordinateur) ou AnkiDroid. Réimporter **met à jour** les cartes sans doublons. Les paquets sont rangés
   sous `Claunote::<sujet>`. La progression Anki et celle du site sont séparées.
@@ -439,6 +446,16 @@ comprise) : c'est la VM qui les envoie au service push d'Apple, gratuit, sans co
    « Claunote » (volume `caddy`, à ne pas supprimer : sinon il faut réinstaller le certificat).
 3. Sur l'iPhone, VPN allumé, ouvre **`http://<BIND_ADDR>:8000/installer`** dans Safari et suis les 5 étapes :
    certificat → confiance → `https://…` → **Partager → Sur l'écran d'accueil** → **Plus → Réglages → Notifications → Activer**.
+
+### Face ID / Touch ID
+
+*Plus → Réglages → Compte → Ajouter cet appareil*, puis le bouton **Se connecter avec Face ID** sur la page
+de connexion. Le secret reste dans l'iPhone (clé d'accès) ; le site ne garde qu'une clé publique.
+
+Face ID demande un **nom**, pas une adresse IP. Sans DNS à configurer, utilise **sslip.io**, qui renvoie
+l'IP écrite dans le nom : `CLAUNOTE_HOTE=claunote.10.8.0.5.sslip.io` (avec l'IP VPN de ta VM), puis
+`docker compose up -d` et ouvre `https://claunote.10.8.0.5.sslip.io`. La page Compte te donne le nom exact.
+Changer de nom = nouvelle appli pour l'iPhone : réinstalle-la depuis la nouvelle adresse et rajoute l'appareil.
 
 > ⚠️ Utilise **toujours la même adresse** (celle de `CLAUNOTE_HOTE`) : l'iPhone considère une autre IP
 > comme une autre appli, avec ses propres réglages de notifications.
@@ -549,3 +566,22 @@ git pull && docker compose up -d --build
 Le service `maj` lui-même n'est jamais reconstruit par le site (il s'arrêterait en plein travail) ; son
 script est relu dans le dépôt à chaque action, donc il suit les mises à jour. Si `infra/maj/Dockerfile`
 change un jour : `docker compose up -d --build maj`.
+
+## 16. Lecture des documents, formules, tri des passages
+
+```
+Word, PowerPoint, Excel ─► Docling (site et worker) ─► titres, listes, tableaux, équations Word en LaTeX
+PDF numérique ───────────► service lecture : Docling + modèles de mise en page ─► tableaux, colonnes
+photo d'une formule ─────► service lecture : pix2tex ─► LaTeX dans ta question (Demander → Formule)
+question du chat ────────► service lecture : FlashRank ─► les passages les plus utiles d'abord
+```
+
+- **Docling** lit les fichiers bureautiques sans modèle d'IA (rapide). Les PDF numériques passent par le
+  service `lecture`, qui garde les tableaux et l'ordre des colonnes ; s'il perd du texte, l'extraction
+  simple est gardée. Les scans, eux, passent toujours par l'OCR ou par Claude.
+- **Formules** : les cours, fiches, cartes et réponses écrivent leurs formules en LaTeX (`$…$`), dessinées
+  par KaTeX sur le site (chimie comprise : `\ce{H2O}`) et converties en texte lisible dans les PDF.
+- **Photo d'une formule** : *Demander → Formule*, encadre la formule seule, elle est recopiée en LaTeX.
+- **Service `lecture`** : facultatif. Sans lui (`docker compose stop lecture`), tout marche comme avant.
+  Ses modèles se téléchargent au premier usage (HuggingFace, GitHub) dans le volume `lecture`, et prennent
+  environ 1,5 Go de mémoire une fois tous chargés. `LECTURE_THREADS` (défaut 2) : cœurs par calcul.

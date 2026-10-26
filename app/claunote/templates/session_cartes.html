@@ -8,10 +8,10 @@
 {% else %}
 <p class="doux">{{ reste }} carte{{ 's' if reste > 1 }} à revoir{% if carte.repetitions == 0 and not carte.vue_le %} · nouvelle carte{% endif %}</p>
 <div class="carte flashcard">
-  <div class="recto"><strong>{{ carte.recto }}</strong></div>
+  <div class="recto"><strong>{{ carte.recto|maths }}</strong></div>
   <details id="reponse">
     <summary>Voir la réponse <span class="doux clavier">(espace)</span></summary>
-    <div class="verso">{{ carte.verso|e|replace('\n', '<br>'|safe) }}
+    <div class="verso">{{ carte.verso|maths }}
       {% if carte.source in reperes %}<p class="doux"><a href="/doc/{{ reperes[carte.source] }}">[{{ carte.source }}] voir le cours</a></p>{% endif %}
     </div>
   </details>
@@ -22,7 +22,7 @@
     <input type="hidden" name="note" value="{{ n }}">
     {% if paquet %}<input type="hidden" name="paquet" value="{{ paquet }}">{% endif %}
     <button class="n{{ n }}" data-touche="{{ loop.index }}">{{ libelle }}<br>
-      <span class="doux">{% if apercu[n] == 0 %}maintenant{% elif apercu[n] == 1 %}demain{% else %}{{ apercu[n] }} j{% endif %}</span></button>
+      <span class="doux">{{ apercu[n] }}</span></button>
   </form>
   {% endfor %}
 </div>

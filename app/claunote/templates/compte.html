@@ -10,6 +10,55 @@
   <a class="bouton" href="/installer">{{ icone('telephone', 18) }}Installer sur l'iPhone</a>
   <form method="post" action="/deconnexion" style="margin: 0"><button style="display: inline-flex; align-items: center; gap: 6px">{{ icone('sortie', 18) }}Déconnexion</button></form>
 </div>
+<div class="carte" id="cles" style="max-width: 560px">
+  <strong>Face ID, Touch ID</strong>
+  <p class="doux">Connexion sans mot de passe, avec le déverrouillage de ton appareil. Le secret reste dans
+    l'appareil : le site ne garde qu'une clé publique.</p>
+  {% if cles %}
+  <ul class="liste-cles">
+    {% for k in cles %}
+    <li><span><strong>{{ k.nom }}</strong><br><span class="doux">ajouté le {{ k.cree_le.strftime('%d/%m/%Y') }}{% if k.utilisee_le %} · utilisé le {{ k.utilisee_le.strftime('%d/%m/%Y') }}{% endif %}{% if k.rp_id != hote %} · pour {{ k.rp_id }}{% endif %}</span></span>
+      <form method="post" action="/cles/{{ k.id|urlencode }}/supprimer" onsubmit="return confirm('Retirer {{ k.nom }} ? Il faudra le mot de passe sur cet appareil.')">
+        <button class="lien-danger">Retirer</button></form></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if cles_impossible == 'ip' %}
+  <p class="alerte">Le site est ouvert par une adresse IP : Face ID demande un nom.</p>
+  <p class="doux">Sans DNS à configurer :{% if nom_sslip %} dans <code>.env</code>, mets <code>CLAUNOTE_HOTE={{ nom_sslip }}</code>
+    (sslip.io renvoie l'IP écrite dans le nom){% else %} utilise un nom en <code>.sslip.io</code>{% endif %},
+    puis <code>docker compose up -d</code> et ouvre <code>https://{{ nom_sslip or 'ce-nom' }}</code>. Voir <em>infra/SETUP.md</em>, section 13.</p>
+  {% elif cles_impossible == 'http' %}
+  <p class="alerte">Face ID ne marche qu'en HTTPS : ouvre le site par son adresse <code>https://</code> (page <a href="/installer">Installer</a>).</p>
+  {% else %}
+  <form id="ajout-cle" class="actions">
+    <input name="nom" placeholder="Nom de l'appareil (ex. iPhone)" maxlength="60" required style="flex: 1; min-width: 180px">
+    <button class="principal">Ajouter cet appareil</button>
+  </form>
+  <p class="alerte" id="erreur-cle" hidden></p>
+  <script src="/static/cles.js"></script>
+  <script>
+    (() => {
+      const form = document.getElementById("ajout-cle"), erreur = document.getElementById("erreur-cle");
+      if (!clesPossibles()) { form.hidden = true; erreur.textContent = "Ce navigateur ne gère pas Face ID / Touch ID."; erreur.hidden = false; return; }
+      form.nom.value = /iPhone/.test(navigator.userAgent) ? "iPhone" : /iPad/.test(navigator.userAgent) ? "iPad"
+        : /Android/.test(navigator.userAgent) ? "Téléphone Android" : /Mac/.test(navigator.userAgent) ? "Mac" : "Ordinateur";
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        erreur.hidden = true;
+        try { await ajouterCle(form.nom.value); location.reload(); }
+        catch (err) { erreur.textContent = err.message; erreur.hidden = false; }
+      });
+    })();
+  </script>
+  {% endif %}
+</div>
+<style>
+  .liste-cles { list-style: none; padding: 0; margin: 0 0 12px; }
+  .liste-cles li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--bord); }
+  .liste-cles form { margin: 0; }
+  .lien-danger { color: var(--alerte); }
+</style>
 <form method="post" action="/compte" class="carte" style="max-width: 420px">
   <strong>Changer le mot de passe</strong>
   {% if erreur %}<p class="alerte">{{ erreur }}</p>{% endif %}

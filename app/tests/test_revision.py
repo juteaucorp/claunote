@@ -137,21 +137,36 @@ def test_parse_cartes():
     assert "flashcards" in revision.prompt("cartes", "VLAN") and "20 flashcards" in revision.prompt("cartes", "VLAN")
 
 
-def test_repetition_espacee():
-    j = dt.date(2026, 10, 23)
-    f, i, n, le = revision.repetition(2.5, 0, 0, 4, j)
-    assert (i, n, le) == (1, 1, j + dt.timedelta(days=1))
-    f, i, n, le = revision.repetition(f, i, n, 4, j)
-    assert (i, n) == (3, 2)
-    f2, i2, n2, _ = revision.repetition(f, i, n, 4, j)
-    assert i2 == round(3 * f) and n2 == 3
-    # Ratée : on recommence, aujourd'hui même, et elle devient plus difficile
-    f3, i3, n3, le3 = revision.repetition(f2, i2, n2, 0, j)
-    assert (i3, n3, le3) == (0, 0, j) and f3 < f2
-    assert revision.repetition(1.3, 0, 0, 0, j)[0] == 1.3
-    assert revision.repetition(2.5, 0, 0, 5, j)[1] > revision.repetition(2.5, 0, 0, 4, j)[1]
+def test_repetition_espacee_fsrs():
+    t = dt.datetime(2026, 10, 23, 18, tzinfo=dt.timezone.utc)
+    neuve = {"id": 1, "facilite": 2.5, "intervalle": 0, "repetitions": 0, "prochaine": t.date(), "vue_le": None}
+    # Nouvelle carte : « À revoir » et « Bien » la refont voir dans quelques minutes (étapes d'apprentissage)
+    assert revision.delai(neuve, 0, t) == "1 min" and revision.delai(neuve, 4, t) == "10 min"
+    assert revision.delai(neuve, 5, t) not in ("1 min", "10 min")       # « Facile » : directement dans des jours
+    m = revision.repetition(neuve, 4, t)
+    assert m["repetitions"] == 1 and m["retenue"] is None and m["fsrs"]["card_id"] == 1
+    # Suivie : l'état FSRS est repris, l'intervalle grandit avec les bonnes réponses
+    k = {**neuve, "fsrs": m["fsrs"], "repetitions": 1}
+    m2 = revision.repetition(k, 4, m["echeance"], hasard=False)
+    k2 = {**k, "fsrs": m2["fsrs"], "repetitions": 2}
+    m3 = revision.repetition(k2, 4, m2["echeance"], hasard=False)
+    assert m3["intervalle"] > m2["intervalle"] >= 1 and 0 < m3["retenue"] <= 1
+    # Ratée : elle revient vite et devient plus difficile
+    m4 = revision.repetition({**k2, "fsrs": m3["fsrs"]}, 0, m3["echeance"], hasard=False)
+    assert m4["intervalle"] == 0 and m4["difficulte"] > m3["difficulte"] and m4["repetitions"] == 2
     with pytest.raises(ValueError):
-        revision.repetition(2.5, 0, 0, 2, j)
+        revision.repetition(neuve, 2, t)
+
+
+def test_carte_sm2_reprise_par_fsrs():
+    """Une carte suivie avec l'ancien SM-2 garde son rythme : intervalle de 30 j → elle n'est pas remise à zéro."""
+    t = dt.datetime(2026, 10, 23, 18, tzinfo=dt.timezone.utc)
+    ancienne = {"id": 2, "facilite": 2.6, "intervalle": 30, "repetitions": 5, "prochaine": t.date(),
+                "vue_le": t - dt.timedelta(days=30)}
+    c = revision.carte_fsrs(ancienne)
+    assert c.state.name == "Review" and c.stability == 30 and 1 <= c.difficulty <= 10
+    assert revision.repetition(ancienne, 4, t, hasard=False)["intervalle"] > 30
+    assert revision.carte_fsrs({**ancienne, "facilite": 1.3}).difficulty > c.difficulty
 
 
 def test_consigne_et_epreuve_blanche():

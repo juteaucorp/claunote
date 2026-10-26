@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block titre %}Progression{% endblock %}
+{% block contenu %}
+{% include "_reviser.html" %}
+<p class="fil"><a href="/reviser">Réviser</a> › Progression</p>
+<h1>Progression</h1>
+
+<div class="tuiles-stats">
+  <div class="carte stat"><span class="doux">Série</span>
+    <strong>{{ p.serie }} jour{{ 's' if p.serie > 1 }}</strong><span class="doux">de travail d'affilée</span></div>
+  <div class="carte stat"><span class="doux">Flashcards ({{ p.jours }} j)</span>
+    <strong>{{ p.reponses }}</strong><span class="doux">{% if p.reussite is not none %}{{ p.reussite }} % de bonnes réponses{% else %}aucune réponse{% endif %}</span></div>
+  <div class="carte stat"><span class="doux">Mémoire estimée</span>
+    <strong>{{ p.cartes.retenue ~ ' %' if p.cartes.retenue is not none else '–' }}</strong>
+    <span class="doux">chance de te souvenir d'une carte aujourd'hui</span></div>
+  <div class="carte stat"><span class="doux">Cartes sues</span>
+    <strong>{{ p.cartes.sues }}<small>/{{ p.cartes.total }}</small></strong>
+    <span class="doux">retenues au moins 3 semaines</span></div>
+</div>
+
+<h2>Flashcards par jour</h2>
+<div class="carte">
+  {% if p.reponses or p.revisions %}
+  <p class="doux legende-graphe">{{ p.jours_actifs }} jour{{ 's' if p.jours_actifs > 1 }} actif{{ 's' if p.jours_actifs > 1 }} sur {{ p.jours }}
+    · {{ p.revisions }} révision{{ 's' if p.revisions > 1 }} faite{{ 's' if p.revisions > 1 }}</p>
+  <div class="graphe" role="img" aria-label="Réponses aux flashcards par jour sur {{ p.jours }} jours">
+    <span class="graphe-max doux">{{ p.max_jour }}</span>
+    <div class="histo">
+      {% for a in p.activite %}
+      {% set info = a.jour.strftime('%d/%m') ~ ' : ' ~ a.reponses ~ ' réponse' ~ ('s' if a.reponses > 1 else '')
+                    ~ ((' dont ' ~ a.reussies ~ ' bonne' ~ ('s' if a.reussies > 1 else '')) if a.reponses else '')
+                    ~ ((' · ' ~ a.revisions ~ ' révision' ~ ('s' if a.revisions > 1 else '')) if a.revisions else '') %}
+      <span class="histo-jour {{ 'vide' if not a.reponses }}" tabindex="0" data-info="{{ info }}" aria-label="{{ info }}">
+        <span style="height: {{ (100 * a.reponses / p.max_jour)|round(1) if a.reponses else 0 }}%"></span>
+        {% if a.revisions %}<i class="point-revision" aria-hidden="true"></i>{% endif %}
+      </span>
+      {% endfor %}
+    </div>
+    <div class="axe doux"><span>{{ p.activite[0].jour.strftime('%d/%m') }}</span><span>aujourd'hui</span></div>
+  </div>
+  <p class="doux">Un point sous un jour = une révision faite ce jour-là.</p>
+  <details><summary class="doux">Voir en tableau</summary>
+    <table class="tableau-stats"><thead><tr><th>Jour</th><th>Réponses</th><th>Bonnes</th><th>Révisions</th></tr></thead>
+      <tbody>{% for a in p.activite|reverse if a.reponses or a.revisions %}<tr><td>{{ a.jour.strftime('%d/%m') }}</td><td>{{ a.reponses }}</td><td>{{ a.reussies }}</td><td>{{ a.revisions }}</td></tr>{% endfor %}</tbody></table>
+  </details>
+  {% else %}
+  <p class="doux">Rien depuis {{ p.jours }} jours. <a href="/cartes/session">Réviser les flashcards</a></p>
+  {% endif %}
+</div>
+
+{% if p.matieres %}
+<h2>Par matière</h2>
+<div class="carte defile">
+  <table class="tableau-stats">
+    <thead><tr><th>Matière</th><th>Cartes sues</th><th>À revoir</th><th>Mémoire</th><th>Réussite ({{ p.jours }} j)</th><th>Quiz</th><th>Révisions faites</th></tr></thead>
+    <tbody>
+    {% for m in p.matieres %}
+      <tr><td><strong>{{ m.matiere }}</strong></td>
+        <td>{{ m.sues }}/{{ m.cartes }}{% if m.cartes %}<span class="mini-barre"><span style="width: {{ (100 * m.sues / m.cartes)|round }}%"></span></span>{% endif %}</td>
+        <td>{{ m.a_revoir or '–' }}</td>
+        <td>{{ m.retenue ~ ' %' if m.retenue is not none else '–' }}</td>
+        <td>{{ m.reussite ~ ' %' if m.reussite is not none else '–' }}{% if m.reponses %} <span class="doux">({{ m.reponses }})</span>{% endif %}</td>
+        <td>{{ m.quiz ~ ' %' if m.quiz is not none else '–' }}{% if m.nb_quiz %} <span class="doux">({{ m.nb_quiz }})</span>{% endif %}</td>
+        <td>{{ m.faites or '–' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if p.notes %}
+<h2>Notes Pronote</h2>
+<div class="carte defile">
+  <table class="tableau-stats">
+    <thead><tr><th>Matière</th><th>Moyenne</th><th>Classe</th><th>Tendance</th><th>Dernières notes</th></tr></thead>
+    <tbody>
+    {% for n in p.notes %}
+      <tr><td><strong>{{ n.matiere|matiere }}</strong> <span class="doux">({{ n.n }})</span></td>
+        <td><strong>{{ '%.1f'|format(n.moyenne)|replace('.', ',') if n.moyenne is not none else '–' }}</strong></td>
+        <td>{{ '%.1f'|format(n.classe)|replace('.', ',') if n.classe is not none else '–' }}</td>
+        <td>{% if n.tendance is none %}<span class="doux">–</span>
+          {% elif n.tendance > 0.4 %}<span class="tendance hausse">↗ +{{ n.tendance|string|replace('.', ',') }}</span>
+          {% elif n.tendance < -0.4 %}<span class="tendance baisse">↘ {{ n.tendance|string|replace('.', ',') }}</span>
+          {% else %}<span class="tendance">→ stable</span>{% endif %}</td>
+        <td>{% if n.notes|length > 1 %}
+          {% set larg = 114 / (n.notes|length - 1) %}
+          <svg class="courbe" viewBox="0 0 120 30" aria-label="Dernières notes : {{ n.notes|join(', ') }} sur 20">
+            <line x1="3" x2="117" y1="15" y2="15" class="moitie"></line>
+            <polyline points="{% for v in n.notes %}{{ (3 + loop.index0 * larg)|round(1) }},{{ (27 - v * 1.2)|round(1) }} {% endfor %}"></polyline>
+            {% for v in n.notes %}<circle cx="{{ (3 + loop.index0 * larg)|round(1) }}" cy="{{ (27 - v * 1.2)|round(1) }}" r="{{ 3 if loop.last else 1.8 }}"><title>{{ v|string|replace('.', ',') }}/20</title></circle>{% endfor %}
+          </svg>
+        {% else %}{{ n.notes[0]|string|replace('.', ',') }}/20{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="doux">Notes ramenées sur 20, coefficients compris. Tendance : moyenne des 3 dernières notes comparée aux 3 d'avant. Ligne pointillée : 10/20.</p>
+</div>
+{% endif %}
+
+<style>
+  .tuiles-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 8px; }
+  .tuiles-stats .stat { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+  .stat strong { font-size: 1.9rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .stat strong small { font-size: 1rem; color: var(--doux); font-weight: 500; }
+  .legende-graphe { margin-top: 0; }
+  .graphe { position: relative; padding-left: 26px; }
+  .graphe-max { position: absolute; left: 0; top: 0; font-size: .75rem; }
+  .histo { display: flex; align-items: flex-end; gap: 2px; height: 140px; border-bottom: 1px solid var(--bord);
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--bord) 70%, transparent) 1px, transparent 1px) top / 100% 50%; }
+  .histo-jour { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; outline: none; cursor: default; }
+  .histo-jour > span { display: block; width: 100%; border-radius: 4px 4px 0 0; background: var(--accent); min-height: 0; }
+  .histo-jour:hover > span, .histo-jour:focus > span { background: var(--accent-fonce); }
+  .histo-jour:hover, .histo-jour:focus { background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 4px 4px 0 0; }
+  .point-revision { position: absolute; bottom: -9px; left: 50%; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: var(--texte); opacity: .55; }
+  .histo-jour:hover::after, .histo-jour:focus::after { content: attr(data-info); position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+    z-index: 3; white-space: nowrap; padding: 6px 10px; border-radius: 8px; font-size: .8rem; color: var(--texte);
+    background: var(--carte); border: 1px solid var(--bord); box-shadow: var(--ombre); pointer-events: none; }
+  .histo-jour:first-child:hover::after, .histo-jour:first-child:focus::after, .histo-jour:nth-child(2):hover::after { left: 0; transform: none; }
+  .histo-jour:last-child:hover::after, .histo-jour:last-child:focus::after, .histo-jour:nth-last-child(2):hover::after { left: auto; right: 0; transform: none; }
+  .axe { display: flex; justify-content: space-between; font-size: .75rem; margin-top: 12px; }
+  .defile { overflow-x: auto; }
+  .tableau-stats { width: 100%; border-collapse: collapse; font-size: .92rem; font-variant-numeric: tabular-nums; }
+  .tableau-stats th { text-align: left; font-weight: 600; color: var(--doux); font-size: .82rem; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--bord); white-space: nowrap; }
+  .tableau-stats td { padding: 8px 10px 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--bord) 60%, transparent); white-space: nowrap; vertical-align: middle; }
+  .tableau-stats tr:last-child td { border-bottom: 0; }
+  .mini-barre { display: inline-block; vertical-align: middle; width: 48px; height: 6px; margin-left: 8px; border-radius: 999px; background: color-mix(in srgb, var(--texte) 9%, transparent); overflow: hidden; }
+  .mini-barre > span { display: block; height: 100%; background: var(--ok); border-radius: inherit; }
+  .tendance { font-weight: 600; color: var(--doux); }
+  .tendance.hausse { color: var(--ok); }
+  .tendance.baisse { color: var(--alerte); }
+  .courbe { width: 120px; height: 30px; overflow: visible; vertical-align: middle; }
+  .courbe polyline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+  .courbe circle { fill: var(--accent); stroke: var(--carte); stroke-width: 1; }
+  .courbe .moitie { stroke: var(--bord); stroke-dasharray: 3 3; }
+</style>
+{% endblock %}

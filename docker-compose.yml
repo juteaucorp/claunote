@@ -65,6 +65,18 @@ services:
       - ollama:/root/.ollama   # modèles téléchargés
     # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
 
+  lecture:
+    # Petits modèles sur le processeur : PDF lus avec leurs tableaux (Docling), photo d'une formule → LaTeX
+    # (pix2tex), meilleurs passages en tête pour le chat (FlashRank). Facultatif : sans lui, tout marche
+    # comme avant. ~1,5 Go de mémoire une fois tout chargé. Pour s'en passer : docker compose stop lecture.
+    build: ./lecture
+    restart: unless-stopped
+    environment:
+      LECTURE_THREADS: ${LECTURE_THREADS:-2}   # cœurs utilisés par calcul
+    volumes:
+      - lecture:/modeles   # modèles téléchargés au premier usage
+    # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
+
   pronote:
     build: ./pronote
     restart: unless-stopped
@@ -88,6 +100,7 @@ services:
       - maj:/maj
 
 volumes:
+  lecture:
   maj:
   ollama:
   pgdata:

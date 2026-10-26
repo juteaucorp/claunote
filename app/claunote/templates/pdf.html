@@ -70,20 +70,20 @@
   {% if s.questions %}
   <ol class="questions">
     {% for q in s.questions %}
-    <li><strong>{{ q.question }}</strong>
-      <ol class="choix">{% for c in q.choix %}<li>{{ c }}</li>{% endfor %}</ol></li>
+    <li><strong>{{ q.question|maths }}</strong>
+      <ol class="choix">{% for c in q.choix %}<li>{{ c|maths }}</li>{% endfor %}</ol></li>
     {% endfor %}
   </ol>
   {% if s.avec_corrige %}
   <div class="corrige"><h2>Corrigé</h2>
-    <ol>{% for q in s.questions %}<li><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse] }}</strong>
-      {% if q.explication %}<br><span class="doux">{{ q.explication }}{% if q.source %} [{{ q.source }}]{% endif %}</span>{% endif %}</li>{% endfor %}</ol>
+    <ol>{% for q in s.questions %}<li><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse]|maths }}</strong>
+      {% if q.explication %}<br><span class="doux">{{ q.explication|maths }}{% if q.source %} [{{ q.source }}]{% endif %}</span>{% endif %}</li>{% endfor %}</ol>
   </div>
   {% endif %}
   {% endif %}
   {% if s.cartes %}
   <table class="cartes"><tr><th>Question</th><th>Réponse</th></tr>
-    {% for k in s.cartes %}<tr><td>{{ k.recto }}</td><td>{{ k.verso }}</td></tr>{% endfor %}</table>
+    {% for k in s.cartes %}<tr><td>{{ k.recto|maths }}</td><td>{{ k.verso|maths }}</td></tr>{% endfor %}</table>
   {% endif %}
   {% if s.corrige %}<div class="corrige">{{ s.corrige }}</div>{% endif %}
   {% if s.sources or s.web %}

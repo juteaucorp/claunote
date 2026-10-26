@@ -17,7 +17,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from claunote import revision
+from claunote import lecture, revision
 from claunote.agent import ErreurAgent, demander
 
 MODES = {"ia": "IA", "local": "Rapide, sans IA"}
@@ -32,7 +32,7 @@ STATUTS = {"a_verifier": "classement à vérifier", "hors_cours": "rangé hors c
 REGLES = """- Ses documents d'abord : cite le repère [Dn] des points qui en viennent. N'invente rien.
 - Son agenda (contrôles, devoirs) est fourni : sers-t'en pour les questions d'organisation.
 - Une question sans rapport avec ses cours (méthode, organisation, culture générale) : réponds quand même.
-- Français, Markdown simple, sans HTML ni LaTeX (formules en texte : u_n = u_0 × q^n)."""
+- Français, Markdown simple, sans HTML."""
 
 PROMPT = """Tu es l'assistant de révision d'un élève (du collège au BTS SIO). Il te pose une question
 dans un chat. Sur l'entrée : la discussion jusqu'ici, son agenda, puis des passages de ses documents
@@ -41,6 +41,7 @@ Règles :
 - Réponds directement à la question, simplement et brièvement (quelques lignes, une liste ou un petit
   exemple si ça aide). Développe seulement si l'élève le demande.
 """ + REGLES + """
+- Formules de maths, de physique ou de chimie en LaTeX entre $…$ (ex. $u_n = u_0 \\times q^n$) : le site les dessine.
 - Si ses documents ne suffisent pas ou si c'est une info pratique ou récente, tu peux chercher sur le web
   (WebSearch, WebFetch), sur des sources fiables ; marque chaque apport du web [W1], [W2]…
 {brouillon}Réponds uniquement avec ta réponse{web_md}.
@@ -56,6 +57,7 @@ BROUILLON = """- Un assistant local, plus petit que toi, a préparé un brouillo
 PROMPT_LOCAL = """Tu es l'assistant de révision d'un élève. Réponds à sa dernière question à partir de ses documents
 fournis (repères [D1], [D2]…), simplement et brièvement. Cite le repère des points qui en viennent.
 """ + REGLES + """
+- Formules en texte simple (u_n = u_0 × q^n), pas de LaTeX : ta réponse est dans du JSON.
 Si la réponse n'est pas dans ses documents, ou si tu n'es pas sûr, dis-le avec une confiance basse et
 pose ta question à un assistant plus fort (il a accès au web et à tous les documents).{portee}
 Réponds UNIQUEMENT avec un objet JSON :
@@ -63,6 +65,16 @@ Réponds UNIQUEMENT avec un objet JSON :
 - confiance : de 0 à 1, ta certitude que ta réponse est juste et complète.
 - besoin_aide : true si tu as besoin de l'assistant plus fort (info absente, doute, calcul délicat…).
 """
+
+
+def reordonner(question: str, passages: list[dict], garder: int) -> list[dict]:
+    """Les passages les plus utiles d'abord : FlashRank (service lecture) relit chaque passage avec la question,
+    plus finement que la recherche par mots et par le sens. Sans le service : l'ordre de la recherche."""
+    scores = lecture.classer(question, [p.get("texte") or "" for p in passages])
+    if scores is None:
+        return passages[:garder]
+    ordre = sorted(range(len(passages)), key=lambda i: -scores[i])
+    return [passages[i] for i in ordre[:garder]]
 
 
 def requete(question: str) -> str:
