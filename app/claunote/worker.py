@@ -1218,6 +1218,19 @@ def reclasser_en_attente():
                  lambda doc: f"Reclassement de « {doc['titre'] or doc['nom']} »")
 
 
+def vider_corbeille(kd: KDrive):
+    """Fichiers des documents supprimés sur le site : à la corbeille kDrive (déjà partis : on oublie)."""
+    for kdrive_id in db.corbeille():
+        if ARRET.is_set():
+            return
+        try:
+            kd.delete(kdrive_id)
+        except httpx.HTTPStatusError as e:   # panne (5xx) : KDriveIndisponible, réessayé au tour suivant
+            if e.response.status_code != 404:   # refus durable (droits…) : inutile de réessayer chaque minute
+                log(f"corbeille kDrive : fichier {kdrive_id} non supprimé ({e.response.status_code}), abandonné")
+        db.corbeille_faite(kdrive_id)
+
+
 def pdf_manquants(kd: KDrive):
     for rev in db.revisions_sans_pdf():
         copier_pdf(kd, rev)
@@ -1243,6 +1256,7 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
         return dernier_nettoyage
     etape("rangement", ranger_en_attente, kd)
     etape("PDF des révisions", pdf_manquants, kd)
+    etape("corbeille kDrive", vider_corbeille, kd)
     inbox = etape("inbox", lire_inbox, kd)
     if inbox is not None:
         ETAT["inbox"] = frozenset(i["id"] for i in inbox)

@@ -640,26 +640,17 @@ def explication_erreur(message: str | None) -> tuple[str, str]:
 templates.env.filters["explication_erreur"] = explication_erreur
 
 
-def _deplacer(doc, parts: list[str]):
-    kd = KDrive.from_env()
-    dest_id = kd.ensure_path(ETUDES_ID, parts)
-    kd.move(doc["kdrive_id"], dest_id)
-    for lie in (doc["kdrive_md_id"], doc.get("variante_kdrive_id")):
-        if lie:
-            kd.move(lie, dest_id)
-
-
 @app.post("/doc/{doc_id}/classer")
 def classer(doc_id: int, niveau: str = Form(...), matiere: str = Form(...), type: str = Form(...),
             retour: str = Form("/a-verifier")):
-    """Classement manuel : déplace le scan et sa transcription dans le bon dossier."""
+    """Classement manuel. Le worker déplace ensuite le scan et sa transcription dans le bon dossier kDrive
+    (comme pour Organiser) : la page répond tout de suite, même si kDrive est lent ou en panne."""
     doc = db.document(doc_id)
     if doc is None or niveau not in NIVEAUX or type not in TYPES or not matiere.strip():
         raise HTTPException(400, "classement invalide")
-    matiere = matiere.strip()
-    _deplacer(doc, rangement.dossier(niveau, matiere, type))
-    db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere, type=type, confiance=1.0, note=None, erreur=None,
-           relire=False)
+    db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere.strip(), type=type, confiance=1.0, note=None,
+           erreur=None, relire=False, a_ranger=True)
+    db.demander_scan()  # réveille le worker : il déplace les fichiers dans kDrive
     return RedirectResponse(_suite_sure(retour), status_code=303)
 
 
@@ -669,8 +660,8 @@ def mettre_hors_cours(doc_id: int, retour: str = Form("/hors-cours")):
     doc = db.document(doc_id)
     if doc is None or doc["statut"] == "nouveau":
         raise HTTPException(400, "document en cours d'analyse")
-    _deplacer(doc, rangement.HORS_COURS)
-    db.maj(doc_id, statut="hors_cours", note=None, erreur=None)
+    db.maj(doc_id, statut="hors_cours", note=None, erreur=None, a_ranger=True)
+    db.demander_scan()  # le worker le range dans Etudes/hors-cours
     return RedirectResponse(_suite_sure(retour), status_code=303)
 
 
@@ -744,6 +735,7 @@ def action_de_masse(ids: list[int] = Form([]), action: str = Form(...), nouveau_
         if len(ids) > SUPPRESSION_MAX:
             raise HTTPException(400, f"pas plus de {SUPPRESSION_MAX} suppressions à la fois")
         n = sum(_supprimer(i) for i in ids)
+        db.demander_scan()  # le worker envoie les fichiers à la corbeille kDrive
         message = f"{n} document{'s' if n > 1 else ''} supprimé{'s' if n > 1 else ''} (fichiers dans la corbeille kDrive)."
         return RedirectResponse(f"/organiser?{requete}&{urlencode({'message': message})}", status_code=303)
     if action in ("niveau", "matiere", "type"):
@@ -771,17 +763,12 @@ def action_de_masse(ids: list[int] = Form([]), action: str = Form(...), nouveau_
 
 
 def _supprimer(doc_id: int) -> bool:
-    """Scan et transcription à la corbeille kDrive (récupérables 30 jours), puis oubli en base."""
+    """Oubli en base tout de suite ; le worker envoie scan et transcription à la corbeille kDrive
+    (récupérables 30 jours), et réessaie si kDrive est en panne : aucun fichier n'est oublié."""
     doc = db.document(doc_id)
     if doc is None:
         return False
-    kd = KDrive.from_env()
-    for fid in (doc["kdrive_id"], doc["kdrive_md_id"], doc.get("variante_kdrive_id")):
-        if fid:
-            try:
-                kd.delete(fid)
-            except Exception as e:  # déjà supprimé à la main dans kDrive : on oublie quand même
-                print(f"suppression kDrive impossible ({fid}) : {e}", flush=True)
+    db.mettre_a_la_corbeille([f for f in (doc["kdrive_id"], doc["kdrive_md_id"], doc.get("variante_kdrive_id")) if f])
     db.supprimer(doc_id)
     return True
 
@@ -790,6 +777,7 @@ def _supprimer(doc_id: int) -> bool:
 def supprimer_document(doc_id: int, retour: str = Form("/a-verifier")):
     if not _supprimer(doc_id):
         raise HTTPException(404)
+    db.demander_scan()
     return RedirectResponse(_suite_sure(retour), status_code=303)
 
 

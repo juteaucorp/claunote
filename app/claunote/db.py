@@ -4,7 +4,6 @@ import os
 import secrets
 import threading
 
-import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg.types.json import Jsonb
@@ -145,6 +144,10 @@ CREATE TABLE IF NOT EXISTS cartes (
 CREATE INDEX IF NOT EXISTS cartes_prochaine ON cartes (prochaine);
 ALTER TABLE cartes ADD COLUMN IF NOT EXISTS echeance TIMESTAMPTZ;   -- FSRS : à la minute près (étapes d'apprentissage)
 ALTER TABLE cartes ADD COLUMN IF NOT EXISTS fsrs JSONB;             -- état FSRS (stabilité, difficulté…)
+CREATE TABLE IF NOT EXISTS kdrive_corbeille (                       -- fichiers à envoyer à la corbeille kDrive (worker)
+    kdrive_id  BIGINT PRIMARY KEY,
+    le         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS cles_acces (                             -- Face ID / Touch ID (passkeys) : clés publiques
     id           TEXT PRIMARY KEY,                                  -- identifiant de la clé (base64url)
     cle_publique BYTEA NOT NULL,
@@ -339,7 +342,7 @@ UPDATE messages SET statut = 'erreur', erreur = 'Réponse interrompue (redémarr
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
           "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note",
-          "variante_kdrive_id", "variante_nom", "essais", "modele", "avis", "relire"}
+          "variante_kdrive_id", "variante_nom", "essais", "modele", "avis", "relire", "a_ranger"}
 
 
 _pool: ConnectionPool | None = None
@@ -370,11 +373,6 @@ atexit.register(fermer)
 def init():
     with connect() as c:
         c.execute(SCHEMA)
-
-
-def par_kdrive(kdrive_id: int):
-    with connect() as c:
-        return c.execute("SELECT * FROM documents WHERE kdrive_id = %s", (kdrive_id,)).fetchone()
 
 
 def creer(kdrive_id: int, nom: str) -> int:
@@ -529,6 +527,24 @@ def reessayer_erreurs() -> int:
 def supprimer(doc_id: int):
     with connect() as c:
         c.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+
+
+def mettre_a_la_corbeille(kdrive_ids: list[int]):
+    """Fichiers kDrive à supprimer : le worker s'en charge, et réessaie tant que kDrive est en panne."""
+    with connect() as c:
+        for i in kdrive_ids:
+            c.execute("INSERT INTO kdrive_corbeille (kdrive_id) VALUES (%s) ON CONFLICT DO NOTHING", (i,))
+
+
+def corbeille(limite: int = 50) -> list[int]:
+    with connect() as c:
+        return [r["kdrive_id"] for r in c.execute("SELECT kdrive_id FROM kdrive_corbeille ORDER BY le LIMIT %s",
+                                                  (limite,)).fetchall()]
+
+
+def corbeille_faite(kdrive_id: int):
+    with connect() as c:
+        c.execute("DELETE FROM kdrive_corbeille WHERE kdrive_id = %s", (kdrive_id,))
 
 
 def a_reclasser(limite: int):

@@ -846,3 +846,22 @@ def test_memoire_basse_decharge_les_modeles_au_repos(worker, monkeypatch):
     assert not worker.liberer_si_besoin(1300)                             # pas deux fois en 10 min
     monkeypatch.setattr(worker.ressources, "local_actif", lambda: True)
     assert not worker.liberer_si_besoin(5000)                             # une analyse locale tourne : on attend
+
+
+def test_corbeille_kdrive(worker, monkeypatch):
+    import httpx
+    faits, a_faire = [], [11, 12, 13]
+
+    class KD:
+        def delete(self, i):
+            if i == 12:   # déjà supprimé à la main dans kDrive
+                raise httpx.HTTPStatusError("x", request=None, response=httpx.Response(404))
+            if i == 13:
+                raise worker.KDriveIndisponible("panne")
+    monkeypatch.setattr(worker.db, "corbeille", lambda: list(a_faire))
+    monkeypatch.setattr(worker.db, "corbeille_faite", faits.append)
+    try:
+        worker.vider_corbeille(KD())
+    except worker.KDriveIndisponible:
+        pass
+    assert faits == [11, 12]          # 13 reste dans la file : réessayé quand kDrive revient
