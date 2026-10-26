@@ -171,7 +171,8 @@ Page **Déposer** : glisse des fichiers ou un dossier complet (ou boutons « Cho
 est facultatif : il range le dépôt dans un dossier à ce nom. Les fichiers partent dans
 `Etudes/inbox` et un scan est lancé tout de suite.
 
-Après une mise à jour du code : `git pull && docker compose up -d --build`.
+Mise à jour du code : *Plus → Réglages → Mise à jour* sur le site (section 15), ou à la main
+`git pull && docker compose up -d --build`.
 
 ### Documents personnels oubliés (RIB, carte d'identité…)
 
@@ -507,7 +508,38 @@ Le menu **Plus** a quatre entrées, chacune avec ses onglets :
 - **Ajouter** : Déposer, Import de dossiers ;
 - **Ranger** : À vérifier, Tous les documents, Matières, Hors cours ;
 - **Activité** : Analyses, État du service ;
-- **Réglages** : Compte, Notifications.
+- **Réglages** : Compte, Notifications, Mise à jour.
 
 La barre de recherche de l'accueil sert aussi à **poser une question à l'IA** (bouton *Demander*). Sur ordinateur,
 la touche `/` place le curseur dans la recherche.
+
+## 15. Mise à jour depuis le site
+
+*Plus → Réglages → Mise à jour* : version installée, nouveautés disponibles sur GitHub (vérifiées toutes
+les 6 h, badge sur le menu Réglages) et trois actions **réservées à l'admin** (mot de passe du compte redemandé) :
+
+- **Tout mettre à jour** : `git pull`, construction des nouvelles images (le site reste en ligne pendant ce
+  temps), puis redémarrage de tous les services. Le site se coupe environ une minute : la page se reconnecte
+  toute seule. Si la construction échoue, l'ancienne version continue de tourner.
+- **Redémarrer** : site et worker, sans changer de version.
+- **Libérer de la place** : supprime les anciennes images Docker et le cache de construction.
+
+```
+site ──demande──▶ volume « maj » ──▶ service maj : git pull, docker compose build, up -d
+site ◀── état + journal ─────────────────┘
+```
+
+Le service `maj` pilote Docker (socket monté) : il n'exécute **que ces actions**, jamais une commande venue
+du site. git tourne sous le propriétaire du dossier (les fichiers ne passent pas à root). Si un fichier a été
+modifié à la main sur la VM, la mise à jour est refusée sans rien toucher (`git status` pour voir lequel).
+
+**Première fois** : le service n'existe pas encore, il faut une dernière mise à jour à la main, depuis le
+dossier de Claunote (pas avec `sudo`, qui peut perdre le dossier courant) :
+
+```bash
+git pull && docker compose up -d --build
+```
+
+Le service `maj` lui-même n'est jamais reconstruit par le site (il s'arrêterait en plein travail) ; son
+script est relu dans le dépôt à chaque action, donc il suit les mises à jour. Si `infra/maj/Dockerfile`
+change un jour : `docker compose up -d --build maj`.

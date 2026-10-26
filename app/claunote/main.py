@@ -23,8 +23,8 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, auth, db, decoupage, importation, index, local, matieres, modeles, notifications,
-                      pdf, pronote, question, rangement, ressources, revision, sensible)
+from claunote import (agent, anki, auth, db, decoupage, importation, index, local, maj, matieres, modeles,
+                      notifications, pdf, pronote, question, rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -154,6 +154,7 @@ templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirme
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
 templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
+templates.env.globals["nb_mises_a_jour"] = maj.disponibles
 templates.env.filters["note"] = pronote.libelle_note
 _matieres_cours = {"le": 0.0, "noms": []}
 
@@ -291,6 +292,43 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
         "message": "Mot de passe changé. Les autres appareils devront se reconnecter."})
     _cookie_session(request, r, request.app.state.compte)
     return r
+
+
+def _contexte_maj(request: Request, **plus) -> dict:
+    return {"present": maj.present(), "e": maj.etat(), "journal": maj.journal(),
+            "heure": lambda d: _heure_fr(d.astimezone(pronote.PARIS)), **plus}
+
+
+@app.get("/mise-a-jour", response_class=HTMLResponse)
+def page_mise_a_jour(request: Request):
+    """Version installée, nouveautés sur GitHub, et bouton pour tout mettre à jour (service maj)."""
+    return templates.TemplateResponse(request, "mise_a_jour.html", _contexte_maj(request))
+
+
+@app.get("/mise-a-jour/etat", response_class=HTMLResponse)
+def etat_mise_a_jour(request: Request):
+    """Bloc rafraîchi pendant une action (le site lui-même redémarre au milieu d'une mise à jour)."""
+    return templates.TemplateResponse(request, "_mise_a_jour.html", _contexte_maj(request))
+
+
+@app.post("/mise-a-jour/{action}", response_class=HTMLResponse)
+def demander_mise_a_jour(request: Request, action: str, mot_de_passe: str = Form("")):
+    """Réservé à l'admin : tout sauf « Vérifier » redemande le mot de passe du compte."""
+    if action not in maj.ACTIONS:
+        raise HTTPException(404)
+    compte = request.app.state.compte
+    ip = request.client.host if request.client else "?"
+    erreur = None
+    if not maj.present():
+        erreur = "Le service maj ne tourne pas sur la VM (voir l'installation ci-dessous)."
+    elif action != "verifier" and (compte.bloque(ip) or not compte.verifier(ip, compte.utilisateur, mot_de_passe)):
+        erreur = "Mot de passe incorrect : action réservée à l'admin."
+    else:
+        try:
+            maj.demander(action)
+        except RuntimeError as e:
+            erreur = str(e)
+    return templates.TemplateResponse(request, "_mise_a_jour.html", _contexte_maj(request, erreur=erreur))
 
 
 @app.post("/deconnexion")

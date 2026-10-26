@@ -111,6 +111,10 @@ docker compose up -d --build  # site, worker, base, modèle local, Pronote, HTTP
 
 Ensuite, ouvre `http://<IP-VPN-de-la-VM>:8000`, connecte-toi, et dépose un premier scan.
 
+**Mises à jour** : depuis le site, *Plus → Réglages → Mise à jour → Tout mettre à jour* (mot de passe redemandé).
+Le service `maj` fait le `git pull` puis reconstruit et redémarre les services ; un badge prévient quand une
+nouvelle version est sur GitHub.
+
 ## Réglages principaux
 
 Tout se règle dans `.env` (voir les commentaires de [.env.example](.env.example)). Les réglages du quotidien
@@ -165,6 +169,7 @@ Les tests de lecture locale (OCR) se lancent si Tesseract est installé (`apt in
 | `app/claunote/matieres.py`, `rangement.py` | Matières en double, chemins et noms dans kDrive |
 | `app/claunote/pronote.py`, `pronote/` | Client Python et service Node (Pawnote) |
 | `app/claunote/db.py` | Schéma PostgreSQL (créé et mis à jour au démarrage) et requêtes |
+| `app/claunote/maj.py`, `infra/maj/` | Mise à jour depuis le site : le site dépose la demande, le service `maj` l'exécute |
 | `infra/` | Caddy (HTTPS local) et guide d'installation |
 
 <details>
