@@ -20,6 +20,17 @@
   <p class="carte {{ 'ok-maj' if e.statut == 'ok' else 'alerte' }}">{{ e.message }}
     {% if e.fin %}<span class="doux">({{ heure(e.fin) }})</span>{% endif %}</p>
 {% endif %}
+{% if not e.en_cours and 'GITHUB_TOKEN' in (e.message or '') %}
+  <div class="carte accent">
+    <strong>Dépôt privé : donne un jeton GitHub au service maj</strong>
+    <ol class="nouveautes">
+      <li>Sur GitHub : <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">nouveau jeton « fine-grained »</a>,
+        <em>Repository access</em> : seulement <code>claunote</code> ; <em>Permissions</em> : <strong>Contents → Read-only</strong>.</li>
+      <li>Sur la VM, dans le <code>.env</code> de Claunote : <code>GITHUB_TOKEN=github_pat_…</code></li>
+      <li>Ici : <strong>Vérifier maintenant</strong>. Pas besoin de redémarrer quoi que ce soit.</li>
+    </ol>
+  </div>
+{% endif %}
 
 <div class="carte">
   {% if e.version %}

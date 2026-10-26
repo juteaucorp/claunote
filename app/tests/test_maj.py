@@ -77,3 +77,11 @@ def test_sans_service_maj(client, tmp_path, monkeypatch):
 def test_reservee_aux_connectes(anonyme, dossier):
     assert anonyme.post("/mise-a-jour/verifier").status_code == 401
     assert not (dossier / "demande").exists()
+
+
+def test_explique_le_jeton_github(client, dossier):
+    (dossier / "etat.json").write_text(json.dumps({
+        "action": "verifier", "statut": "erreur",
+        "message": "Vérification impossible : GitHub refuse l'accès (dépôt privé) : ajoute GITHUB_TOKEN dans le .env de la VM."}))
+    r = client.get("/mise-a-jour")
+    assert "Dépôt privé : donne un jeton GitHub" in r.text and "Contents → Read-only" in r.text
