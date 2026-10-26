@@ -927,7 +927,8 @@ def prochaine_carte(rev_id: int | None = None):
         return c.execute(
             f"""SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
                WHERE {A_REVOIR} AND (%s::int IS NULL OR k.revision_id = %s)
-               ORDER BY k.repetitions = 0, COALESCE(k.echeance, k.prochaine::timestamptz), k.vue_le NULLS FIRST, k.id
+               ORDER BY COALESCE(k.echeance, k.prochaine::timestamptz) > now(), k.repetitions = 0,
+                        COALESCE(k.echeance, k.prochaine::timestamptz), k.vue_le NULLS FIRST, k.id
                LIMIT 1""",
             (rev_id, rev_id)).fetchone()
 
@@ -951,6 +952,43 @@ def nb_cartes_a_revoir(rev_id: int | None = None) -> int:
     with connect() as c:
         return c.execute(f"SELECT count(*) AS n FROM cartes k WHERE {A_REVOIR} "
                          "AND (%s::int IS NULL OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
+
+
+# --- Progression ------------------------------------------------------------
+
+def progression_donnees(jours: int = 30) -> dict:
+    """Matière première de la page Progression (calculs dans progression.py)."""
+    with connect() as c:
+        jour = "(le AT TIME ZONE 'Europe/Paris')::date"
+        return {
+            "revues": c.execute(
+                f"""SELECT {jour} AS jour, count(*) AS reponses, count(*) FILTER (WHERE note > 0) AS reussies
+                    FROM revues_cartes WHERE le > now() - make_interval(days => %s) GROUP BY 1""", (jours,)).fetchall(),
+            "revisions": c.execute(
+                """SELECT (fait_le AT TIME ZONE 'Europe/Paris')::date AS jour, count(*) AS n FROM revisions
+                   WHERE fait_le > now() - make_interval(days => %s) GROUP BY 1""", (jours,)).fetchall(),
+            # Jours où l'élève a travaillé (cartes ou révision faite), pour la série en cours
+            "jours_actifs": [r["jour"] for r in c.execute(
+                f"""SELECT DISTINCT {jour} AS jour FROM revues_cartes WHERE le > now() - interval '400 days'
+                    UNION SELECT (fait_le AT TIME ZONE 'Europe/Paris')::date FROM revisions
+                    WHERE fait_le > now() - interval '400 days' ORDER BY 1 DESC""").fetchall()],
+            "cartes": c.execute(
+                """SELECT k.id, k.fsrs, k.repetitions, k.facilite, k.intervalle, k.prochaine, k.vue_le,
+                          r.niveau, r.matiere, r.sujet
+                   FROM cartes k JOIN revisions r ON r.id = k.revision_id""").fetchall(),
+            "reussite": c.execute(
+                """SELECT r.matiere, count(*) AS reponses, count(*) FILTER (WHERE v.note > 0) AS reussies
+                   FROM revues_cartes v JOIN cartes k ON k.id = v.carte_id JOIN revisions r ON r.id = k.revision_id
+                   WHERE v.le > now() - make_interval(days => %s) GROUP BY r.matiere""", (jours,)).fetchall(),
+            "quiz": c.execute(
+                """SELECT matiere, count(*) AS n, sum((score->>'bonnes')::int) AS bonnes, sum((score->>'total')::int) AS total
+                   FROM revisions WHERE score IS NOT NULL AND (score->>'total')::int > 0 GROUP BY matiere""").fetchall(),
+            "faites": c.execute(
+                """SELECT matiere, count(*) AS n FROM revisions WHERE fait_le IS NOT NULL GROUP BY matiere""").fetchall(),
+            "notes": c.execute(
+                """SELECT matiere, le, valeur, sur, moyenne_classe, coefficient FROM pronote_notes
+                   ORDER BY le NULLS FIRST""").fetchall(),
+        }
 
 
 # --- Pronote ----------------------------------------------------------------

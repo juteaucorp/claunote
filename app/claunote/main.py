@@ -24,7 +24,7 @@ from markupsafe import Markup
 from starlette.background import BackgroundTask
 
 from claunote import (agent, anki, auth, db, decoupage, importation, index, local, maj, matieres, modeles,
-                      notifications, pdf, pronote, question, rangement, ressources, revision, sensible)
+                      notifications, pdf, progression, pronote, question, rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -1518,6 +1518,14 @@ def noter_carte(carte_id: int, note: int = Form(...), paquet: int | None = Form(
         raise HTTPException(400, "carte ou note invalide")
     db.maj_carte(carte_id, note, revision.repetition(carte, note))
     return RedirectResponse("/cartes/session" + (f"?paquet={paquet}" if paquet else ""), status_code=303)
+
+
+@app.get("/progression", response_class=HTMLResponse)
+def page_progression(request: Request):
+    """Régularité, mémoire des flashcards, réussite par matière et notes Pronote."""
+    maintenant = dt.datetime.now(pronote.PARIS)
+    p = progression.calculer(db.progression_donnees(), maintenant.date(), maintenant)
+    return templates.TemplateResponse(request, "progression.html", {"p": p})
 
 
 @app.get("/cartes/anki")
