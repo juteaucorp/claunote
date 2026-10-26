@@ -114,3 +114,11 @@ def test_bouton_formule_si_le_service_sait_faire(client, monkeypatch):
     assert 'id="bouton-formule"' in client.get("/demander").text
     monkeypatch.setattr(lecture, "etat", lambda: {})
     assert 'id="bouton-formule"' not in client.get("/demander").text
+
+
+def test_liberer(monkeypatch):
+    faux = Faux({"/liberer": (200, {"decharges": ["docling"]})})
+    monkeypatch.setattr(httpx, "request", faux)
+    assert lecture.liberer() == ["docling"]
+    monkeypatch.setattr(httpx, "request", Faux({"/liberer": httpx.ConnectError("absent")}))
+    assert lecture.liberer() == []

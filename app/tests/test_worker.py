@@ -831,3 +831,18 @@ def test_analyses_locales_respirent(worker, monkeypatch):
     assert faits == [1, 2] and len(pauses) == 2
     worker.en_parallele([3], faits.append, str, 1, continuer=lambda: True)
     assert faits == [1, 2, 3] and len(pauses) == 2
+
+
+def test_memoire_basse_decharge_les_modeles_au_repos(worker, monkeypatch):
+    appels = []
+    monkeypatch.setattr(worker, "_liberation", {"le": float("-inf")})
+    monkeypatch.setattr(worker.local, "liberer", lambda: appels.append("ollama") or True)
+    monkeypatch.setattr(worker.lecture, "liberer", lambda: appels.append("lecture") or ["docling"])
+    monkeypatch.setattr(worker.ressources, "local_actif", lambda: False)
+    monkeypatch.setattr(worker.ressources, "memoire_libre_mo", lambda: 5000)
+    assert not worker.liberer_si_besoin(1000) and appels == []           # mémoire large : rien
+    monkeypatch.setattr(worker.ressources, "memoire_libre_mo", lambda: 700)
+    assert worker.liberer_si_besoin(1000) and appels == ["ollama", "lecture"]
+    assert not worker.liberer_si_besoin(1300)                             # pas deux fois en 10 min
+    monkeypatch.setattr(worker.ressources, "local_actif", lambda: True)
+    assert not worker.liberer_si_besoin(5000)                             # une analyse locale tourne : on attend

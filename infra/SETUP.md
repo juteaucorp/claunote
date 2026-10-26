@@ -521,6 +521,17 @@ moyenne 60 ┼ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ �
 
 La page *Activité* affiche la moyenne sur la durée et si le travail de fond est en train de ralentir.
 
+### Mémoire : rendue quand elle ne sert pas
+
+- **Ollama** garde son modèle (~2,3 Go) **5 min** après sa dernière réponse, puis le décharge
+  (`OLLAMA_GARDER`) ; il se recharge en quelques secondes à la demande suivante. Il prépare 2 réponses en
+  parallèle au plus (le fond + une question du chat) au lieu de 4 : ~600 Mo de contexte en moins.
+- **Service lecture** : un modèle inutilisé depuis 10 min est déchargé et sa mémoire rendue au système
+  (`LECTURE_GARDER_MIN`).
+- **Mémoire basse** (moins de 2 × `LOCAL_MEMOIRE_MIN_MO` libres) : le worker fait décharger tout de suite
+  les modèles au repos, sans attendre leur délai ; rien n'est perdu, ils se rechargent au prochain usage.
+- **Service Pronote** : tas JavaScript plafonné à 256 Mo (Node garderait sinon jusqu'à 2 Go).
+
 ### Mise en place
 
 Ollama démarre avec le reste (`docker compose up -d`) et télécharge ses deux modèles au premier lancement
@@ -564,10 +575,13 @@ la touche `/` place le curseur dans la recherche.
 les 6 h, badge sur le menu Réglages) et trois actions **réservées à l'admin** (le compte connecté) :
 
 - **Tout mettre à jour** : `git pull`, construction des nouvelles images (le site reste en ligne pendant ce
-  temps), puis redémarrage de tous les services. Le site se coupe environ une minute : la page se reconnecte
+  temps), puis redémarrage des services modifiés. **Seul ce qui a changé est reconstruit** (un changement du
+  site ne reconstruit pas le service lecture et son PyTorch ; un changement de documentation, rien du tout),
+  et les téléchargements pip restent en cache d'une fois sur l'autre. Le journal donne la durée de chaque étape. Le site se coupe environ une minute : la page se reconnecte
   toute seule. Si la construction échoue, l'ancienne version continue de tourner.
 - **Redémarrer** : site et worker, sans changer de version.
-- **Libérer de la place** : supprime les anciennes images Docker et le cache de construction.
+- **Libérer de la place** : supprime les anciennes images Docker et le cache de construction de plus de
+  30 jours (le cache récent est gardé : sans lui, la mise à jour suivante retéléchargerait tout).
 
 ```
 site ──demande──▶ volume « maj » ──▶ service maj : git pull, docker compose build, up -d

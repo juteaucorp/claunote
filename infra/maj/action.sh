@@ -35,6 +35,20 @@ fin() {  # fin <ok|erreur> <message>
   [ "$1" = ok ] || exit 1
 }
 services() { docker compose config --services | grep -vx maj; }   # tout sauf ce service-ci
+DEBUT=$(date +%s)
+duree() { s=$(( $(date +%s) - ${1:-$DEBUT} )); [ $s -ge 60 ] && echo "$((s / 60)) min $((s % 60)) s" || echo "$s s"; }
+etape() { echo "== $1 ($(duree))"; ecrire '.message=$m' --arg m "$1"; }
+
+# Services à reconstruire d'après les fichiers changés entre deux versions : un changement dans app/ ne
+# reconstruit pas le service lecture (PyTorch), et inversement. docker-compose.yml changé : tout.
+a_reconstruire() {
+  changes=$(git_ diff --name-only "$1" "$2")
+  if echo "$changes" | grep -qx "docker-compose.yml"; then services; return; fi
+  echo "$changes" | grep -q "^app/" && echo "web worker"
+  echo "$changes" | grep -q "^lecture/" && echo "lecture"
+  echo "$changes" | grep -q "^pronote/" && echo "pronote"
+  echo "$changes" | grep -q "^infra/caddy/" && echo "caddy"
+}
 
 decrire() {  # version installée et nouveautés disponibles sur GitHub
   if ! erreur=$(git_ fetch --quiet origin 2>&1); then
@@ -65,21 +79,35 @@ case "$action" in
     fin ok "Vérifié." ;;
   mettre_a_jour)
     decrire || fin erreur "Récupération impossible, rien n'a été changé : $raison"
-    avant=$(git_ rev-parse --short HEAD)
+    avant=$(git_ rev-parse HEAD)
     git_ pull --ff-only; ok=$?; rendre
     [ $ok = 0 ] || fin erreur "git pull refusé, rien n'a été changé (fichier modifié à la main sur la VM ? voir le journal)."
-    # Construire d'abord : le site reste en ligne pendant la construction, coupé seulement au redémarrage
-    docker compose build $(services) || fin erreur "Échec de la construction : l'ancienne version tourne toujours."
-    ecrire '.message="Redémarrage des services…"'
+    apres=$(git_ rev-parse HEAD)
+    # Une image absente (première fois, après « Libérer de la place ») est construite par « up » ci-dessous
+    cibles=$(a_reconstruire "$avant" "$apres" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+    if [ -n "$(echo $cibles)" ]; then
+      # Construire d'abord : le site reste en ligne pendant la construction, coupé seulement au redémarrage
+      etape "Construction : $cibles"
+      t=$(date +%s)
+      docker compose build $cibles || fin erreur "Échec de la construction : l'ancienne version tourne toujours."
+      echo "== construit en $(duree $t)"
+    else
+      echo "== rien à reconstruire (seule la documentation a changé)"
+    fi
+    etape "Redémarrage des services modifiés…"
+    t=$(date +%s)
+    # up -d ne recrée que les conteneurs dont l'image ou la configuration a changé
     docker compose up -d --remove-orphans $(services) || fin erreur "Échec du redémarrage (voir le journal)."
+    echo "== redémarré en $(duree $t)"
     docker image prune -f > /dev/null
     decrire
-    fin ok "Mis à jour : $avant → $(git_ rev-parse --short HEAD)." ;;
+    fin ok "Mis à jour en $(duree) : $(echo "$avant" | cut -c1-7) → $(echo "$apres" | cut -c1-7)." ;;
   redemarrer)
     docker compose restart web worker || fin erreur "Échec du redémarrage (voir le journal)."
     fin ok "Site et worker redémarrés." ;;
   nettoyer)
     avant=$(df -h / | awk 'NR==2 {print $4}')
-    docker image prune -f && docker builder prune -f
+    # Le cache de construction récent est gardé : sans lui, la mise à jour suivante retélécharge tout
+    docker image prune -f && docker builder prune -f --filter until=720h
     fin ok "Nettoyé : espace libre $avant → $(df -h / | awk 'NR==2 {print $4}')." ;;
 esac

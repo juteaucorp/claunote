@@ -78,6 +78,14 @@ def etat() -> dict:
         return {}
 
 
+def liberer() -> list[str]:
+    """Le service décharge ses modèles qui ne calculent pas (mémoire de la VM basse)."""
+    try:
+        return _appel("POST", "/liberer", 30).get("decharges") or []
+    except LectureIndisponible:
+        return []
+
+
 def pdf(chemin: Path, timeout: float = 600) -> str | None:
     """Markdown d'un PDF numérique (tableaux, titres, colonnes), ou None si le service ne répond pas."""
     try:

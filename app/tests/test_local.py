@@ -214,3 +214,10 @@ def test_essayer_json(monkeypatch):
     assert local.essayer_json("s", "t") == {"ok": 1}
     monkeypatch.setattr(local, "ollama", lambda s, t, timeout=600: "pas du json")
     assert local.essayer_json("s", "t") is None
+
+
+def test_garder_et_liberer_ollama(monkeypatch):
+    envois = []
+    monkeypatch.setattr(local.httpx, "post", lambda url, json=None, timeout=None: envois.append((url, json)))
+    assert local.liberer() and envois[-1][1] == {"model": local.OLLAMA_MODELE, "keep_alive": 0}
+    assert local.GARDER == "5m"
