@@ -91,3 +91,15 @@ def test_entree_ia_et_fusion_des_propositions():
 
 def test_a_egalite_le_nom_complet():
     assert matieres.proposer([c("BTS1", "Maths", 1), c("BTS1", "Mathématiques", 1)])[0]["nom"] == "Mathématiques"
+
+
+def test_laisser_tel_quel():
+    comptes = [c("BTS1", "Maths", 2), c("BTS1", "Mathématiques", 9), c("BTS2", "Maths", 1), c("BTS2", "Mathématiques", 1)]
+    distinctes = {"BTS1": {frozenset(("Maths", "Mathématiques"))}}
+    groupes = matieres.proposer(comptes, distinctes=distinctes)
+    assert [g["niveau"] for g in groupes] == ["BTS2"]  # seulement l'année où rien n'a été tranché
+    assert matieres.deja_tranche({"niveau": "BTS1", "noms": [{"nom": "Maths"}, {"nom": "Mathématiques"}]}, distinctes)
+    assert not matieres.deja_tranche({"niveau": "BTS1", "noms": [{"nom": "Maths"}, {"nom": "Algo"}]}, distinctes)
+    # les prochains scans ne renomment plus « Maths » en « Mathématiques »
+    assert matieres.harmoniser("Maths", ["Mathématiques"], {frozenset(("Maths", "Mathématiques"))}) == "Maths"
+    assert matieres.paires(["b", "a", "c"]) == {frozenset("ab"), frozenset("ac"), frozenset("bc")}

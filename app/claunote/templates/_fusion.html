@@ -10,6 +10,7 @@
   </div>
   <div class="noms">
     {% for n in g.noms %}
+    <input type="hidden" name="tous" value="{{ n.nom }}">
     <label><input type="checkbox" name="noms" value="{{ n.nom }}" checked> {{ n.nom }} <span class="doux">({{ n.n }})</span></label>
     {% endfor %}
   </div>
@@ -18,6 +19,8 @@
       <input name="nom" value="{{ g.nom }}" list="noms-{{ cle }}" required></label>
     <datalist id="noms-{{ cle }}">{% for n in g.noms %}<option value="{{ n.nom }}">{% endfor %}</datalist>
     <button class="principal">Fusionner</button>
+    <button formaction="/organiser/matieres/garder" formnovalidate
+            title="Ce sont bien des matières différentes : ne plus le proposer">Laisser tel quel</button>
   </div>
 </form>
 {%- endmacro %}

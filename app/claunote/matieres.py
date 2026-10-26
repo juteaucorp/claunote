@@ -95,14 +95,28 @@ def lien(a: str, b: str) -> tuple[bool, str] | None:
     return None
 
 
-def proposer(comptes: list[dict], autres_annees: dict[str, int] | None = None) -> list[dict]:
+def paires(noms) -> set[frozenset]:
+    """Toutes les paires de noms d'un groupe."""
+    noms = sorted(set(noms))
+    return {frozenset((a, b)) for i, a in enumerate(noms) for b in noms[i + 1:]}
+
+
+def deja_tranche(groupe: dict, distinctes: dict[str, set[frozenset]]) -> bool:
+    """Toutes les paires du groupe ont été laissées telles quelles pour cette année."""
+    p = paires(n["nom"] for n in groupe["noms"])
+    return bool(p) and p <= distinctes.get(groupe["niveau"], set())
+
+
+def proposer(comptes: list[dict], autres_annees: dict[str, int] | None = None,
+             distinctes: dict[str, set[frozenset]] | None = None) -> list[dict]:
     """Groupes de matières à fusionner, année par année.
 
     `comptes` : [{"niveau", "matiere", "n"}] (documents par année et matière).
     `autres_annees` : {matière: nombre de documents toutes années} pour départager le nom proposé.
+    `distinctes` : {année: paires de noms laissées telles quelles} : jamais reproposées ensemble.
     Renvoie [{"niveau", "noms": [{"nom", "n"}], "nom", "sur", "raisons"}].
     """
-    autres_annees = autres_annees or {}
+    autres_annees, distinctes = autres_annees or {}, distinctes or {}
     par_niveau: dict[str, dict[str, int]] = {}
     for r in comptes:
         if r.get("niveau") and r.get("matiere"):
@@ -118,9 +132,10 @@ def proposer(comptes: list[dict], autres_annees: dict[str, int] | None = None) -
             return n
 
         liens = {}
+        ecartees = distinctes.get(niveau, set())
         for i, a in enumerate(liste):
             for b in liste[i + 1:]:
-                l = lien(a, b)
+                l = None if frozenset((a, b)) in ecartees else lien(a, b)
                 if l:
                     parent[racine(b)] = racine(a)
                     liens[(a, b)] = l
@@ -139,16 +154,19 @@ def proposer(comptes: list[dict], autres_annees: dict[str, int] | None = None) -
     return groupes
 
 
-def harmoniser(matiere: str | None, existantes: list[str]) -> str | None:
+def harmoniser(matiere: str | None, existantes: list[str], distinctes: set[frozenset] | None = None) -> str | None:
     """Nom déjà utilisé pour la même matière (évidence seulement), sinon le nom donné.
 
-    Évite que l'agent crée « Maths » à côté de « Mathématiques » au prochain scan.
+    Évite que l'agent crée « Maths » à côté de « Mathématiques » au prochain scan ; sauf si tu as choisi
+    de garder ces deux noms séparés (`distinctes`, toutes années confondues).
     """
     if not matiere:
         return matiere
     if matiere in existantes:
         return matiere
     for e in existantes:
+        if distinctes and frozenset((matiere, e)) in distinctes:
+            continue
         l = lien(matiere, e)
         if l and l[0]:
             return e

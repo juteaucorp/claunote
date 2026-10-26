@@ -226,6 +226,14 @@ def memoire(item: dict) -> Path:
     return CACHE_DIR / "morceaux" / str(item["id"])
 
 
+def distinctes() -> set[frozenset]:
+    """Paires de matières que tu as choisi de garder séparées (toutes années) : jamais harmonisées."""
+    try:
+        return set().union(*db.matieres_distinctes().values())
+    except Exception:
+        return set()
+
+
 def arrete() -> bool:
     return STOP.is_set() or ARRET.is_set()
 
@@ -305,7 +313,7 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dos
         shutil.rmtree(dossier_local, ignore_errors=True)
 
     note = appliquer_dossier(a, dossiers)
-    a.matiere = harmoniser(a.matiere, matieres or [])  # « Maths » → « Mathématiques » s'il existe déjà
+    a.matiere = harmoniser(a.matiere, matieres or [], distinctes())  # « Maths » → « Mathématiques »
     statut, note = statut_et_note(a, note)
     if statut == "a_verifier" and a.avis:
         note = f"{note} {a.avis}"
@@ -589,7 +597,7 @@ def reclasser(doc: dict, matieres: list[str]):
             if not CLAUDE.disponible():
                 return  # ni local ni Claude : il attend
             a = agent.reclasser(doc, matieres)
-        a.matiere = harmoniser(a.matiere, matieres)
+        a.matiere = harmoniser(a.matiere, matieres, distinctes())
     except ErreurAgent as e:
         db.maj(doc["id"], statut="a_verifier", note=f"Reclassement impossible : {e}")
         db.marquer_a_ranger([doc["id"]])

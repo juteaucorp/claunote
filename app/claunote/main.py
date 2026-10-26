@@ -23,8 +23,8 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, auth, db, decoupage, importation, index, local, matieres, modeles, notifications,
-                      pdf, pronote, question, rangement, ressources, revision, sensible)
+from claunote import (agent, anki, auth, db, decoupage, importation, index, local, maj, matieres, modeles,
+                      notifications, pdf, pronote, question, rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -154,6 +154,7 @@ templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirme
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
 templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
+templates.env.globals["nb_mises_a_jour"] = maj.disponibles
 templates.env.filters["note"] = pronote.libelle_note
 _matieres_cours = {"le": 0.0, "noms": []}
 
@@ -291,6 +292,43 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
         "message": "Mot de passe changé. Les autres appareils devront se reconnecter."})
     _cookie_session(request, r, request.app.state.compte)
     return r
+
+
+def _contexte_maj(request: Request, **plus) -> dict:
+    return {"present": maj.present(), "e": maj.etat(), "journal": maj.journal(),
+            "heure": lambda d: _heure_fr(d.astimezone(pronote.PARIS)), **plus}
+
+
+@app.get("/mise-a-jour", response_class=HTMLResponse)
+def page_mise_a_jour(request: Request):
+    """Version installée, nouveautés sur GitHub, et bouton pour tout mettre à jour (service maj)."""
+    return templates.TemplateResponse(request, "mise_a_jour.html", _contexte_maj(request))
+
+
+@app.get("/mise-a-jour/etat", response_class=HTMLResponse)
+def etat_mise_a_jour(request: Request):
+    """Bloc rafraîchi pendant une action (le site lui-même redémarre au milieu d'une mise à jour)."""
+    return templates.TemplateResponse(request, "_mise_a_jour.html", _contexte_maj(request))
+
+
+@app.post("/mise-a-jour/{action}", response_class=HTMLResponse)
+def demander_mise_a_jour(request: Request, action: str, mot_de_passe: str = Form("")):
+    """Réservé à l'admin : tout sauf « Vérifier » redemande le mot de passe du compte."""
+    if action not in maj.ACTIONS:
+        raise HTTPException(404)
+    compte = request.app.state.compte
+    ip = request.client.host if request.client else "?"
+    erreur = None
+    if not maj.present():
+        erreur = "Le service maj ne tourne pas sur la VM (voir l'installation ci-dessous)."
+    elif action != "verifier" and (compte.bloque(ip) or not compte.verifier(ip, compte.utilisateur, mot_de_passe)):
+        erreur = "Mot de passe incorrect : action réservée à l'admin."
+    else:
+        try:
+            maj.demander(action)
+        except RuntimeError as e:
+            erreur = str(e)
+    return templates.TemplateResponse(request, "_mise_a_jour.html", _contexte_maj(request, erreur=erreur))
 
 
 @app.post("/deconnexion")
@@ -1382,7 +1420,7 @@ def _propositions_matieres() -> tuple[list[dict], list[dict]]:
     toutes: dict[str, int] = defaultdict(int)
     for r in comptes:
         toutes[r["matiere"]] += r["n"]
-    return comptes, matieres.proposer(comptes, toutes)
+    return comptes, matieres.proposer(comptes, toutes, db.matieres_distinctes())
 
 
 templates.env.globals["nb_matieres_en_double"] = lambda: len(_propositions_matieres()[1])
@@ -1397,7 +1435,7 @@ def page_matieres(request: Request, message: str = ""):
     niveaux = [n for n in reversed(NIVEAUX) if n in par_niveau]
     return templates.TemplateResponse(request, "matieres.html", {
         "groupes": groupes, "par_niveau": par_niveau, "niveaux": niveaux, "message": message,
-        "pause": _claude_en_pause()})
+        "pause": _claude_en_pause(), "nb_distinctes": sum(map(len, db.matieres_distinctes().values()))})
 
 
 @app.post("/organiser/matieres/ia", response_class=HTMLResponse)
@@ -1415,8 +1453,30 @@ def matieres_ia(request: Request):
             ia, erreur = [], "Limite de ton forfait Claude atteinte : réessaie plus tard."
         except (ClaudeIndisponible, ErreurAgent) as e:
             ia, erreur = [], f"L'IA n'a pas pu répondre : {str(e)[:200]}"
-    nouvelles = matieres.fusionner_propositions(groupes, ia)[len(groupes):]
+    distinctes = db.matieres_distinctes()
+    nouvelles = [g for g in matieres.fusionner_propositions(groupes, ia)[len(groupes):]
+                 if not matieres.deja_tranche(g, distinctes)]
     return templates.TemplateResponse(request, "_matieres_ia.html", {"groupes": nouvelles, "erreur": erreur})
+
+
+@app.post("/organiser/matieres/garder")
+async def garder_matieres(request: Request):
+    """« Laisser tel quel » : ces matières restent séparées, la proposition ne revient plus."""
+    f = await request.form()
+    niveau, noms = f.get("niveau", ""), [n for n in f.getlist("tous") if n]
+    if niveau not in NIVEAUX or len(set(noms)) < 2:
+        raise HTTPException(400, "proposition inconnue")
+    db.garder_distinctes(niveau, noms)
+    message = (f"{niveau} : {', '.join(sorted(set(noms)))} restent séparées. "
+               "Elles ne te seront plus proposées à la fusion, et les prochains scans garderont ces noms.")
+    return RedirectResponse(f"/organiser/matieres?{urlencode({'message': message})}", status_code=303)
+
+
+@app.post("/organiser/matieres/reproposer")
+def reproposer_matieres():
+    n = db.oublier_distinctes()
+    message = f"{n} choix « laisser tel quel » oublié{'s' if n > 1 else ''} : les propositions reviennent."
+    return RedirectResponse(f"/organiser/matieres?{urlencode({'message': message})}", status_code=303)
 
 
 @app.post("/organiser/matieres/fusionner")

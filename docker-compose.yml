@@ -21,6 +21,7 @@ services:
       - "${BIND_ADDR:-127.0.0.1}:8000:8000"   # IP de la VM sur ton VPN, jamais 0.0.0.0
     volumes:
       - caddy:/caddy:ro   # certificat racine à installer sur l'iPhone (page /installer)
+      - maj:/maj          # demandes de mise à jour, lues par le service maj
     depends_on:
       db: {condition: service_healthy}
       pronote: {condition: service_started}
@@ -73,7 +74,21 @@ services:
       - pronote:/data   # jeton de reconnexion Pronote (jamais le mot de passe)
     # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
 
+  maj:
+    # Mise à jour depuis le site (Réglages → Mise à jour) : git pull puis reconstruction des services.
+    # Il pilote Docker : il ne fait que les 4 actions de infra/maj/boucle.sh, jamais une commande du site.
+    # Le dépôt est monté au même chemin que sur la VM, pour que Compose y retrouve ses fichiers.
+    build: ./infra/maj
+    restart: unless-stopped
+    environment:
+      DEPOT: ${PWD}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}:${PWD}
+      - maj:/maj
+
 volumes:
+  maj:
   ollama:
   pgdata:
   cache:

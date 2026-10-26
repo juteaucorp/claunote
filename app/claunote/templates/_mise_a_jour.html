@@ -1,0 +1,77 @@
+{# Bloc de la page Mise à jour : rafraîchi toutes les 2 s pendant une action (le site redémarre au milieu) #}
+<div id="bloc-maj" {% if e.en_cours %}hx-get="/mise-a-jour/etat" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+{% if erreur %}<p class="carte alerte">{{ erreur }}</p>{% endif %}
+{% if not present %}
+  <div class="carte accent">
+    <strong>Le service maj ne tourne pas encore sur la VM.</strong>
+    <p>Une dernière fois à la main, dans le dossier de Claunote :</p>
+    <pre class="cmd-maj">git pull && docker compose up -d --build</pre>
+    <p class="doux">Ensuite, tout se fait d'ici.</p>
+  </div>
+{% endif %}
+
+{% if e.en_cours %}
+  <div class="carte action-maj">
+    <strong>{{ 'En attente du service maj…' if e.en_attente else (e.message or 'En cours…') }}</strong>
+    <p class="doux">Pendant une mise à jour, le site se coupe une minute au redémarrage : cette page se reconnecte toute seule.
+      Le worker finit le document en cours avant de redémarrer.</p>
+  </div>
+{% elif e.statut and not (e.action == 'verifier' and e.statut == 'ok') %}
+  <p class="carte {{ 'ok-maj' if e.statut == 'ok' else 'alerte' }}">{{ e.message }}
+    {% if e.fin %}<span class="doux">({{ heure(e.fin) }})</span>{% endif %}</p>
+{% endif %}
+
+<div class="carte">
+  {% if e.version %}
+    <p><strong>Version installée</strong> : <code>{{ e.version.id }}</code> — {{ e.version.titre }}
+      {% if e.version.le %}<span class="doux">({{ heure(e.version.le) }})</span>{% endif %}</p>
+    {% if e.modifs_locales %}<p class="alerte">{{ e.modifs_locales }} fichier(s) modifié(s) à la main sur la VM :
+      la mise à jour sera refusée tant qu'ils ne sont pas remis d'origine (<code>git status</code>).</p>{% endif %}
+    {% if e.retard %}
+      <p><strong>{{ e.retard }} nouveauté(s) disponible(s)</strong> :</p>
+      <ul class="nouveautes">
+        {% for n in e.nouveautes %}<li>{{ n.titre }} <span class="doux">{{ heure(n.le) if n.le }}</span></li>{% endfor %}
+      </ul>
+    {% else %}
+      <p style="color: var(--ok)">À jour.</p>
+    {% endif %}
+    {% if e.verifie %}<p class="doux">Vérifié sur GitHub {{ heure(e.verifie) }} (tout seul toutes les 6 h).</p>{% endif %}
+  {% elif present %}
+    <p class="doux">Version pas encore vérifiée.</p>
+  {% endif %}
+  <form hx-post="/mise-a-jour/verifier" hx-target="#bloc-maj" hx-swap="outerHTML" style="margin: 0">
+    <button {{ 'disabled' if e.en_cours or not present }}>Vérifier maintenant</button>
+  </form>
+</div>
+
+<form class="carte admin-maj" hx-post="/mise-a-jour/mettre_a_jour" hx-target="#bloc-maj" hx-swap="outerHTML">
+  <strong>Actions admin</strong>
+  <input type="text" name="utilisateur" autocomplete="username" hidden>
+  <p><label>Mot de passe du compte<br>
+    <input type="password" name="mot_de_passe" autocomplete="current-password" required style="width: 100%; max-width: 320px"></label></p>
+  <div class="actions">
+    <button class="principal" {{ 'disabled' if e.en_cours or not present }}>Tout mettre à jour</button>
+    <button hx-post="/mise-a-jour/redemarrer" {{ 'disabled' if e.en_cours or not present }}
+            title="Redémarre le site et le worker, sans changer de version">Redémarrer</button>
+    <button hx-post="/mise-a-jour/nettoyer" {{ 'disabled' if e.en_cours or not present }}
+            title="Supprime les anciennes images Docker et le cache de construction">Libérer de la place</button>
+  </div>
+  <p class="doux"><strong>Tout mettre à jour</strong> = <code>git pull</code>, puis reconstruction et redémarrage
+    de tous les services. Si la construction échoue, l'ancienne version continue de tourner.</p>
+</form>
+
+{% if journal %}
+<details class="carte" {{ 'open' if e.en_cours or e.statut == 'erreur' }}>
+  <summary>Journal de la dernière action</summary>
+  <pre class="journal-maj">{{ journal }}</pre>
+</details>
+{% endif %}
+<style>
+  .cmd-maj, .journal-maj { overflow-x: auto; background: var(--fond-doux); padding: 10px; border-radius: 8px; font-size: .85rem; white-space: pre-wrap; word-break: break-word; }
+  .journal-maj { max-height: 360px; overflow-y: auto; }
+  .ok-maj { color: var(--ok); }
+  .action-maj { border-color: var(--accent); }
+  .nouveautes { margin: 0 0 10px; padding-left: 20px; }
+  .admin-maj .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+</style>
+</div>

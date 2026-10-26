@@ -62,6 +62,7 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "nb_a_relire", lambda: 0)
     monkeypatch.setattr(db, "file_attente", lambda: {"scans": 0, "revisions": 0, "campagnes": 0, "reclassements": 0})
     monkeypatch.setattr(db, "matieres_par_annee", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
+    monkeypatch.setattr(db, "matieres_distinctes", lambda: {})
     monkeypatch.setattr(db, "pieces_jointes", lambda revision_id=None, campagne_id=None, contenu=False: [])
     monkeypatch.setattr(db, "ajouter_pieces", lambda f, revision_id=None, campagne_id=None:
                         appels.append(("pieces", [n for n, _ in f], revision_id, campagne_id)))
@@ -1347,3 +1348,27 @@ def test_date_de_synchro_lisible():
     assert main.quand(maintenant.replace(hour=11, minute=5).isoformat(timespec="minutes")) == "aujourd'hui à 11 h 05"
     assert main.quand("2026-10-19T08:30+02:00") == "lun. 19/10 à 08 h 30"
     assert main.quand(None) == "" and main.quand("pas une date") == "pas une date"
+
+
+def test_matieres_laisser_tel_quel(client, monkeypatch):
+    gardes, oublis = [], []
+    monkeypatch.setattr(db, "garder_distinctes", lambda niveau, noms: gardes.append((niveau, sorted(noms))) or 1)
+    monkeypatch.setattr(db, "oublier_distinctes", lambda: oublis.append(1) or 2)
+    r = client.post("/organiser/matieres/garder", data={"niveau": "BTS1", "tous": ["Maths", "Mathématiques"],
+                                                        "noms": ["Maths"]}, follow_redirects=False)
+    assert r.status_code == 303 and gardes == [("BTS1", ["Maths", "Mathématiques"])] and "restent+s%C3%A9par%C3%A9es" in r.headers["location"]
+    assert client.post("/organiser/matieres/garder", data={"niveau": "BTS1", "tous": ["Maths"]}).status_code == 400
+    r = client.post("/organiser/matieres/reproposer", follow_redirects=False)
+    assert oublis == [1] and "2+choix" in r.headers["location"]
+
+
+def test_matieres_page_propose_laisser_tel_quel(client, monkeypatch):
+    monkeypatch.setattr(db, "matieres_par_annee", lambda: [
+        {"niveau": "BTS1", "matiere": "Maths", "n": 2}, {"niveau": "BTS1", "matiere": "Mathématiques", "n": 9}])
+    monkeypatch.setattr(db, "matieres_distinctes", lambda: {"BTS2": {frozenset(("A", "B"))}})
+    r = client.get("/organiser/matieres")
+    assert 'formaction="/organiser/matieres/garder"' in r.text and "Laisser tel quel" in r.text
+    assert '<input type="hidden" name="tous" value="Maths">' in r.text and "1 paire de matières laissée telle quelle" in r.text
+    monkeypatch.setattr(db, "matieres_distinctes", lambda: {"BTS1": {frozenset(("Maths", "Mathématiques"))}})
+    r = client.get("/organiser/matieres")
+    assert 'formaction="/organiser/matieres/garder"' not in r.text and "Aucun doublon évident" in r.text
