@@ -104,6 +104,8 @@ services:
     # Mise à jour depuis le site (Réglages → Mise à jour) : git pull puis reconstruction des services.
     # Il pilote Docker : il ne fait que les 4 actions de infra/maj/boucle.sh, jamais une commande du site.
     # Le dépôt est monté au même chemin que sur la VM, pour que Compose y retrouve ses fichiers.
+    # La version réellement en service de chaque service est notée dans le volume maj (construit/) :
+    # c'est elle qui décide quoi reconstruire, pas seulement ce que le dernier git pull a apporté.
     build: ./infra/maj
     restart: unless-stopped
     environment:

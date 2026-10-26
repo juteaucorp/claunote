@@ -577,7 +577,16 @@ les 6 h, badge sur le menu Réglages) et trois actions **réservées à l'admin*
 - **Tout mettre à jour** : `git pull`, construction des nouvelles images (le site reste en ligne pendant ce
   temps), puis redémarrage des services modifiés. **Seul ce qui a changé est reconstruit** (un changement du
   site ne reconstruit pas le service lecture et son PyTorch ; un changement de documentation, rien du tout),
-  et les téléchargements pip restent en cache d'une fois sur l'autre. Le journal donne la durée de chaque étape. Le site se coupe environ une minute : la page se reconnecte
+  et les téléchargements pip restent en cache d'une fois sur l'autre. Le journal donne la durée de chaque étape.
+  Le service `maj` retient **la version réellement en service** de chaque service : après un `git pull` fait à
+  la main ou une mise à jour interrompue, la page affiche « Pas encore installé » et *Tout mettre à jour*
+  reconstruit ce qui est en retard (avant, l'ancien code pouvait continuer de tourner). Une configuration
+  Caddy modifiée redémarre Caddy.
+- ⚠️ **Pendant une mise à jour, ne lance aucune commande sur la VM.** Deux constructions en même temps (celle
+  du site et une à la main), à côté de tous les services, peuvent saturer la mémoire et figer la machine. La page
+  affiche « Mise à jour en cours » tant qu'elle tourne. Pour limiter la mémoire, les services sont construits un
+  par un, et Ollama et le service lecture sont mis en pause pendant la construction si la VM a moins de 3 Go
+  libres (relancés à la fin, même en cas d'échec). Le site se coupe environ une minute : la page se reconnecte
   toute seule. Si la construction échoue, l'ancienne version continue de tourner.
 - **Redémarrer** : site et worker, sans changer de version.
 - **Libérer de la place** : supprime les anciennes images Docker et le cache de construction de plus de

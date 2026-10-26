@@ -13,7 +13,8 @@
     <strong>Worker</strong>
     {% if not s.connu %}<p class="doux">Pas encore démarré.</p>
     {% elif not s.vivant %}<p class="alerte">Ne répond plus depuis {{ heure(s.vu) }}.</p>
-      <p class="doux">Sur la VM : <code>docker compose up -d</code>, puis <code>docker compose logs -f worker</code>.</p>
+      <p class="doux">Une mise à jour est en cours ? Attends sa fin, sans rien lancer. Sinon, sur la VM :
+        <code>docker compose up -d</code>, puis <code>docker compose logs -f worker</code>.</p>
     {% elif s.arret %}<p>Redémarre : il termine le travail en cours.</p>
     {% else %}<p><span class="point ok"></span>{{ s.activite or 'En veille, vérifie l\'inbox chaque minute' }}</p>
       {% if s.demarre %}<p class="doux">Démarré {{ heure(s.demarre) }}.</p>{% endif %}{% endif %}
