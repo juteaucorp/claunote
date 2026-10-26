@@ -254,6 +254,8 @@ s'affiche aussi sur **Cours** quand il y en a) :
 - **Demander à l'IA d'en chercher d'autres** : un appel court (Haiku) qui voit les noms et quelques titres de cours.
 - **Fusionner** : tu choisis le nom gardé ; documents, révisions et conversations sont renommés, les fichiers
   déplacés dans `archives/<année>/<matière>/` par le worker. **Fusionner à la main** : n'importe quelles matières d'une année.
+- **Laisser tel quel** : ce sont vraiment deux matières ; la proposition ne revient plus, et les prochains
+  scans gardent les deux noms. *Les reproposer* (en bas de la liste) annule ces choix.
 - **Plus de nouveaux doublons** : l'agent reçoit la liste des matières existantes, et un nom évidemment
   identique à une matière existante (« Maths » quand « Mathématiques » existe) est remplacé avant rangement.
 - Les anciens dossiers kDrive vidés par une fusion restent (vides) : supprime-les à la main si tu veux.

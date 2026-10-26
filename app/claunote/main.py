@@ -1382,7 +1382,7 @@ def _propositions_matieres() -> tuple[list[dict], list[dict]]:
     toutes: dict[str, int] = defaultdict(int)
     for r in comptes:
         toutes[r["matiere"]] += r["n"]
-    return comptes, matieres.proposer(comptes, toutes)
+    return comptes, matieres.proposer(comptes, toutes, db.matieres_distinctes())
 
 
 templates.env.globals["nb_matieres_en_double"] = lambda: len(_propositions_matieres()[1])
@@ -1397,7 +1397,7 @@ def page_matieres(request: Request, message: str = ""):
     niveaux = [n for n in reversed(NIVEAUX) if n in par_niveau]
     return templates.TemplateResponse(request, "matieres.html", {
         "groupes": groupes, "par_niveau": par_niveau, "niveaux": niveaux, "message": message,
-        "pause": _claude_en_pause()})
+        "pause": _claude_en_pause(), "nb_distinctes": sum(map(len, db.matieres_distinctes().values()))})
 
 
 @app.post("/organiser/matieres/ia", response_class=HTMLResponse)
@@ -1415,8 +1415,30 @@ def matieres_ia(request: Request):
             ia, erreur = [], "Limite de ton forfait Claude atteinte : réessaie plus tard."
         except (ClaudeIndisponible, ErreurAgent) as e:
             ia, erreur = [], f"L'IA n'a pas pu répondre : {str(e)[:200]}"
-    nouvelles = matieres.fusionner_propositions(groupes, ia)[len(groupes):]
+    distinctes = db.matieres_distinctes()
+    nouvelles = [g for g in matieres.fusionner_propositions(groupes, ia)[len(groupes):]
+                 if not matieres.deja_tranche(g, distinctes)]
     return templates.TemplateResponse(request, "_matieres_ia.html", {"groupes": nouvelles, "erreur": erreur})
+
+
+@app.post("/organiser/matieres/garder")
+async def garder_matieres(request: Request):
+    """« Laisser tel quel » : ces matières restent séparées, la proposition ne revient plus."""
+    f = await request.form()
+    niveau, noms = f.get("niveau", ""), [n for n in f.getlist("tous") if n]
+    if niveau not in NIVEAUX or len(set(noms)) < 2:
+        raise HTTPException(400, "proposition inconnue")
+    db.garder_distinctes(niveau, noms)
+    message = (f"{niveau} : {', '.join(sorted(set(noms)))} restent séparées. "
+               "Elles ne te seront plus proposées à la fusion, et les prochains scans garderont ces noms.")
+    return RedirectResponse(f"/organiser/matieres?{urlencode({'message': message})}", status_code=303)
+
+
+@app.post("/organiser/matieres/reproposer")
+def reproposer_matieres():
+    n = db.oublier_distinctes()
+    message = f"{n} choix « laisser tel quel » oublié{'s' if n > 1 else ''} : les propositions reviennent."
+    return RedirectResponse(f"/organiser/matieres?{urlencode({'message': message})}", status_code=303)
 
 
 @app.post("/organiser/matieres/fusionner")

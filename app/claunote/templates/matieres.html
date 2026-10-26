@@ -8,7 +8,8 @@
 <h1>Matières en double</h1>
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
 <p class="doux">Sur une même année, l'IA a parfois donné plusieurs noms à la même matière (« Maths » et « Mathématiques »,
-  « Réseau » et « Réseaux »…). Fusionne-les : les documents prennent le nom gardé, les révisions aussi, et les fichiers
+  « Réseau » et « Réseaux »…). Si ce sont vraiment deux matières, choisis <strong>Laisser tel quel</strong> : la
+  proposition ne reviendra plus. Sinon, fusionne-les : les documents prennent le nom gardé, les révisions aussi, et les fichiers
   sont déplacés dans le bon dossier kDrive. Les prochains scans reprendront ce nom.</p>
 
 <h2>À fusionner</h2>
@@ -16,6 +17,11 @@
 {% else %}
 <div class="carte">Aucun doublon évident : chaque année a des noms de matières distincts.</div>
 {% endfor %}
+{% if nb_distinctes %}
+<form method="post" action="/organiser/matieres/reproposer" class="doux reproposer">
+  {{ nb_distinctes }} paire{{ 's' if nb_distinctes > 1 }} de matières laissée{{ 's' if nb_distinctes > 1 }} telle{{ 's' if nb_distinctes > 1 }} quelle{{ 's' if nb_distinctes > 1 }}.
+  <button class="lien">Les reproposer</button></form>
+{% endif %}
 
 <div id="ia">
   <button class="bouton-ia" hx-post="/organiser/matieres/ia" hx-target="#ia" hx-swap="outerHTML" hx-disabled-elt="this"
@@ -58,6 +64,8 @@
   .etat.attente { color: var(--accent-fonce); border-color: var(--accent); background: var(--accent-pale); }
   .noms { display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .noms label { display: inline-flex; align-items: center; gap: 6px; }
+  .reproposer { margin: 4px 0 0; font-size: .9rem; }
+  .reproposer button { padding: 0; border: 0; background: none; color: var(--accent-fonce); text-decoration: underline; min-height: 0; }
   .garder { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
   .garder label { display: flex; flex-direction: column; flex: 1 1 220px; font-size: .9rem; }
   #ia { margin: 14px 0; }

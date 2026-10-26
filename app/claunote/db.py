@@ -173,6 +173,14 @@ ALTER TABLE import_fichiers ADD COLUMN IF NOT EXISTS local BOOLEAN NOT NULL DEFA
 -- Moteur choisi à la main pour un fichier de la file : local, claude (vide : selon le réglage)
 ALTER TABLE import_fichiers ADD COLUMN IF NOT EXISTS moteur TEXT;
 UPDATE import_fichiers SET moteur = 'local', local = false WHERE local;
+-- Matières laissées telles quelles (page Ranger → Matières) : ces paires ne sont plus proposées à la fusion
+CREATE TABLE IF NOT EXISTS matieres_distinctes (
+    niveau  TEXT NOT NULL,
+    a       TEXT NOT NULL,                     -- a < b
+    b       TEXT NOT NULL,
+    le      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (niveau, a, b)
+);
 -- Contrôles du modèle local par Claude : mesure de sa fiabilité (page Activité)
 CREATE TABLE IF NOT EXISTS controles (
     id      SERIAL PRIMARY KEY,
@@ -541,6 +549,32 @@ def matieres_par_annee() -> list[dict]:
         return c.execute("SELECT niveau, matiere, count(*) AS n FROM documents WHERE niveau IS NOT NULL "
                          "AND matiere IS NOT NULL AND statut <> 'hors_cours' GROUP BY niveau, matiere "
                          "ORDER BY niveau, matiere").fetchall()
+
+
+def matieres_distinctes() -> dict[str, set[frozenset]]:
+    """{année: paires de noms de matières laissées telles quelles}."""
+    with connect() as c:
+        rows = c.execute("SELECT niveau, a, b FROM matieres_distinctes").fetchall()
+    d: dict[str, set[frozenset]] = {}
+    for r in rows:
+        d.setdefault(r["niveau"], set()).add(frozenset((r["a"], r["b"])))
+    return d
+
+
+def garder_distinctes(niveau: str, noms: list[str]) -> int:
+    """Ces matières de cette année restent séparées : plus de proposition de fusion entre elles."""
+    noms = sorted(set(noms))
+    paires = [(a, b) for i, a in enumerate(noms) for b in noms[i + 1:]]
+    with connect() as c, c.transaction():
+        for a, b in paires:
+            c.execute("INSERT INTO matieres_distinctes (niveau, a, b) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                      (niveau, a, b))
+    return len(paires)
+
+
+def oublier_distinctes() -> int:
+    with connect() as c:
+        return c.execute("DELETE FROM matieres_distinctes").rowcount
 
 
 def titres_par_matiere(par_matiere: int = 4) -> dict[tuple, list[str]]:
