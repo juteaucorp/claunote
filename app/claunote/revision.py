@@ -2,7 +2,7 @@
 
 Cinq genres : fiche de révision, quiz (QCM), flashcards, épreuve blanche (sujet + corrigé)
 et plan de révision jusqu'à une évaluation. Une campagne regroupe plusieurs révisions
-(ex. une semaine d'épreuves blanches) et un programme jour par jour. Les flashcards se révisent ensuite en répétition espacée (SM-2) ou dans Anki.
+(ex. une semaine d'épreuves blanches) et un programme jour par jour. Les flashcards se révisent ensuite en répétition espacée (FSRS) ou dans Anki.
 Les documents sont numérotés [D1], [D2]… dans le prompt ; Claude doit citer ces
 repères pour que le site puisse renvoyer vers le cours d'origine.
 
@@ -19,9 +19,13 @@ c'est du contexte, pas des cours.
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import tempfile
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import fsrs
 
 from claunote import agent
 from claunote.agent import ErreurAgent, demander
@@ -519,23 +523,54 @@ def cartes_en_markdown(cartes: list[dict]) -> str:
 # --- Répétition espacée (SM-2, comme Anki) -----------------------------------
 
 NOTES = {0: "À revoir", 3: "Difficile", 4: "Bien", 5: "Facile"}
+NOTE_FSRS = {0: fsrs.Rating.Again, 3: fsrs.Rating.Hard, 4: fsrs.Rating.Good, 5: fsrs.Rating.Easy}
+# Part des cartes qu'on veut encore savoir le jour où elles reviennent : plus haut = plus de répétitions
+RETENTION = float(os.environ.get("FSRS_RETENTION", "0.9"))
+PARIS = ZoneInfo("Europe/Paris")
 
 
-def repetition(facilite: float, intervalle: int, repetitions: int, note: int,
-               aujourdhui: dt.date | None = None) -> tuple[float, int, int, dt.date]:
-    """Nouvel état d'une carte après une réponse notée 0 (raté) à 5 (facile).
+def planificateur(hasard: bool = True) -> fsrs.Scheduler:
+    """FSRS (l'algorithme d'Anki depuis 2023) : moins de répétitions que SM-2 pour la même mémoire."""
+    return fsrs.Scheduler(desired_retention=RETENTION, enable_fuzzing=hasard)
 
-    Renvoie (facilité, intervalle en jours, répétitions réussies, prochaine date).
-    """
+
+def carte_fsrs(k: dict) -> fsrs.Card:
+    """État FSRS d'une carte ; une carte suivie avec l'ancien SM-2 est reprise là où elle en était."""
+    if k.get("fsrs"):
+        return fsrs.Card.from_dict(k["fsrs"])
+    if not k.get("repetitions"):
+        return fsrs.Card(card_id=k["id"], due=dt.datetime.now(dt.timezone.utc))
+    echeance = dt.datetime.combine(k["prochaine"], dt.time(), PARIS).astimezone(dt.timezone.utc)
+    vue = k.get("vue_le") or echeance - dt.timedelta(days=max(k["intervalle"], 1))
+    # SM-2 : facilité 2,5 = carte moyenne (difficulté FSRS 5), 1,3 = très dure (10)
+    difficulte = min(10.0, max(1.0, 5 + (2.5 - k["facilite"]) * 5))
+    return fsrs.Card(card_id=k["id"], state=fsrs.State.Review, stability=float(max(k["intervalle"], 1)),
+                     difficulty=difficulte, due=echeance, last_review=vue)
+
+
+def repetition(k: dict, note: int, maintenant: dt.datetime | None = None, hasard: bool = True) -> dict:
+    """Nouvel état d'une carte après une réponse « À revoir » (0), « Difficile » (3), « Bien » (4), « Facile » (5)."""
     if note not in NOTES:
         raise ValueError(f"note inconnue : {note}")
-    aujourdhui = aujourdhui or dt.date.today()
-    if note < 3:
-        repetitions, intervalle = 0, 0  # ratée : on la revoit aujourd'hui même
-    else:
-        intervalle = 1 if repetitions == 0 else 3 if repetitions == 1 else round(intervalle * facilite)
-        if note == 5:
-            intervalle = round(intervalle * 1.3) + 1
-        repetitions += 1
-    facilite = max(1.3, facilite + 0.1 - (5 - note) * (0.08 + (5 - note) * 0.02))
-    return round(facilite, 2), intervalle, repetitions, aujourdhui + dt.timedelta(days=intervalle)
+    maintenant = maintenant or dt.datetime.now(dt.timezone.utc)
+    p = planificateur(hasard)
+    avant = carte_fsrs(k)
+    retenue = p.get_card_retrievability(avant, maintenant) if avant.last_review else None
+    apres, _ = p.review_card(avant, NOTE_FSRS[note], maintenant)
+    return {"fsrs": apres.to_dict(), "echeance": apres.due, "prochaine": apres.due.astimezone(PARIS).date(),
+            "intervalle": (apres.due - maintenant).days, "repetitions": (k.get("repetitions") or 0) + (note > 0),
+            "stabilite": apres.stability, "difficulte": apres.difficulty, "retenue": retenue}
+
+
+def delai(k: dict, note: int, maintenant: dt.datetime | None = None) -> str:
+    """Quand la carte reviendra avec cette réponse : « 10 min », « demain », « 4 j », « 3 mois »."""
+    maintenant = maintenant or dt.datetime.now(dt.timezone.utc)
+    ecart = repetition(k, note, maintenant, hasard=False)["echeance"] - maintenant
+    minutes = ecart.total_seconds() / 60
+    if minutes < 60:
+        return f"{max(1, round(minutes))} min"
+    if minutes < 20 * 60:
+        return f"{round(minutes / 60)} h"
+    jours = round(minutes / 1440)
+    return "demain" if jours <= 1 else f"{jours} j" if jours < 45 else f"{round(jours / 30)} mois" if jours < 365 \
+        else f"{jours / 365:.1f} an".replace(".", ",")

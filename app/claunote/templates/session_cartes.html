@@ -22,7 +22,7 @@
     <input type="hidden" name="note" value="{{ n }}">
     {% if paquet %}<input type="hidden" name="paquet" value="{{ paquet }}">{% endif %}
     <button class="n{{ n }}" data-touche="{{ loop.index }}">{{ libelle }}<br>
-      <span class="doux">{% if apercu[n] == 0 %}maintenant{% elif apercu[n] == 1 %}demain{% else %}{{ apercu[n] }} j{% endif %}</span></button>
+      <span class="doux">{{ apercu[n] }}</span></button>
   </form>
   {% endfor %}
 </div>

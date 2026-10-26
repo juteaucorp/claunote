@@ -1507,9 +1507,8 @@ def session_cartes(request: Request, paquet: int | None = None):
     return templates.TemplateResponse(request, "session_cartes.html", {
         "carte": carte, "paquet": paquet, "notes": revision.NOTES, "reperes": reperes,
         "reste": db.nb_cartes_a_revoir(paquet),
-        # Dans combien de jours la carte reviendra, pour chaque bouton
-        "apercu": {n: revision.repetition(carte["facilite"], carte["intervalle"], carte["repetitions"], n)[1]
-                   for n in revision.NOTES} if carte else {}})
+        # Quand la carte reviendra, pour chaque bouton (FSRS)
+        "apercu": {n: revision.delai(carte, n) for n in revision.NOTES} if carte else {}})
 
 
 @app.post("/cartes/{carte_id}/noter")
@@ -1517,7 +1516,7 @@ def noter_carte(carte_id: int, note: int = Form(...), paquet: int | None = Form(
     carte = db.carte(carte_id)
     if carte is None or note not in revision.NOTES:
         raise HTTPException(400, "carte ou note invalide")
-    db.maj_carte(carte_id, *revision.repetition(carte["facilite"], carte["intervalle"], carte["repetitions"], note))
+    db.maj_carte(carte_id, note, revision.repetition(carte, note))
     return RedirectResponse("/cartes/session" + (f"?paquet={paquet}" if paquet else ""), status_code=303)
 
 

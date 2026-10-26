@@ -143,6 +143,18 @@ CREATE TABLE IF NOT EXISTS cartes (
     vue_le       TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS cartes_prochaine ON cartes (prochaine);
+ALTER TABLE cartes ADD COLUMN IF NOT EXISTS echeance TIMESTAMPTZ;   -- FSRS : à la minute près (étapes d'apprentissage)
+ALTER TABLE cartes ADD COLUMN IF NOT EXISTS fsrs JSONB;             -- état FSRS (stabilité, difficulté…)
+CREATE TABLE IF NOT EXISTS revues_cartes (                          -- chaque réponse : statistiques, réglage futur de FSRS
+    id          BIGSERIAL PRIMARY KEY,
+    carte_id    INT NOT NULL REFERENCES cartes(id) ON DELETE CASCADE,
+    note        INT NOT NULL,                                       -- 0 À revoir, 3 Difficile, 4 Bien, 5 Facile
+    le          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    retenue     REAL,                                               -- chance estimée de s'en souvenir avant de répondre
+    stabilite   REAL,
+    difficulte  REAL
+);
+CREATE INDEX IF NOT EXISTS revues_cartes_le ON revues_cartes (le);
 CREATE TABLE IF NOT EXISTS pronote_notes (
     id              TEXT PRIMARY KEY,
     matiere         TEXT NOT NULL,
@@ -879,6 +891,10 @@ def supprimer_campagne(campagne_id: int, avec_revisions: bool = True):
 
 # --- Flashcards -------------------------------------------------------------
 
+# Carte à revoir : son échéance FSRS est passée (ou dans moins de 20 min, comme Anki), sinon sa date SM-2
+A_REVOIR = ("COALESCE(k.echeance, k.prochaine::timestamp AT TIME ZONE 'Europe/Paris') "
+            "<= now() + interval '20 minutes'")
+
 def creer_cartes(rev_id: int, cartes: list[dict]):
     with connect() as c, c.transaction():
         c.execute("DELETE FROM cartes WHERE revision_id = %s", (rev_id,))
@@ -891,8 +907,8 @@ def paquets():
     """Paquets de cartes (une révision « cartes » prête = un paquet), avec les cartes à revoir."""
     with connect() as c:
         return c.execute(
-            """SELECT r.id, r.sujet, r.cree_le, count(k.id) AS total,
-                      count(k.id) FILTER (WHERE k.prochaine <= current_date) AS a_revoir,
+            f"""SELECT r.id, r.sujet, r.cree_le, count(k.id) AS total,
+                      count(k.id) FILTER (WHERE {A_REVOIR}) AS a_revoir,
                       count(k.id) FILTER (WHERE k.repetitions = 0) AS nouvelles
                FROM revisions r JOIN cartes k ON k.revision_id = r.id
                GROUP BY r.id ORDER BY a_revoir DESC, r.cree_le DESC""").fetchall()
@@ -909,9 +925,10 @@ def prochaine_carte(rev_id: int | None = None):
     """Carte la plus en retard (les nouvelles après celles déjà vues)."""
     with connect() as c:
         return c.execute(
-            """SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
-               WHERE k.prochaine <= current_date AND (%s::int IS NULL OR k.revision_id = %s)
-               ORDER BY k.repetitions = 0, k.prochaine, k.vue_le NULLS FIRST, k.id LIMIT 1""",
+            f"""SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
+               WHERE {A_REVOIR} AND (%s::int IS NULL OR k.revision_id = %s)
+               ORDER BY k.repetitions = 0, COALESCE(k.echeance, k.prochaine::timestamptz), k.vue_le NULLS FIRST, k.id
+               LIMIT 1""",
             (rev_id, rev_id)).fetchone()
 
 
@@ -920,16 +937,20 @@ def carte(carte_id: int):
         return c.execute("SELECT * FROM cartes WHERE id = %s", (carte_id,)).fetchone()
 
 
-def maj_carte(carte_id: int, facilite: float, intervalle: int, repetitions: int, prochaine):
-    with connect() as c:
-        c.execute("UPDATE cartes SET facilite = %s, intervalle = %s, repetitions = %s, prochaine = %s, "
-                  "vue_le = now() WHERE id = %s", (facilite, intervalle, repetitions, prochaine, carte_id))
+def maj_carte(carte_id: int, note: int, m: dict):
+    """Enregistre la réponse (revues_cartes) et le nouvel état FSRS calculé par revision.repetition."""
+    with connect() as c, c.transaction():
+        c.execute("UPDATE cartes SET fsrs = %s, echeance = %s, prochaine = %s, intervalle = %s, repetitions = %s, "
+                  "vue_le = now() WHERE id = %s",
+                  (Jsonb(m["fsrs"]), m["echeance"], m["prochaine"], m["intervalle"], m["repetitions"], carte_id))
+        c.execute("INSERT INTO revues_cartes (carte_id, note, retenue, stabilite, difficulte) VALUES (%s, %s, %s, %s, %s)",
+                  (carte_id, note, m["retenue"], m["stabilite"], m["difficulte"]))
 
 
 def nb_cartes_a_revoir(rev_id: int | None = None) -> int:
     with connect() as c:
-        return c.execute("SELECT count(*) AS n FROM cartes WHERE prochaine <= current_date "
-                         "AND (%s::int IS NULL OR revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
+        return c.execute(f"SELECT count(*) AS n FROM cartes k WHERE {A_REVOIR} "
+                         "AND (%s::int IS NULL OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
 
 
 # --- Pronote ----------------------------------------------------------------

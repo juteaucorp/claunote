@@ -581,12 +581,12 @@ def test_session_et_notation(cartes):
     r = cartes.get("/cartes/session?paquet=8")
     assert "Qu'est-ce qu'un VLAN ?" in r.text.replace("&#39;", "'")
     assert "Un réseau virtuel<br>&lt;b&gt;isolé&lt;/b&gt;" in r.text and 'href="/doc/1"' in r.text
-    assert "maintenant" in r.text and "demain" in r.text
+    assert "1 min" in r.text and "10 min" in r.text
     assert "plus rien à revoir" in cartes.get("/cartes/session?paquet=9").text
     r = cartes.post("/cartes/31/noter", data={"note": "4", "paquet": "8"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/cartes/session?paquet=8"
-    _, cid, facilite, intervalle, reps, prochaine = cartes.appels[-1]
-    assert (cid, intervalle, reps) == (31, 1, 1)
+    _, cid, note, m = cartes.appels[-1]
+    assert (cid, note, m["repetitions"]) == (31, 4, 1) and m["fsrs"]["state"] == 1   # en apprentissage
     assert cartes.post("/cartes/31/noter", data={"note": "2"}).status_code == 400
     assert cartes.post("/cartes/99/noter", data={"note": "4"}).status_code == 400
 
