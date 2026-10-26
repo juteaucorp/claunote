@@ -1366,3 +1366,23 @@ def test_supprimer_sans_attendre_kdrive(client, monkeypatch):
     monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: (_ for _ in ()).throw(AssertionError("kDrive"))))
     r = client.post("/doc/1/supprimer", follow_redirects=False)
     assert r.status_code == 303 and corbeille == [77, 78] and client.appels[-2:] == [("supprimer", 1), "scan"]
+
+
+def test_reponse_locale_gardee_si_claude_ne_peut_pas_verifier(client, monkeypatch):
+    """Contrôle par Claude impossible (panne, limite) : la réponse du modèle local reste, marquée non vérifiée."""
+    from claunote import agent, question
+    ecrit = []
+    monkeypatch.setattr(main, "_passages", lambda q, conv, n=10: [])
+    monkeypatch.setattr(main, "_agenda_texte", lambda: "")
+    monkeypatch.setattr(main, "_local_libre", lambda: None)
+    monkeypatch.setattr(main, "_claude_en_pause", lambda: None)
+    monkeypatch.setattr(main.local, "reglages", lambda: {"mode": "local"})
+    monkeypatch.setattr(main.local, "CONTROLE", 1.0)                       # contrôle à chaque fois
+    monkeypatch.setattr(question, "repondre_local", lambda *a: {"reponse": "Un VLAN segmente.", "reperes": {},
+                                                                "confiance": 0.9, "aide": False})
+    monkeypatch.setattr(question, "repondre_ia", lambda *a: (_ for _ in ()).throw(agent.ClaudeIndisponible("panne")))
+    monkeypatch.setattr(db, "maj_message", lambda *a, **k: ecrit.append((a, k)))
+    main._repondre_ia(9, "C'est quoi un VLAN ?", {"niveau": None, "matiere": None}, [])
+    (msg_id, statut, contenu, *_), k = ecrit[-1]
+    assert statut == "pret" and "non vérifiée par Claude" in contenu and "Un VLAN segmente." in contenu
+    assert k["modele"] == "local" and "non vérifié" in k["detail"]

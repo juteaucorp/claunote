@@ -1314,10 +1314,10 @@ def _repondre_ia(msg_id: int, q: str, conv: dict, historique: list[dict]):
     l'aide (et 1 fois sur 10 pour contrôler) ; ou Claude d'abord, le local en secours.
     """
     portee = _portee(conv["niveau"], conv["matiere"]).strip()
+    brouillon = None
     try:
         passages, agenda = _passages(q, conv), _agenda_texte()
         mode, pause = local.reglages()["mode"], _claude_en_pause()
-        brouillon = None
         if mode in ("local", "toujours") or pause:
             if not _local_libre():
                 try:
@@ -1345,10 +1345,16 @@ def _repondre_ia(msg_id: int, q: str, conv: dict, historique: list[dict]):
             if verdict is not None:
                 db.noter_controle("question", verdict, q[:200])
         db.maj_message(msg_id, "pret", contenu, reperes, web, modele, detail=detail)
-    except LimiteAtteinte:
-        _repondre_localement(msg_id, q, conv, "limite de ton forfait Claude atteinte")
-    except ClaudeIndisponible as e:
-        _repondre_localement(msg_id, q, conv, f"Claude ne répond pas : {str(e)[:120]}")
+    except (LimiteAtteinte, ClaudeIndisponible) as e:
+        pourquoi = ("limite de ton forfait Claude atteinte" if isinstance(e, LimiteAtteinte)
+                    else f"Claude ne répond pas : {str(e)[:120]}")
+        if brouillon:   # le modèle local avait répondu : sa réponse plutôt que des passages bruts
+            doute = " Il n'était pas sûr de lui." if brouillon["aide"] else ""
+            db.maj_message(msg_id, "pret", f"*Réponse du modèle local, non vérifiée par Claude ({pourquoi}).{doute}*\n\n"
+                           + brouillon["reponse"], brouillon["reperes"], modele="local",
+                           detail=f"Modèle local · confiance {brouillon['confiance']:.0%} · non vérifié")
+        else:
+            _repondre_localement(msg_id, q, conv, pourquoi)
     except Exception as e:  # ErreurAgent, base momentanément injoignable…
         try:
             db.maj_message(msg_id, "erreur", erreur=str(e)[:300])

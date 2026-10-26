@@ -28,7 +28,7 @@
 
 {% if erreurs %}
 <div class="entete-section">
-  <h2>En erreur <span class="compteur">{{ erreurs|length }}</span></h2>
+  <h2>En erreur <span class="compteur">{{ erreurs[0].total or erreurs|length }}</span></h2>
   {% if erreurs|length > 1 %}
   <form method="post" action="/a-verifier/reessayer-tout"><button>Tout réessayer</button></form>
   {% endif %}
@@ -63,8 +63,8 @@
 {% endif %}
 
 {% if doutes %}
-<div class="entete-section"><h2>À confirmer <span class="compteur">{{ doutes|length }}</span></h2></div>
-<p class="doux intro">L'agent n'était pas sûr du classement. Ton choix range le fichier dans kDrive.</p>
+<div class="entete-section"><h2>À confirmer <span class="compteur">{{ doutes[0].total or doutes|length }}</span></h2></div>
+<p class="doux intro">L'agent n'était pas sûr du classement. Ton choix range le fichier dans kDrive (dans la minute).</p>
 {% for d in doutes %}
 <div class="carte">
   <a href="/doc/{{ d.id }}"><strong>{{ d.titre or d.nom }}</strong></a>
@@ -79,6 +79,11 @@
   </div>
 </div>
 {% endfor %}
+{% set total_doutes = doutes[0].total or doutes|length %}
+{% if total_doutes > doutes|length %}
+<p class="doux">Les {{ doutes|length }} plus anciens sont affichés ; {{ total_doutes - doutes|length }} autres attendent :
+  <a href="/organiser?statut=a_verifier">les voir dans Tous les documents</a> (actions de masse possibles).</p>
+{% endif %}
 {% endif %}
 
 <style>

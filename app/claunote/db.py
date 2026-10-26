@@ -442,10 +442,15 @@ def recherche(q: str, limite: int = 30):
                ORDER BY ts_rank(recherche, requete) DESC LIMIT %s""", (q, limite)).fetchall()
 
 
-def a_verifier():
+def a_verifier(limite: int = 50):
+    """Les plus anciens d'abord, par pages : sans la transcription (la page ne l'affiche pas, et elle peut
+    peser plusieurs Mo pour des centaines de documents). `total` : combien il y en a en tout."""
     with connect() as c:
         return c.execute(
-            "SELECT * FROM documents WHERE statut IN ('a_verifier', 'erreur') ORDER BY cree_le").fetchall()
+            """SELECT id, nom, titre, statut, niveau, matiere, type, confiance, note, erreur, modele, origine, cree_le,
+                      kdrive_id, count(*) OVER (PARTITION BY statut = 'erreur') AS total
+               FROM documents WHERE statut IN ('a_verifier', 'erreur') ORDER BY cree_le LIMIT %s""",
+            (limite,)).fetchall()
 
 
 def nb_documents() -> int:
@@ -581,10 +586,11 @@ def marquer_a_ranger(ids: list[int], valeur: bool = True):
         c.execute("UPDATE documents SET a_ranger = %s WHERE id = ANY(%s)", (valeur, ids))
 
 
-def hors_cours():
+def hors_cours(limite: int = 100):
     with connect() as c:
-        return c.execute("SELECT id, nom, titre, resume, date_doc, cree_le, origine FROM documents "
-                         "WHERE statut = 'hors_cours' ORDER BY date_doc DESC NULLS LAST, cree_le DESC").fetchall()
+        return c.execute("SELECT id, nom, titre, resume, date_doc, cree_le, origine, count(*) OVER () AS total "
+                         "FROM documents WHERE statut = 'hors_cours' "
+                         "ORDER BY date_doc DESC NULLS LAST, cree_le DESC LIMIT %s", (limite,)).fetchall()
 
 
 def nb_hors_cours() -> int:
