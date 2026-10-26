@@ -687,7 +687,10 @@ def traiter_revision(kd: KDrive, rev: dict):
     if rev["genre"] == "cartes":
         db.creer_cartes(rev["id"], json.loads(contenu))
     db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, web=web)
-    copier_pdf(kd, db.revision(rev["id"]))
+    try:
+        copier_pdf(kd, db.revision(rev["id"]))
+    except KDriveIndisponible as e:   # la révision est prête sur le site ; son PDF ira dans kDrive plus tard
+        log(f"PDF de la révision {rev['id']} : kDrive indisponible ({e}), copie au prochain tour")
     log(f"révision prête : {rev['genre']} « {rev['sujet']} »" + (f" ({len(web)} source(s) web)" if web else ""))
     try:
         if not rev.get("campagne_id"):  # une campagne prévient une seule fois, quand tout est prêt
@@ -709,6 +712,8 @@ def copier_pdf(kd: KDrive, rev: dict) -> int | None:
         dossier = kd.ensure_path(ETUDES_ID, ["fiches", rev.get("campagne_titre") or rev.get("matiere") or "divers"])
         nom = revision.nom_fichier(rev["genre"], rev["sujet"], rev["cree_le"].date(), "pdf")
         kdrive_id = kd.upload(dossier, nom, pdf.revision_pdf(rev, sources)).get("id")
+    except KDriveIndisponible:
+        raise   # panne : le disjoncteur s'ouvre, la copie est refaite plus tard sans compter d'essai
     except Exception as e:
         log(f"copie kDrive de la révision impossible : {e}")
     db.maj_pdf_revision(rev["id"], kdrive_id)
@@ -899,6 +904,8 @@ def executer_choix(kd: KDrive) -> bool:
                 kd.move(r["kdrive_id"], dest)
                 db.import_marquer([r["kdrive_id"]], "fait")
                 log(f"gardé à part : {r['chemin']} → autres/")
+        except KDriveIndisponible:
+            raise   # panne : ton choix est gardé, il sera appliqué quand kDrive répondra
         except Exception as e:  # déjà supprimé ou déplacé à la main dans kDrive
             log(f"{r['chemin']} : {e}")
             db.import_oublier([r["kdrive_id"]])
@@ -923,6 +930,8 @@ def fusionner(kd: KDrive, groupe: str):
         chemins = [kd.download(p["kdrive_id"], local / f"{i:03d}{PurePosixPath(p['nom']).suffix.lower()}")
                    for i, p in enumerate(pages)]
         contenu = importation.fusionner_pdf(chemins)
+    except KDriveIndisponible:
+        raise   # panne passagère : la fusion est retentée au tour suivant, pas abandonnée
     except Exception as e:
         log(f"fusion impossible de « {groupe} » ({e}) : pages analysées une par une")
         db.import_marquer([p["kdrive_id"] for p in pages], "analyser")
@@ -1245,6 +1254,14 @@ def lire_inbox(kd: KDrive) -> list[dict]:
     return inbox
 
 
+def indexer_si_calme():
+    """Rien d'urgent : on indexe les passages (recherche, chat) ; sur la VM, sans Claude ni kDrive."""
+    if not ETAT["reste"] and not ARRET.is_set():
+        n = etape("index des documents", lambda: (index.indexer(20, arrete), index.vectoriser(128, arrete)))
+        # Lots pleins : il reste de l'index à faire, le worker ne s'endort pas 5 min entre deux tours
+        ETAT["index_en_retard"] = bool(n) and (n[0] >= 20 or n[1] >= 128)
+
+
 def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     """Un passage du worker. Renvoie l'heure du dernier nettoyage de l'inbox."""
     # Ce que tu attends sur le site passe d'abord : révisions, puis reclassements, puis les scans.
@@ -1253,6 +1270,7 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     if (CLAUDE.disponible() or not local.disponible()) and not ARRET.is_set() and not PAUSE.is_set():
         etape("reclassements", reclasser_en_attente)
     if not KDRIVE.disponible() or ARRET.is_set():
+        indexer_si_calme()   # l'index ne dépend pas de kDrive : il avance même pendant une panne
         return dernier_nettoyage
     etape("rangement", ranger_en_attente, kd)
     etape("PDF des révisions", pdf_manquants, kd)
@@ -1271,8 +1289,7 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
                                                      r["mode"], claude_ok))
         if claude_ok and not ETAT["reste"] and not ARRET.is_set():
             etape("relectures par Claude", relire_avec_claude, kd)
-    if not ETAT["reste"] and not ARRET.is_set():  # rien d'urgent : on indexe les passages (recherche, chat)
-        etape("index des documents", lambda: index.indexer(20, arrete) + index.vectoriser(128, arrete))
+    indexer_si_calme()
     if time.monotonic() - dernier_nettoyage > NETTOYAGE and KDRIVE.disponible() and not ARRET.is_set():
         etape("nettoyage", nettoyer_inbox, kd)
         return time.monotonic()
@@ -1316,7 +1333,7 @@ def main():
         etape("test de Claude", sonder_claude)
         prochaine_synchro = synchro_pronote(prochaine_synchro)
         dernier_nettoyage = tour(kd, dernier_nettoyage)
-        if ETAT["reste"] or ETAT.get("inbox") != inbox_vue:
+        if ETAT["reste"] or ETAT.get("index_en_retard") or ETAT.get("inbox") != inbox_vue:
             dernier_changement, inbox_vue = time.monotonic(), ETAT.get("inbox")
         attendre(delai(ETAT["reste"] and CLAUDE.disponible(), time.monotonic() - dernier_changement))
     publier()
