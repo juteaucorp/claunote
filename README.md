@@ -139,7 +139,7 @@ se font aussi sur le site.
 cd app
 pip install -r requirements.txt pytest
 pytest                      # ~300 tests, sans base ni kDrive (tout est simulé)
-cd ../pronote && npm test   # service Pronote
+cd ../pronote && npm ci && npm test   # service Pronote
 ```
 
 Les tests de lecture locale (OCR) se lancent si Tesseract est installé (`apt install tesseract-ocr tesseract-ocr-fra`).
