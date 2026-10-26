@@ -53,16 +53,15 @@ def test_page_mise_a_jour(client, dossier):
     assert "Mise à jour<span class=\"badge\">1</span>" in r.text   # onglet Réglages
 
 
-def test_mise_a_jour_reservee_a_l_admin(client, dossier):
-    r = client.post("/mise-a-jour/mettre_a_jour", data={"mot_de_passe": "faux"})
-    assert "Mot de passe incorrect" in r.text and not (dossier / "demande").exists()
-    r = client.post("/mise-a-jour/mettre_a_jour", data={"mot_de_passe": "claunote"})
+def test_mise_a_jour_sans_mot_de_passe(client, dossier):
+    r = client.post("/mise-a-jour/mettre_a_jour")
     assert (dossier / "demande").read_text() == "mettre_a_jour"
     assert 'hx-trigger="every 2s"' in r.text and "En attente du service maj" in r.text
-    assert client.post("/mise-a-jour/supprimer", data={"mot_de_passe": "claunote"}).status_code == 404
+    assert 'type="password"' not in client.get("/mise-a-jour").text
+    assert client.post("/mise-a-jour/supprimer").status_code == 404
 
 
-def test_verifier_sans_mot_de_passe(client, dossier):
+def test_verifier(client, dossier):
     client.post("/mise-a-jour/verifier")
     assert (dossier / "demande").read_text() == "verifier"
 
@@ -71,7 +70,7 @@ def test_sans_service_maj(client, tmp_path, monkeypatch):
     monkeypatch.setattr(maj, "DOSSIER", tmp_path)
     r = client.get("/mise-a-jour")
     assert "ne tourne pas encore" in r.text
-    r = client.post("/mise-a-jour/mettre_a_jour", data={"mot_de_passe": "claunote"})
+    r = client.post("/mise-a-jour/mettre_a_jour")
     assert "ne tourne pas sur la VM" in r.text and not (tmp_path / "demande").exists()
 
 

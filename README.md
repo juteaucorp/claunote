@@ -111,7 +111,7 @@ docker compose up -d --build  # site, worker, base, modèle local, Pronote, HTTP
 
 Ensuite, ouvre `http://<IP-VPN-de-la-VM>:8000`, connecte-toi, et dépose un premier scan.
 
-**Mises à jour** : depuis le site, *Plus → Réglages → Mise à jour → Tout mettre à jour* (mot de passe redemandé).
+**Mises à jour** : depuis le site, *Plus → Réglages → Mise à jour → Tout mettre à jour* (réservé au compte connecté).
 Le service `maj` fait le `git pull` puis reconstruit et redémarre les services ; un badge prévient quand une
 nouvelle version est sur GitHub.
 
