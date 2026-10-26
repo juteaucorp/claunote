@@ -9,6 +9,11 @@
   Ils restent consultables ici et dans <code>Etudes/hors-cours</code> sur kDrive, mais ne sont pas utilisés pour les
   fiches, quiz et flashcards.</p>
 <datalist id="matieres">{% for m in matieres %}<option value="{{ m }}">{% endfor %}</datalist>
+{% set total = (docs[0].total if docs else 0) or docs|length %}
+{% if total > docs|length %}
+<p class="doux">Les {{ docs|length }} plus récents sur {{ total }} :
+  <a href="/organiser?statut=hors_cours">tous les voir dans Tous les documents</a>.</p>
+{% endif %}
 {% for d in docs %}
 <details class="carte">
   <summary><strong>{{ d.titre or d.nom }}</strong>

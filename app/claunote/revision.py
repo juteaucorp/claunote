@@ -514,20 +514,7 @@ def generer_programme(campagne: dict, matieres: list[dict], evenements: list[dic
     return programme
 
 
-def quiz_en_markdown(questions: list[dict]) -> str:
-    lignes = []
-    for i, q in enumerate(questions, start=1):
-        lignes.append(f"### {i}. {q['question']}")
-        lignes += [f"- {chr(65 + j)}. {c}" for j, c in enumerate(q["choix"])]
-        lignes.append(f"\n**Réponse : {chr(65 + q['reponse'])}.** {q['explication']}\n")
-    return "\n".join(lignes)
-
-
-def cartes_en_markdown(cartes: list[dict]) -> str:
-    return "\n".join(f"### {i}. {k['recto']}\n\n{k['verso']}\n" for i, k in enumerate(cartes, start=1))
-
-
-# --- Répétition espacée (SM-2, comme Anki) -----------------------------------
+# --- Répétition espacée (FSRS, comme Anki) -----------------------------------
 
 NOTES = {0: "À revoir", 3: "Difficile", 4: "Bien", 5: "Facile"}
 NOTE_FSRS = {0: fsrs.Rating.Again, 3: fsrs.Rating.Hard, 4: fsrs.Rating.Good, 5: fsrs.Rating.Easy}

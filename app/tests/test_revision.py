@@ -121,10 +121,8 @@ def test_generer_passe_les_cours_sur_l_entree(monkeypatch):
         revision.generer("fiche", "VLAN", [])
 
 
-def test_nom_fichier_et_quiz_markdown():
+def test_nom_fichier():
     assert revision.nom_fichier("quiz", "Les réseaux : VLAN", dt.date(2026, 10, 23)) == "2026-10-23_quiz_les-reseaux-vlan.md"
-    md = revision.quiz_en_markdown([{"question": "Q", "choix": ["a", "b"], "reponse": 1, "explication": "car"}])
-    assert "### 1. Q" in md and "- B. b" in md and "**Réponse : B.** car" in md
 
 
 def test_parse_cartes():
@@ -133,7 +131,6 @@ def test_parse_cartes():
     assert revision.parse_cartes("Voici :\n" + texte) == [{"recto": "VLAN ?", "verso": "Réseau virtuel", "source": "D1"}]
     with pytest.raises(ErreurAgent):
         revision.parse_cartes('{"cartes": []}')
-    assert "### 1. VLAN ?\n\nRéseau virtuel" in revision.cartes_en_markdown([{"recto": "VLAN ?", "verso": "Réseau virtuel"}])
     assert "flashcards" in revision.prompt("cartes", "VLAN") and "20 flashcards" in revision.prompt("cartes", "VLAN")
 
 

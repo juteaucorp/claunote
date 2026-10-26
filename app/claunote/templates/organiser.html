@@ -88,7 +88,8 @@
   .filtres { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px 14px; margin-top: 14px; }
   .filtres label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--doux); font-weight: 500; }
   .filtres label.large { grid-column: span 2; }
-  .filtres input, .filtres select { width: 100%; color: var(--texte); }
+  .filtres input, .filtres select { width: 100%; min-width: 0; color: var(--texte); }
+  .filtres > * { min-width: 0; }   /* un champ date a une largeur minimale : sans ça, il pousse la page sur mobile */
   .boutons-filtres { align-self: end; }
   .compteur { display: inline-block; min-width: 22px; padding: 0 7px; border-radius: 999px; background: var(--accent); color: #fff; font-size: .78rem; line-height: 22px; text-align: center; }
   .barre-resultats { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 20px 0 10px; padding: 0 4px; }

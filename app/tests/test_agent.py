@@ -126,7 +126,7 @@ def test_reclasser_garde_l_annee_choisie(monkeypatch):
     doc = {"nom": "a.pdf", "titre": "VLAN", "niveau": "BTS2", "transcription": "Les VLAN " * 10_000}
     a = agent.reclasser(doc, ["Réseaux", "CEJM"])
     assert (a.niveau, a.matiere, a.type) == ("BTS2", "Réseaux", "Cours") and a.transcription == ""
-    assert "BTS2. Garde-la" in vu["prompt"] and "Réseaux, CEJM" in vu["prompt"] and len(vu["entree"]) == 30_000
+    assert "BTS2. Garde-la" in vu["prompt"] and "Réseaux, CEJM" in vu["prompt"] and len(vu["entree"]) < 17_500   # un extrait, pas tout le cours
     assert vu["outils"] is None
     a = agent.reclasser({**doc, "niveau": None}, [])
     assert a.niveau == "BTS1" and "Garde-la" not in vu["prompt"]
@@ -370,3 +370,12 @@ def test_arborescence_par_le_modele_local_d_abord(monkeypatch):
     # le modèle local échoue : Claude prend le relais
     monkeypatch.setattr(agent, "demander", lambda *a, **k: ({"resume": "Claude", "dossiers": {}}, "haiku"))
     assert agent.interpreter_arborescence({"BTS1/Maths": 3}, [], lambda p, e: None)[0] == "Claude"
+
+
+def test_extrait_pour_classer():
+    court = "Les VLAN. " * 500
+    assert agent.extrait(court) == court                       # court : envoyé en entier
+    long = "D" * 20_000 + "M" * 40_000 + "F" * 20_000
+    e = agent.extrait(long)
+    assert len(e) < 17_500 and e.startswith("D" * 12_000) and e.endswith("F" * 3_000)
+    assert "M" * 2_000 in e and e.count("extrait : le document fait 80000 caractères") == 2

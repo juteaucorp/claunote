@@ -599,11 +599,28 @@ def transcrire_par_morceaux(chemin: Path, memoire: Path | None = None, contexte:
     return "\n\n".join(t for t, _ in resultats), max(modeles_lus, key=modeles.ECHELLE.index, default="")
 
 
+# Pour classer (année, matière, type, titre, résumé), le début d'un document dit presque tout : un extrait
+# suffit. Le texte entier reste la transcription ; Claude ne lit que l'extrait (~4 fois moins de jetons
+# pour un long cours, donc moins de forfait consommé).
+EXTRAIT_DEBUT, EXTRAIT_MILIEU, EXTRAIT_FIN = 12_000, 2_000, 3_000
+
+
+def extrait(texte: str) -> str:
+    """Le texte entier s'il est court, sinon son début, un morceau du milieu et sa fin, coupures signalées."""
+    total = EXTRAIT_DEBUT + EXTRAIT_MILIEU + EXTRAIT_FIN
+    if len(texte) <= total + 2_000:
+        return texte
+    m = len(texte) // 2
+    coupe = f"\n\n[… extrait : le document fait {len(texte)} caractères …]\n\n"
+    return (texte[:EXTRAIT_DEBUT] + coupe + texte[m - EXTRAIT_MILIEU // 2:m + EXTRAIT_MILIEU // 2] + coupe
+            + texte[-EXTRAIT_FIN:])
+
+
 def classer_texte(texte: str, nom: str, origine: str, contexte: str = "") -> tuple[Analyse, str]:
     """Classement d'un texte déjà lisible : modèle léger, une seule passe, sans relire de fichier."""
     prompt = PROMPT_TEXTE.format(nom=nom, origine=origine, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
     with tempfile.TemporaryDirectory() as vide:
-        return demander("texte", prompt + contexte, Path(vide), lire=parse_reponse, entree=texte[:60_000],
+        return demander("texte", prompt + contexte, Path(vide), lire=parse_reponse, entree=extrait(texte),
                         timeout=600)
 
 
@@ -716,7 +733,7 @@ def classer(transcription: str, titre: str, matieres: list[str], annee: str = ""
     prompt = PROMPT_RECLASSER.format(titre=titre, annee=annee, indices=indices, niveaux=", ".join(NIVEAUX),
                                      types=", ".join(TYPES), matieres=", ".join(matieres) or "aucune")
     with tempfile.TemporaryDirectory() as vide:
-        a, m = demander("classement", prompt, Path(vide), lire=parse_reponse, entree=transcription[:30_000],
+        a, m = demander("classement", prompt, Path(vide), lire=parse_reponse, entree=extrait(transcription),
                         timeout=600, modele=modele)
     a.modele = m
     return a

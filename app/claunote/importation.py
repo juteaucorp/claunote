@@ -10,7 +10,7 @@ Pour chaque fichier, à partir de son chemin, de son nom et de sa taille :
 import re
 import unicodedata
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from claunote import rangement

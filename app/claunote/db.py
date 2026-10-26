@@ -3,8 +3,8 @@ import atexit
 import os
 import secrets
 import threading
+import time
 
-import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg.types.json import Jsonb
@@ -145,6 +145,10 @@ CREATE TABLE IF NOT EXISTS cartes (
 CREATE INDEX IF NOT EXISTS cartes_prochaine ON cartes (prochaine);
 ALTER TABLE cartes ADD COLUMN IF NOT EXISTS echeance TIMESTAMPTZ;   -- FSRS : à la minute près (étapes d'apprentissage)
 ALTER TABLE cartes ADD COLUMN IF NOT EXISTS fsrs JSONB;             -- état FSRS (stabilité, difficulté…)
+CREATE TABLE IF NOT EXISTS kdrive_corbeille (                       -- fichiers à envoyer à la corbeille kDrive (worker)
+    kdrive_id  BIGINT PRIMARY KEY,
+    le         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS cles_acces (                             -- Face ID / Touch ID (passkeys) : clés publiques
     id           TEXT PRIMARY KEY,                                  -- identifiant de la clé (base64url)
     cle_publique BYTEA NOT NULL,
@@ -223,6 +227,7 @@ CREATE TABLE IF NOT EXISTS passages (
 );
 CREATE INDEX IF NOT EXISTS passages_document ON passages (document_id, rang);
 CREATE INDEX IF NOT EXISTS passages_recherche ON passages USING GIN (recherche);
+CREATE INDEX IF NOT EXISTS passages_sans_vecteur ON passages (id) WHERE vecteur IS NULL;
 DO $$ BEGIN
     CREATE EXTENSION IF NOT EXISTS vector;
     ALTER TABLE passages ADD COLUMN IF NOT EXISTS vecteur vector(768);
@@ -234,6 +239,9 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS essais INT NOT NULL DEFAULT 0;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS pdf_essais INT NOT NULL DEFAULT 0; -- copie du PDF dans kDrive
 ALTER TABLE import_lots ADD COLUMN IF NOT EXISTS a_comprendre BOOLEAN NOT NULL DEFAULT false;  -- passe IA à faire
 CREATE INDEX IF NOT EXISTS documents_statut ON documents (statut);
+-- Index partiels : seulement les quelques lignes que le worker cherche à chaque tour (pas toute la table)
+CREATE INDEX IF NOT EXISTS documents_a_ranger ON documents (id) WHERE a_ranger;
+CREATE INDEX IF NOT EXISTS cartes_revision ON cartes (revision_id);
 CREATE TABLE IF NOT EXISTS appels_ia (
     id             SERIAL PRIMARY KEY,
     le             TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -339,11 +347,24 @@ UPDATE messages SET statut = 'erreur', erreur = 'Réponse interrompue (redémarr
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
           "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note",
-          "variante_kdrive_id", "variante_nom", "essais", "modele", "avis", "relire"}
+          "variante_kdrive_id", "variante_nom", "essais", "modele", "avis", "relire", "a_ranger"}
 
 
 _pool: ConnectionPool | None = None
 _verrou = threading.Lock()
+_rendues: dict[int, float] = {}   # connexion → moment où elle est revenue dans le pool
+VERIFIER_APRES = 30.0             # secondes de repos avant de revérifier une connexion
+
+
+def _rendue(conn):
+    _rendues[id(conn)] = time.monotonic()
+
+
+def _verifier(conn):
+    """Un aller-retour de vérification seulement pour une connexion restée au repos (base redémarrée,
+    coupure réseau) : pas avant chacune des dizaines de requêtes d'une page."""
+    if time.monotonic() - _rendues.get(id(conn), 0.0) > VERIFIER_APRES:
+        ConnectionPool.check_connection(conn)
 
 
 def connect():
@@ -354,7 +375,7 @@ def connect():
             if _pool is None:
                 _pool = ConnectionPool(os.environ["DATABASE_URL"], min_size=1, max_size=12, open=True,
                                        kwargs={"row_factory": dict_row, "autocommit": True},
-                                       check=ConnectionPool.check_connection)
+                                       check=_verifier, reset=_rendue)
     return _pool.connection()
 
 
@@ -370,11 +391,6 @@ atexit.register(fermer)
 def init():
     with connect() as c:
         c.execute(SCHEMA)
-
-
-def par_kdrive(kdrive_id: int):
-    with connect() as c:
-        return c.execute("SELECT * FROM documents WHERE kdrive_id = %s", (kdrive_id,)).fetchone()
 
 
 def creer(kdrive_id: int, nom: str) -> int:
@@ -426,10 +442,15 @@ def recherche(q: str, limite: int = 30):
                ORDER BY ts_rank(recherche, requete) DESC LIMIT %s""", (q, limite)).fetchall()
 
 
-def a_verifier():
+def a_verifier(limite: int = 50):
+    """Les plus anciens d'abord, par pages : sans la transcription (la page ne l'affiche pas, et elle peut
+    peser plusieurs Mo pour des centaines de documents). `total` : combien il y en a en tout."""
     with connect() as c:
         return c.execute(
-            "SELECT * FROM documents WHERE statut IN ('a_verifier', 'erreur') ORDER BY cree_le").fetchall()
+            """SELECT id, nom, titre, statut, niveau, matiere, type, confiance, note, erreur, modele, origine, cree_le,
+                      kdrive_id, count(*) OVER (PARTITION BY statut = 'erreur') AS total
+               FROM documents WHERE statut IN ('a_verifier', 'erreur') ORDER BY cree_le LIMIT %s""",
+            (limite,)).fetchall()
 
 
 def nb_documents() -> int:
@@ -531,6 +552,24 @@ def supprimer(doc_id: int):
         c.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
 
 
+def mettre_a_la_corbeille(kdrive_ids: list[int]):
+    """Fichiers kDrive à supprimer : le worker s'en charge, et réessaie tant que kDrive est en panne."""
+    with connect() as c:
+        for i in kdrive_ids:
+            c.execute("INSERT INTO kdrive_corbeille (kdrive_id) VALUES (%s) ON CONFLICT DO NOTHING", (i,))
+
+
+def corbeille(limite: int = 50) -> list[int]:
+    with connect() as c:
+        return [r["kdrive_id"] for r in c.execute("SELECT kdrive_id FROM kdrive_corbeille ORDER BY le LIMIT %s",
+                                                  (limite,)).fetchall()]
+
+
+def corbeille_faite(kdrive_id: int):
+    with connect() as c:
+        c.execute("DELETE FROM kdrive_corbeille WHERE kdrive_id = %s", (kdrive_id,))
+
+
 def a_reclasser(limite: int):
     with connect() as c:
         return c.execute("SELECT * FROM documents WHERE statut = 'reclasser' ORDER BY maj_le LIMIT %s",
@@ -547,10 +586,11 @@ def marquer_a_ranger(ids: list[int], valeur: bool = True):
         c.execute("UPDATE documents SET a_ranger = %s WHERE id = ANY(%s)", (valeur, ids))
 
 
-def hors_cours():
+def hors_cours(limite: int = 100):
     with connect() as c:
-        return c.execute("SELECT id, nom, titre, resume, date_doc, cree_le, origine FROM documents "
-                         "WHERE statut = 'hors_cours' ORDER BY date_doc DESC NULLS LAST, cree_le DESC").fetchall()
+        return c.execute("SELECT id, nom, titre, resume, date_doc, cree_le, origine, count(*) OVER () AS total "
+                         "FROM documents WHERE statut = 'hors_cours' "
+                         "ORDER BY date_doc DESC NULLS LAST, cree_le DESC LIMIT %s", (limite,)).fetchall()
 
 
 def nb_hors_cours() -> int:
@@ -918,7 +958,7 @@ def paquets():
         return c.execute(
             f"""SELECT r.id, r.sujet, r.cree_le, count(k.id) AS total,
                       count(k.id) FILTER (WHERE {A_REVOIR}) AS a_revoir,
-                      count(k.id) FILTER (WHERE k.repetitions = 0) AS nouvelles
+                      count(k.id) FILTER (WHERE k.vue_le IS NULL) AS nouvelles
                FROM revisions r JOIN cartes k ON k.revision_id = r.id
                GROUP BY r.id ORDER BY a_revoir DESC, r.cree_le DESC""").fetchall()
 
@@ -936,7 +976,7 @@ def prochaine_carte(rev_id: int | None = None):
         return c.execute(
             f"""SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
                WHERE {A_REVOIR} AND (%s::int IS NULL OR k.revision_id = %s)
-               ORDER BY COALESCE(k.echeance, k.prochaine::timestamptz) > now(), k.repetitions = 0,
+               ORDER BY COALESCE(k.echeance, k.prochaine::timestamptz) > now(), k.vue_le IS NULL,
                         COALESCE(k.echeance, k.prochaine::timestamptz), k.vue_le NULLS FIRST, k.id
                LIMIT 1""",
             (rev_id, rev_id)).fetchone()
@@ -1030,19 +1070,27 @@ def progression_donnees(jours: int = 30) -> dict:
 
 # --- Pronote ----------------------------------------------------------------
 
+ETAT_CACHE = 2.0   # secondes : une page lit 5 à 10 clés ; une seule requête pour toutes
+_etat: dict = {"le": float("-inf"), "valeurs": {}}
+
+
 def etat_valeur(cle: str):
-    with connect() as c:
-        r = c.execute("SELECT valeur FROM etat WHERE cle = %s", (cle,)).fetchone()
-        return r["valeur"] if r else None
+    if time.monotonic() - _etat["le"] > ETAT_CACHE:
+        with connect() as c:
+            valeurs = {r["cle"]: r["valeur"] for r in c.execute("SELECT cle, valeur FROM etat").fetchall()}
+        _etat["valeurs"], _etat["le"] = valeurs, time.monotonic()
+    return _etat["valeurs"].get(cle)
 
 
 def etat_consommer(cle: str) -> bool:
     """Vrai si la clé était posée ; la retire (demande ponctuelle du site au worker)."""
+    _etat["le"] = float("-inf")
     with connect() as c:
         return c.execute("DELETE FROM etat WHERE cle = %s RETURNING cle", (cle,)).fetchone() is not None
 
 
 def etat_ecrire(cle: str, valeur: str | None):
+    _etat["le"] = float("-inf")   # relue fraîche juste après une écriture de ce processus
     with connect() as c:
         if valeur is None:
             c.execute("DELETE FROM etat WHERE cle = %s", (cle,))

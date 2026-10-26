@@ -313,7 +313,7 @@ def verifier_par_claude(a: Analyse, texte: str, nom: str, origine: str, matieres
     local = {k: getattr(a, k) for k in ("titre", "niveau", "matiere", "type", "chapitre", "resume", "confiance")}
     entree = (f"Classement du modèle local :\n{json.dumps(local, ensure_ascii=False)}\n\n"
               + (f"Matières déjà utilisées : {', '.join(matieres)}.\n\n" if matieres else "")
-              + f"Texte du document « {nom} » :\n{texte[:20_000]}")
+              + f"Texte du document « {nom} » :\n{agent.extrait(texte)}")
     prompt = PROMPT_CONTROLE.format(origine=origine, raison=raison, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
 
     def lire(reponse: str):

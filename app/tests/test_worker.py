@@ -846,3 +846,64 @@ def test_memoire_basse_decharge_les_modeles_au_repos(worker, monkeypatch):
     assert not worker.liberer_si_besoin(1300)                             # pas deux fois en 10 min
     monkeypatch.setattr(worker.ressources, "local_actif", lambda: True)
     assert not worker.liberer_si_besoin(5000)                             # une analyse locale tourne : on attend
+
+
+def test_corbeille_kdrive(worker, monkeypatch):
+    import httpx
+    faits, a_faire = [], [11, 12, 13]
+
+    class KD:
+        def delete(self, i):
+            if i == 12:   # déjà supprimé à la main dans kDrive
+                raise httpx.HTTPStatusError("x", request=None, response=httpx.Response(404))
+            if i == 13:
+                raise worker.KDriveIndisponible("panne")
+    monkeypatch.setattr(worker.db, "corbeille", lambda: list(a_faire))
+    monkeypatch.setattr(worker.db, "corbeille_faite", faits.append)
+    try:
+        worker.vider_corbeille(KD())
+    except worker.KDriveIndisponible:
+        pass
+    assert faits == [11, 12]          # 13 reste dans la file : réessayé quand kDrive revient
+
+
+def test_index_avance_pendant_une_panne_kdrive(worker, monkeypatch):
+    fait = []
+    monkeypatch.setattr(worker.KDRIVE, "disponible", lambda: False)
+    monkeypatch.setattr(worker.CLAUDE, "disponible", lambda: False)
+    monkeypatch.setattr(worker.local, "disponible", lambda: "absent")
+    monkeypatch.setattr(worker.index, "indexer", lambda n, a: fait.append("index") or 0)
+    monkeypatch.setattr(worker.index, "vectoriser", lambda n, a: fait.append("sens") or 0)
+    monkeypatch.setitem(worker.ETAT, "reste", False)
+    worker.tour(None, 0.0)
+    assert fait == ["index", "sens"]
+
+
+def test_panne_kdrive_ne_perd_rien(worker, monkeypatch):
+    """Panne kDrive : copie de PDF et choix d'import remontent la panne (disjoncteur), rien n'est oublié."""
+    oublies = []
+
+    class KD:
+        def ensure_path(self, *a):
+            raise worker.KDriveIndisponible("panne")
+        delete = move = ensure_path
+    monkeypatch.setattr(worker.db, "documents", lambda ids: [])
+    monkeypatch.setattr(worker.db, "maj_pdf_revision", lambda *a: oublies.append("pdf"))
+    with pytest.raises(worker.KDriveIndisponible):
+        worker.copier_pdf(KD(), {"id": 1, "reperes": {}, "genre": "fiche", "sujet": "x", "matiere": "Maths"})
+    monkeypatch.setattr(worker.db, "import_a_executer", lambda: [{"kdrive_id": 5, "decision": "supprimer", "chemin": "a"}])
+    monkeypatch.setattr(worker.db, "import_oublier", oublies.append)
+    with pytest.raises(worker.KDriveIndisponible):
+        worker.executer_choix(KD())
+    assert oublies == []          # ni essai de PDF compté, ni choix d'import oublié
+
+
+def test_index_en_retard_garde_le_rythme(worker, monkeypatch):
+    monkeypatch.setitem(worker.ETAT, "reste", False)
+    monkeypatch.setattr(worker.index, "indexer", lambda n, a: 3)
+    monkeypatch.setattr(worker.index, "vectoriser", lambda n, a: 128)      # lot plein : il en reste
+    worker.indexer_si_calme()
+    assert worker.ETAT["index_en_retard"] is True
+    monkeypatch.setattr(worker.index, "vectoriser", lambda n, a: 40)       # fini
+    worker.indexer_si_calme()
+    assert worker.ETAT["index_en_retard"] is False

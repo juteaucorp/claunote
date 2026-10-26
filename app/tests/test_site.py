@@ -107,26 +107,15 @@ def test_scan_et_a_verifier(client):
     assert "confiance 40 %" in r.text and "indique BTS1" in r.text and "déposé dans « BTS1 »" in r.text
 
 
-def test_classer_deplace_dans_kdrive(client, monkeypatch):
-    moves = []
-
-    class FauxKD:
-        def ensure_path(self, parent, parts):
-            moves.append(("path", parts))
-            return 500
-
-        def move(self, fid, dest):
-            moves.append(("move", fid, dest))
-
-    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: FauxKD()))
+def test_classer_sans_attendre_kdrive(client, monkeypatch):
+    """Le site enregistre le classement et répond tout de suite ; le worker déplace les fichiers dans kDrive."""
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: (_ for _ in ()).throw(AssertionError("kDrive"))))
     r = client.post("/doc/1/classer", data={"niveau": "BTS2", "matiere": " Réseaux ", "type": "Cours"},
                     follow_redirects=False)
     assert r.status_code == 303
-    assert moves == [("path", ["archives", "BTS2", "Réseaux", "Cours"]), ("move", 77, 500), ("move", 78, 500)]
-    assert client.appels[-1] == ("maj", 1, {"statut": "classe", "niveau": "BTS2", "matiere": "Réseaux",
-                                            "type": "Cours", "confiance": 1.0, "note": None, "erreur": None,
-                                            "relire": False})
-    assert client.post("/doc/1/classer", data={"niveau": "Master", "matiere": "x", "type": "TP"}).status_code == 400
+    assert client.appels[-2:] == [("maj", 1, {"statut": "classe", "niveau": "BTS2", "matiere": "Réseaux", "type": "Cours",
+                                              "confiance": 1.0, "note": None, "erreur": None, "relire": False,
+                                              "a_ranger": True}), "scan"]
 
 
 def test_page_reviser(client):
@@ -680,8 +669,8 @@ def test_reclasser_depuis_la_page_du_document(client, monkeypatch):
                     follow_redirects=False)
     assert r.headers["location"] == "/doc/1"
     r = client.post("/doc/1/hors-cours", data={"retour": "/doc/1"}, follow_redirects=False)
-    assert r.headers["location"] == "/doc/1" and ("path", ["hors-cours"]) in kd.moves
-    assert client.appels[-1] == ("maj", 1, {"statut": "hors_cours", "note": None, "erreur": None})
+    assert r.headers["location"] == "/doc/1" and not kd.moves      # rangé par le worker, pas pendant la requête
+    assert client.appels[-2:] == [("maj", 1, {"statut": "hors_cours", "note": None, "erreur": None, "a_ranger": True}), "scan"]
     r = client.post("/doc/1/classer", data={"niveau": "BTS2", "matiere": "x", "type": "Cours",
                                             "retour": "https://ailleurs.example"}, follow_redirects=False)
     assert r.headers["location"] == "/"
@@ -747,18 +736,11 @@ def test_action_sur_tous_les_resultats(organiser):
 
 
 def test_supprimer(organiser, monkeypatch):
-    supprimes, kd_suppr = [], []
-
-    class KD:
-        def delete(self, fid):
-            if fid == 78:
-                raise RuntimeError("déjà supprimé")
-            kd_suppr.append(fid)
-
-    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: KD()))
+    supprimes, corbeille = [], []
+    monkeypatch.setattr(db, "mettre_a_la_corbeille", corbeille.extend)
     monkeypatch.setattr(db, "supprimer", lambda i: supprimes.append(i))
     r = organiser.post("/doc/1/supprimer", data={"retour": "/a-verifier"}, follow_redirects=False)
-    assert r.headers["location"] == "/a-verifier" and kd_suppr == [77] and supprimes == [1]
+    assert r.headers["location"] == "/a-verifier" and corbeille == [77, 78] and supprimes == [1]
     assert organiser.post("/doc/99/supprimer").status_code == 404
     r = organiser.post("/organiser", data={"ids": ["1", "99"], "action": "supprimer", "requete": "par=25"},
                        follow_redirects=False)
@@ -1375,3 +1357,32 @@ def test_matieres_page_propose_laisser_tel_quel(client, monkeypatch):
     monkeypatch.setattr(db, "matieres_distinctes", lambda: {"BTS1": {frozenset(("Maths", "Mathématiques"))}})
     r = client.get("/organiser/matieres")
     assert 'formaction="/organiser/matieres/garder"' not in r.text and "Aucun doublon évident" in r.text
+
+
+def test_supprimer_sans_attendre_kdrive(client, monkeypatch):
+    corbeille = []
+    monkeypatch.setattr(db, "mettre_a_la_corbeille", corbeille.extend)
+    monkeypatch.setattr(db, "supprimer", lambda i: client.appels.append(("supprimer", i)))
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: (_ for _ in ()).throw(AssertionError("kDrive"))))
+    r = client.post("/doc/1/supprimer", follow_redirects=False)
+    assert r.status_code == 303 and corbeille == [77, 78] and client.appels[-2:] == [("supprimer", 1), "scan"]
+
+
+def test_reponse_locale_gardee_si_claude_ne_peut_pas_verifier(client, monkeypatch):
+    """Contrôle par Claude impossible (panne, limite) : la réponse du modèle local reste, marquée non vérifiée."""
+    from claunote import agent, question
+    ecrit = []
+    monkeypatch.setattr(main, "_passages", lambda q, conv, n=10: [])
+    monkeypatch.setattr(main, "_agenda_texte", lambda: "")
+    monkeypatch.setattr(main, "_local_libre", lambda: None)
+    monkeypatch.setattr(main, "_claude_en_pause", lambda: None)
+    monkeypatch.setattr(main.local, "reglages", lambda: {"mode": "local"})
+    monkeypatch.setattr(main.local, "CONTROLE", 1.0)                       # contrôle à chaque fois
+    monkeypatch.setattr(question, "repondre_local", lambda *a: {"reponse": "Un VLAN segmente.", "reperes": {},
+                                                                "confiance": 0.9, "aide": False})
+    monkeypatch.setattr(question, "repondre_ia", lambda *a: (_ for _ in ()).throw(agent.ClaudeIndisponible("panne")))
+    monkeypatch.setattr(db, "maj_message", lambda *a, **k: ecrit.append((a, k)))
+    main._repondre_ia(9, "C'est quoi un VLAN ?", {"niveau": None, "matiere": None}, [])
+    (msg_id, statut, contenu, *_), k = ecrit[-1]
+    assert statut == "pret" and "non vérifiée par Claude" in contenu and "Un VLAN segmente." in contenu
+    assert k["modele"] == "local" and "non vérifié" in k["detail"]
