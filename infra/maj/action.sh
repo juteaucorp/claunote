@@ -8,7 +8,16 @@ PROPRIO=$(stat -c %u:%g "$DEPOT")   # propriétaire du dossier Claunote sur la V
 # ou à un autre utilisateur. Ensuite, rendre() redonne tout au propriétaire du dossier.
 # safe.directory : sans ça, git refuse un dépôt qui n'appartient pas à root.
 printf '[safe]\n\tdirectory = *\n' > /tmp/.gitconfig
-git_() { HOME=/tmp git "$@"; }
+# Dépôt privé : jeton GitHub lu dans le .env de la VM (GITHUB_TOKEN), donné à git par un assistant
+# d'identification ; il n'est jamais écrit dans un fichier ni dans le journal.
+GITHUB_TOKEN=$(sed -n 's/^GITHUB_TOKEN=//p' "$DEPOT/.env" 2>/dev/null | tail -1 | tr -d "\"' \r")
+export GITHUB_TOKEN
+if [ -n "$GITHUB_TOKEN" ]; then cat >> /tmp/.gitconfig <<'FIN'
+[credential "https://github.com"]
+	helper = "!f() { echo username=x-access-token; echo \"password=$GITHUB_TOKEN\"; }; f"
+FIN
+fi
+git_() { HOME=/tmp GIT_TERMINAL_PROMPT=0 git "$@"; }
 rendre() {  # .git et les fichiers suivis par git (jamais .env) reviennent au propriétaire du dossier
   chown -R "$PROPRIO" "$DEPOT/.git"
   git_ ls-files -z | xargs -0 -r chown -h "$PROPRIO" 2>/dev/null
@@ -30,7 +39,10 @@ services() { docker compose config --services | grep -vx maj; }   # tout sauf ce
 decrire() {  # version installée et nouveautés disponibles sur GitHub
   if ! erreur=$(git_ fetch --quiet origin 2>&1); then
     echo "$erreur"; rendre
-    raison=$(echo "$erreur" | tail -1); return 1
+    raison=$(echo "$erreur" | tail -1)
+    case "$erreur" in *Username*|*Authentication*|*"403"*|*"not found"*)
+      raison="GitHub refuse l'accès (dépôt privé) : ajoute GITHUB_TOKEN dans le .env de la VM." ;; esac
+    return 1
   fi
   amont=$(git_ rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo origin/main)
   nouveautes=$(git_ log --format='%h%x09%cI%x09%s' "HEAD..$amont" | head -50 \

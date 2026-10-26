@@ -534,6 +534,11 @@ du site. git tourne en root puis rend `.git` et les fichiers du dépôt au propr
 (ça répare aussi les fichiers laissés à root par un ancien `sudo git pull`). Si un fichier a été
 modifié à la main sur la VM, la mise à jour est refusée sans rien toucher (`git status` pour voir lequel).
 
+**Dépôt GitHub privé** : le service `maj` n'a pas tes identifiants GitHub (« could not read Username »).
+Crée un [jeton fine-grained](https://github.com/settings/personal-access-tokens/new) limité au dépôt
+`claunote`, permission **Contents → Read-only**, et mets-le dans `.env` : `GITHUB_TOKEN=github_pat_…`.
+Il est relu à chaque action : pas de redémarrage. Il n'est jamais écrit ailleurs ni affiché dans le journal.
+
 **Première fois** : le service n'existe pas encore, il faut une dernière mise à jour à la main, depuis le
 dossier de Claunote (pas avec `sudo`, qui peut perdre le dossier courant) :
 
