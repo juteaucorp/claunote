@@ -207,3 +207,11 @@ def test_sources_web_d_un_quiz():
     assert '"web": [{"repere": "W1"' in p and "{{" not in p
     # Pas de section web : le texte reste entier
     assert revision.separer_web("# Fiche\n## Pièges") == ("# Fiche\n## Pièges", [])
+
+
+def test_jours_programme_ancien_format():
+    """Un programme sans « support » (ancienne version) s'affiche au lieu de planter l'accueil."""
+    from claunote import revision
+    jours = revision.jours_programme({"jours": [{"date": "2026-11-02", "taches": [
+        {"matiere": "Réseaux", "quoi": "Relire", "duree": 30}]}]}, [])
+    assert jours[0]["taches"][0]["support"] == "" and jours[0]["minutes"] == 30 and jours[0]["titre"] == ""

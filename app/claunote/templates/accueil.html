@@ -81,7 +81,7 @@
   {% set j = (le.date() - aujourdhui).days %}
   <li>
     <span class="compte-a-rebours {{ 'proche' if j <= 1 }}">{% if j <= 0 %}auj.{% elif j == 1 %}demain{% else %}{{ COURT[le.weekday()] }}{% endif %}</span>
-    <div class="corps"><strong>{{ d.matiere }}</strong>
+    <div class="corps"><strong>{{ d.matiere|matiere }}</strong>
       <div class="texte-devoir">{{ d.description or d.titre }}</div></div>
   </li>
   {% endfor %}
@@ -97,7 +97,7 @@
       {% if d.doc_id %}<a href="/doc/{{ d.doc_id }}">{{ d.doc_titre or d.nom }}</a>
       {% elif d.statut == 'lien' and (d.url or '').startswith(('https://', 'http://')) %}<a href="{{ d.url }}" rel="noopener noreferrer">{{ d.nom }} ↗</a>
       {% else %}{{ d.nom }}{% endif %}
-      <div class="doux">{{ d.matiere }}{% if d.le %} · {{ d.le.astimezone(paris).strftime('%d/%m') }}{% endif %}</div>
+      <div class="doux">{{ d.matiere|matiere }}{% if d.le %} · {{ d.le.astimezone(paris).strftime('%d/%m') }}{% endif %}</div>
     </div>
   </li>
   {% endfor %}

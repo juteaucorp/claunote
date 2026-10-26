@@ -8,6 +8,10 @@
 <h1>Agenda</h1>
 {% if erreur %}<div class="carte accent"><strong>Oups.</strong> {{ erreur }}</div>{% endif %}
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
+{% if etat.connecte and etat.injoignable %}
+<div class="carte accent">Le service <code>pronote</code> ne répond pas : voici l'agenda de la dernière synchronisation.
+  <span class="doux">Sur la VM : <code>docker compose up -d</code>.</span></div>
+{% endif %}
 
 {% if not etat.connecte %}
   {% if etat.injoignable %}
@@ -49,7 +53,7 @@
   <div class="carte">
     <strong>{{ etat.nom }}</strong>{% if etat.classe %} · {{ etat.classe }}{% endif %}
     {% if etat.etablissement %}<span class="doux"> · {{ etat.etablissement }}</span>{% endif %}
-    <div class="doux">Dernière synchronisation : {{ synchro.replace('T', ' à ') if synchro else 'jamais' }}
+    <div class="doux">Dernière synchronisation : {{ synchro|quand if synchro else 'jamais' }}
       {% if erreurs_synchro %} · <span class="alerte">{{ erreurs_synchro }}</span>{% endif %}</div>
     <div class="actions" style="margin-top:10px">
       <form method="post" action="/agenda/synchroniser"><button class="principal">Synchroniser</button></form>
@@ -64,7 +68,7 @@
     <div class="jour">{{ JOURS[le.weekday()] }}<strong>{{ le.day }}</strong>{{ MOIS[le.month - 1] }}</div>
     <div class="corps">
       <strong>{{ e.titre }}</strong>
-      <div class="doux">{{ e.matiere }}{% if e.id.startswith('cours:') %} · {{ le.strftime('%Hh%M') }}{% endif %}
+      <div class="doux">{{ e.matiere|matiere }}{% if e.id.startswith('cours:') %} · {{ le.strftime('%Hh%M') }}{% endif %}
         {% if e.cours %} · tes cours : {{ e.cours }}{% else %} · <span class="alerte">pas de cours classés pour cette matière</span>{% endif %}</div>
       {% if e.description %}<div class="doux" style="white-space:pre-line">{{ e.description }}</div>{% endif %}
     </div>
@@ -84,7 +88,7 @@
   {% set le = d.le.astimezone(paris) %}
   <div class="carte evenement {{ 'fait' if d.fait }}">
     <div class="jour">{{ JOURS[le.weekday()] }}<strong>{{ le.day }}</strong>{{ MOIS[le.month - 1] }}</div>
-    <div class="corps"><strong>{{ d.matiere }}</strong>
+    <div class="corps"><strong>{{ d.matiere|matiere }}</strong>
       <div style="white-space:pre-line">{{ d.description }}</div></div>
   </div>
   {% else %}
@@ -100,7 +104,7 @@
         {% if d.doc_id %}<a href="/doc/{{ d.doc_id }}">{{ d.doc_titre or d.nom }}</a>
         {% elif d.statut == 'lien' and (d.url or '').startswith(('https://', 'http://')) %}<a href="{{ d.url }}" rel="noopener noreferrer">{{ d.nom }} ↗</a>
         {% else %}{{ d.nom }}{% endif %}
-        <div class="doux">{{ d.matiere }}{% if d.le %} · {{ d.le.astimezone(paris).strftime('%d/%m') }}{% endif %}{% if d.categorie %} · {{ d.categorie }}{% endif %}{% if d.titre %} · {{ d.titre }}{% endif %}</div>
+        <div class="doux">{{ d.matiere|matiere }}{% if d.le %} · {{ d.le.astimezone(paris).strftime('%d/%m') }}{% endif %}{% if d.categorie %} · {{ d.categorie }}{% endif %}{% if d.titre %} · {{ d.titre }}{% endif %}</div>
       </div>
       <span class="fin doux">{% if d.statut == 'lien' %}lien{% elif d.statut == 'erreur' %}<span class="alerte" title="{{ d.erreur }}">échec</span>
           {% elif d.doc_statut == 'classe' %}classé{% elif d.doc_statut == 'hors_cours' %}hors cours{% elif d.doc_statut == 'a_verifier' %}<a href="/a-verifier">à vérifier</a>
@@ -117,7 +121,7 @@
   <ul class="carte lignes">
     {% for n in notes %}
     <li>
-      <div class="corps"><strong>{{ n.matiere }}</strong>
+      <div class="corps"><strong>{{ n.matiere|matiere }}</strong>
         <div class="doux">{{ n.le.astimezone(paris).strftime('%d/%m') if n.le }}{% if n.commentaire %} · {{ n.commentaire }}{% endif %}{% if n.coefficient and n.coefficient != 1 %} · coef {{ n.coefficient|round(2)|replace('.0', '') }}{% endif %}</div></div>
       <div class="fin"><strong class="note-valeur">{{ n.valeur|note(n.sur) }}</strong>
         <div class="doux">classe {{ n.moyenne_classe|note }}</div></div>

@@ -198,7 +198,7 @@ directement dans l'inbox avec l'appli kDrive.
 
 ## 7. Réviser (phase 3)
 
-Page **Réviser** du site : deux boutons en haut, **Une révision** et **Une campagne**, puis ce qui
+Page **Réviser** du site : trois boutons en haut, **Une révision**, **Une question** et **Une campagne**, puis ce qui
 est au programme et l'historique **Déjà fait** (filtres par type, matière, recherche).
 
 | Support | Ce que tu obtiens |
@@ -225,6 +225,38 @@ est au programme et l'historique **Déjà fait** (filtres par type, matière, re
 - Chaque support est aussi déposé en PDF dans `Etudes/fiches/<matière ou campagne>/` sur kDrive.
 - Les révisions passent **avant** les scans dans la file du worker ; avec le forfait Pro elles sont
   générées l'une après l'autre (2 à 3 min chacune), et reprennent seules après une limite d'usage.
+
+### Une question (chat)
+
+**Réviser → Une question** (ou **Poser une question** sur la page d'un cours) : un chat pour une info
+rapide, une notion à réexpliquer, une commande oubliée. Tu choisis dans quels cours chercher (tous, ou une
+matière d'une année) et qui répond :
+
+| Mode | Comment | Quand |
+| --- | --- | --- |
+| **IA (Claude)** | les cours qui contiennent les mots de ta question (6 au plus) + la discussion, réponse courte qui cite `[D1]`, le web si utile `[W1]` | explication, reformulation, question de suivi |
+| **Rapide, sans IA** | recherche plein texte dans PostgreSQL : les passages de tes cours où apparaissent tes mots, surlignés | instantané, gratuit, marche même pendant une pause de Claude |
+
+- La réponse IA est faite par le site lui-même (pas par le worker, qui peut être occupé par un gros scan) :
+  elle arrive en 10 à 30 s et s'affiche toute seule. Modèle : Sonnet (tâche `question`, voir `CLAUDE_MODELES`).
+- Si Claude est en pause (limite du forfait) ou ne répond pas, la réponse vient automatiquement des cours, sans IA.
+- Sous une réponse sans IA, **Demander à l'IA** repose la même question à Claude.
+- Les conversations sont gardées (liste **Questions précédentes**), supprimables une par une.
+
+### Matières en double
+
+L'IA de classement donne parfois deux noms à la même matière la même année (« Maths » et « Mathématiques »,
+« Réseau » et « Réseaux », « SLAM » et « Développement »). Page **Organiser → Matières en double** (un rappel
+s'affiche aussi sur **Cours** quand il y en a) :
+
+- **Sans IA** : noms rapprochés par accents/pluriels/ponctuation, abréviations connues (Maths, HG, LV1, CEJM…),
+  sigles, fautes de frappe, nom contenu dans l'autre. « Évident » ou « À confirmer ». Nom proposé : le plus utilisé.
+- **Demander à l'IA d'en chercher d'autres** : un appel court (Haiku) qui voit les noms et quelques titres de cours.
+- **Fusionner** : tu choisis le nom gardé ; documents, révisions et conversations sont renommés, les fichiers
+  déplacés dans `archives/<année>/<matière>/` par le worker. **Fusionner à la main** : n'importe quelles matières d'une année.
+- **Plus de nouveaux doublons** : l'agent reçoit la liste des matières existantes, et un nom évidemment
+  identique à une matière existante (« Maths » quand « Mathématiques » existe) est remplacé avant rangement.
+- Les anciens dossiers kDrive vidés par une fusion restent (vides) : supprime-les à la main si tu veux.
 
 ## 8. Pronote (phase 4)
 
@@ -422,3 +454,47 @@ comprise) : c'est la VM qui les envoie au service push d'Apple, gratuit, sans co
 - **Envoyer un test** vérifie toute la chaîne. Échec ? `docker compose logs -f worker | grep notif`
   (la VM doit pouvoir joindre `web.push.apple.com`).
 - Désactiver : bouton **Désactiver ici**, ou Réglages iPhone → Notifications → Claunote.
+
+## 14. Analyse sans Claude, pause et arrêt (page Plus → Analyses)
+
+Quand ton forfait Claude atteint sa limite (ou pendant une panne), les scans ne restent plus bloqués :
+ils sont lus **sur la VM**, avec le processeur seul (pas de carte graphique) :
+
+| Étape | Outil libre | Remarque |
+| --- | --- | --- |
+| Texte | Word, PowerPoint, PDF numérique : texte extrait tel quel ; scans et photos : **OCR Tesseract** (français) | déjà dans l'image Docker ; lit bien l'imprimé, mal l'écriture à la main |
+| Classement | **Ollama** avec `qwen2.5:3b` (~2 Go de RAM) s'il est démarré, sinon **vote des cours déjà classés** qui ressemblent le plus | confiance plafonnée à 80 % |
+
+### Mise en place d'Ollama (facultatif)
+
+```bash
+docker compose --profile local up -d   # démarre le service ollama ; le modèle se télécharge tout seul (~2 Go)
+```
+
+- Petite VM (4 Go) : `OLLAMA_MODELE=qwen2.5:1.5b` dans `.env`. Avec 16 Go : `qwen2.5:7b`, plus fin mais plus lent.
+- Sans Ollama, tout marche quand même : le classement se fait par ressemblance avec tes cours.
+- `LOCAL_PARALLELE=1` (défaut) : une analyse locale à la fois. Chaque OCR occupe un cœur.
+
+### Réglages (page Analyses)
+
+- **Analyser sans Claude** :
+  - « Quand Claude n'est pas disponible » (défaut) ;
+  - « Toujours » : jamais Claude pour les analyses, utile pour garder ton forfait aux révisions ;
+  - « Jamais » : attendre Claude.
+- **Faire relire par Claude** les documents lus sans lui, quand il revient et que la file est vide
+  (meilleure transcription). Tu peux annuler ces relectures, ou en demander toi-même depuis
+  *Organiser → Relire avec Claude*.
+- Un scan **illisible sans Claude** (écriture manuscrite) ne part pas en erreur : il reste dans la file
+  avec la mention « attend Claude ».
+- *Une question* : quand Claude est en pause, le modèle local répond s'il est installé (sinon, les passages des cours).
+
+### Pause, arrêt, file d'analyse
+
+- **Mettre en pause** : les analyses en cours se terminent, aucune autre ne démarre. Révisions, rangements et
+  Pronote continuent.
+- **Arrêter maintenant** : coupe tout de suite les analyses en cours. Les appels `claude -p` sont arrêtés et
+  l'OCR s'arrête entre deux pages. Rien n'est perdu ni mis en erreur : les fichiers restent dans la file.
+- **File d'analyse** : coche des fichiers puis choisis une action de masse :
+  - « Ne pas analyser pour l'instant » / « Remettre dans la file » ;
+  - « Analyser sans Claude » / « Analyser avec Claude » ;
+  - « Supprimer » (corbeille kDrive).

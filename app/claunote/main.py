@@ -7,6 +7,8 @@ import mimetypes
 import re
 import os
 import tempfile
+import threading
+import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
@@ -20,9 +22,9 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (anki, auth, db, decoupage, importation, modeles, notifications, pdf, pronote, rangement,
-                      revision, sensible)
-from claunote.agent import NIVEAUX, TYPES
+from claunote import (agent, anki, auth, db, decoupage, importation, local, matieres, modeles, notifications, pdf,
+                      pronote, question, rangement, revision, sensible)
+from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
 INBOX_ID = int(os.environ.get("KDRIVE_INBOX_ID", "0"))
@@ -35,10 +37,18 @@ async def lifespan(app):
     db.init()
     secret = os.environ.get("CLAUNOTE_SECRET") or db.secret_session()
     app.state.compte = auth.Compte.from_env(secret.encode(), db.etat_valeur("mot_de_passe"))
+    agent.journal = _noter_appel  # les appels faits par le site (Demander, matières) vont sur la page État
     if app.state.compte.par_defaut:
         print("ATTENTION : mot de passe par défaut (admin / claunote), "
               "change-le sur la page Compte du site", flush=True)
     yield
+
+
+def _noter_appel(**appel):
+    try:
+        db.journal_ia(**appel)
+    except Exception as e:
+        print(f"appel à Claude non noté : {e}", flush=True)
 
 
 app = FastAPI(title="Claunote", lifespan=lifespan)
@@ -98,6 +108,8 @@ def etat_service() -> dict:
         service["depuis"] = _instant(service.get("depuis"))
         s[nom] = service
     s["vu"], s["demarre"] = vu, _instant(s.get("demarre"))
+    s.setdefault("en_cours", [])
+    s.setdefault("local", {})
     s["vivant"] = bool(vu) and dt.datetime.now(pronote.PARIS) - vu < WORKER_MUET
     s["connu"] = vu is not None
     return s
@@ -114,10 +126,12 @@ def bandeau_service() -> tuple[str, str, bool] | None:
     if s.get("arret"):
         return "Le worker redémarre : il termine le travail en cours.", "", False
     c, k = s["claude"], s["kdrive"]
+    sans_claude = (db.etat_valeur("analyse_locale") or os.environ.get("ANALYSE_LOCALE") or "auto") != "jamais"
     if c["etat"] == "limite":
         quand = f" vers {_heure_fr(c['jusqu_a'])}" if c["jusqu_a"] else " dans un moment"
         return (f"Limite de ton forfait Claude atteinte : l'IA reprend{quand}.",
-                "Rien n'est perdu : la file attend et repart toute seule.", True)
+                "Les scans continuent d'être lus sur la VM, sans Claude (plus lentement)." if sans_claude
+                else "Rien n'est perdu : la file attend et repart toute seule.", True)
     if c["etat"] == "connexion":
         return ("Claude refuse le jeton du forfait : l'IA est en pause.",
                 "Sur la VM : claude setup-token, puis mets le jeton dans .env (CLAUDE_CODE_OAUTH_TOKEN).", False)
@@ -140,6 +154,38 @@ templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proc
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
 templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
 templates.env.filters["note"] = pronote.libelle_note
+_matieres_cours = {"le": 0.0, "noms": []}
+
+
+def matiere_lisible(nom_pronote: str | None) -> str:
+    """« ADMINISTRATION DES SYSTEMES ET DES RESEAUX » → « Réseaux » (nom de tes cours), sinon en minuscules."""
+    if not nom_pronote:
+        return ""
+    if time.monotonic() - _matieres_cours["le"] > 60:
+        _matieres_cours.update(le=time.monotonic(), noms=db.matieres())
+    trouve = pronote.trouver_matiere(nom_pronote, _matieres_cours["noms"])
+    if trouve:
+        return trouve
+    return nom_pronote[:1] + nom_pronote[1:].lower() if nom_pronote.isupper() else nom_pronote
+
+
+templates.env.filters["matiere"] = matiere_lisible
+
+
+def quand(iso: str | None) -> str:
+    """« 2026-10-26T11:25+01:00 » → « aujourd'hui à 11 h 25 » ou « lun. 26/10 à 11 h 25 »."""
+    try:
+        d = dt.datetime.fromisoformat(iso) if iso else None
+    except ValueError:
+        d = None
+    if d is None:
+        return iso or ""
+    d = d.replace(tzinfo=pronote.PARIS) if d.tzinfo is None else d.astimezone(pronote.PARIS)  # sans fuseau : Paris
+    heure = _heure_fr(d)
+    return f"aujourd'hui à {heure}" if " à " not in heure else heure
+
+
+templates.env.filters["quand"] = quand
 templates.env.filters["paris"] = lambda d: d.astimezone(pronote.PARIS).strftime("%d/%m/%Y %H:%M") if d else ""
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 EXTENSIONS = importation.DOCUMENTS
@@ -147,7 +193,9 @@ EXTENSIONS = importation.DOCUMENTS
 
 def surligner(extrait: str | None) -> Markup:
     """Échappe l'extrait de recherche puis rétablit seulement les <b> de ts_headline."""
-    texte = html.escape(extrait or "")
+    # Sans la mise en forme Markdown du cours (« ## Titre », puces) : un extrait se lit d'une traite
+    texte = re.sub(r"(^|\s)(#{1,6}|[-*+>]|\d+\.)\s", " ", re.sub(r"\s+", " ", extrait or "")).strip()
+    texte = html.escape(texte)
     return Markup(texte.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>"))
 
 
@@ -447,7 +495,8 @@ def classer(doc_id: int, niveau: str = Form(...), matiere: str = Form(...), type
         raise HTTPException(400, "classement invalide")
     matiere = matiere.strip()
     _deplacer(doc, rangement.dossier(niveau, matiere, type))
-    db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere, type=type, confiance=1.0, note=None, erreur=None)
+    db.maj(doc_id, statut="classe", niveau=niveau, matiere=matiere, type=type, confiance=1.0, note=None, erreur=None,
+           relire=False)
     return RedirectResponse(_suite_sure(retour), status_code=303)
 
 
@@ -480,7 +529,8 @@ def _date_heure(valeur: str):
 
 ACTIONS = {"niveau": "Changer l'année", "matiere": "Changer la matière", "type": "Changer le type",
            "ia": "Ranger par l'IA (matière et type, garde l'année)", "hors_cours": "Mettre hors cours",
-           "cours": "Remettre dans les cours", "supprimer": "Supprimer (corbeille kDrive)"}
+           "cours": "Remettre dans les cours", "relire": "Relire avec Claude (relit le scan, garde l'année)",
+           "supprimer": "Supprimer (corbeille kDrive)"}
 
 
 PAR_PAGE = (25, 50, 100)
@@ -538,6 +588,8 @@ def action_de_masse(ids: list[int] = Form([]), action: str = Form(...), nouveau_
         db.completer_classement(ids)
     elif action == "ia":
         n = db.maj_masse(ids, statut="reclasser")
+    elif action == "relire":
+        n = db.marquer_relire(ids)
     else:
         n = db.maj_masse(ids, statut="hors_cours" if action == "hors_cours" else "a_verifier")
         db.completer_classement(ids)
@@ -546,6 +598,8 @@ def action_de_masse(ids: list[int] = Form([]), action: str = Form(...), nouveau_
     message = f"{n} document{'s' if n > 1 else ''} modifié{'s' if n > 1 else ''}."
     if action == "ia" and n:
         message += " L'IA les range dans les minutes qui viennent (recharge la page)."
+    elif action == "relire" and n:
+        message += " Claude les relit quand la file d'analyse est vide (page Analyses)."
     elif n:
         message += " Les fichiers sont déplacés dans kDrive en arrière-plan."
     if len(ids) > n:
@@ -1031,6 +1085,292 @@ def campagne_pdf(campagne_id: int, corrige: int = 1, telecharger: int = 0):
     return _pdf(contenu, pdf.nom(campagne["titre"]), bool(telecharger))
 
 
+# --- Demander : questions dans un chat (question.py) ---------------------------
+
+def _portee(niveau: str | None, matiere: str | None) -> str:
+    return f" de {matiere} ({niveau})" if matiere else ""
+
+
+def _claude_en_pause() -> str | None:
+    """Pourquoi l'IA ne peut pas répondre en ce moment (limite du forfait, jeton refusé), ou None."""
+    c = etat_service()["claude"]
+    if c["etat"] == "limite":
+        quand = f" (reprise vers {_heure_fr(c['jusqu_a'])})" if c["jusqu_a"] else ""
+        return f"limite de ton forfait Claude atteinte{quand}"
+    if c["etat"] == "connexion":
+        return "Claude refuse le jeton du forfait"
+    return None
+
+
+def _repondre_localement(msg_id: int, q: str, conv: dict, pourquoi: str = ""):
+    cours = db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"])
+    contenu, reperes = question.reponse_locale(q, cours, _portee(conv["niveau"], conv["matiere"]))
+    if pourquoi:
+        contenu = f"*L'IA ne peut pas répondre maintenant ({pourquoi}) : voici ce que j'ai trouvé sans elle.*\n\n{contenu}"
+    db.maj_message(msg_id, "pret", contenu, reperes, role="local")
+
+
+def _sans_claude(msg_id: int, q: str, conv: dict, historique: list[dict], pourquoi: str):
+    """Claude indisponible : le modèle local (Ollama) s'il est installé, sinon les passages des cours."""
+    if local.etat_ollama()["pret"]:
+        try:
+            cours = db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], 4, avec_texte=True)
+            contenu, reperes = question.repondre_ollama(q, historique, cours,
+                                                        _portee(conv["niveau"], conv["matiere"]).strip())
+            db.maj_message(msg_id, "pret", f"*Claude ne peut pas répondre ({pourquoi}) : réponse du modèle local, "
+                                            f"plus lent et moins fiable.*\n\n{contenu}", reperes, modele="local")
+            return
+        except Exception as e:
+            print(f"modèle local indisponible pour Demander : {e}", flush=True)
+    _repondre_localement(msg_id, q, conv, pourquoi)
+
+
+def _repondre_ia(msg_id: int, q: str, conv: dict, historique: list[dict]):
+    """Lancé dans un fil à part : la page interroge /demander/message/<id> jusqu'à la réponse."""
+    try:
+        cours = db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], question.COURS_MAX,
+                                       avec_texte=True)
+        contenu, reperes, web, modele = question.repondre_ia(q, historique, cours,
+                                                             _portee(conv["niveau"], conv["matiere"]).strip())
+        db.maj_message(msg_id, "pret", contenu, reperes, web, modele)
+    except LimiteAtteinte:
+        _sans_claude(msg_id, q, conv, historique, "limite de ton forfait Claude atteinte")
+    except ClaudeIndisponible as e:
+        _sans_claude(msg_id, q, conv, historique, f"Claude ne répond pas : {str(e)[:120]}")
+    except Exception as e:  # ErreurAgent, base momentanément injoignable…
+        try:
+            db.maj_message(msg_id, "erreur", erreur=str(e)[:300])
+        except Exception:
+            pass
+
+
+def _lancer_reponse(conv: dict, q: str, mode: str) -> int:
+    """Crée la réponse : tout de suite sans IA, sinon en attente pendant que Claude travaille."""
+    pause = _claude_en_pause() if mode == "ia" else None
+    if mode == "ia" and (not pause or local.etat_ollama()["pret"]):
+        historique = [m for m in db.messages(conv["id"]) if m["statut"] == "pret"][:-1]  # sans la question
+        msg_id = db.ajouter_message(conv["id"], "ia", statut="en_attente")
+        cible, args = (_sans_claude, (msg_id, q, conv, historique, pause)) if pause else \
+            (_repondre_ia, (msg_id, q, conv, historique))
+        threading.Thread(target=cible, args=args, daemon=True, name=f"demander-{msg_id}").start()
+        return msg_id
+    msg_id = db.ajouter_message(conv["id"], "local", statut="en_attente")
+    _repondre_localement(msg_id, q, conv, pause or "")
+    return msg_id
+
+
+def _contexte_message(m: dict) -> dict:
+    rendu = avec_sources(rendu_markdown(m["contenu"]), m["reperes"], m["sources_web"]) if m["contenu"] else ""
+    return {"m": m, "rendu": rendu, "noms": modeles.NOMS}
+
+
+templates.env.globals["contexte_message"] = _contexte_message
+
+
+@app.get("/demander", response_class=HTMLResponse)
+@app.get("/demander/{conv_id}", response_class=HTMLResponse)
+def page_demander(request: Request, conv_id: int | None = None, matiere: str = "", niveau: str = ""):
+    """Chat : une conversation, ou une nouvelle (préremplie avec une matière depuis un lien)."""
+    conv = None
+    if conv_id is not None:
+        conv = db.conversation(conv_id)
+        if conv is None:
+            raise HTTPException(404)
+    return templates.TemplateResponse(request, "demander.html", {
+        "conv": conv, "messages": db.messages(conv_id) if conv else [], "conversations": db.conversations(15),
+        "choix": db.niveaux_matieres_comptes(), "modes": question.MODES, "pause": _claude_en_pause(),
+        "pre": f"{niveau}|{matiere}" if matiere else ""})
+
+
+@app.post("/demander")
+def poser_question(request: Request, q: str = Form(..., alias="question"), mode: str = Form("ia"),
+                   portee: str = Form(""), conversation: int | None = Form(None)):
+    q = q.strip()[:4000]
+    if not q:
+        raise HTTPException(400, "pose une question")
+    mode = mode if mode in question.MODES else "ia"
+    conv = db.conversation(conversation) if conversation else None
+    nouvelle = conv is None
+    if nouvelle:
+        niveau, _, matiere = portee.partition("|")
+        conv = db.conversation(db.creer_conversation(question.titre(q), niveau, matiere))
+    eleve_id = db.ajouter_message(conv["id"], "eleve", q)
+    reponse_id = _lancer_reponse(conv, q, mode)
+    if nouvelle or not request.headers.get("HX-Request"):
+        url = f"/demander/{conv['id']}"
+        if request.headers.get("HX-Request"):
+            return Response(status_code=204, headers={"HX-Redirect": url})
+        return RedirectResponse(url, status_code=303)
+    return templates.TemplateResponse(request, "_messages.html", {
+        "liste": [db.message(eleve_id), db.message(reponse_id)]})
+
+
+@app.get("/demander/message/{msg_id}", response_class=HTMLResponse)
+def voir_message(request: Request, msg_id: int):
+    m = db.message(msg_id)
+    if m is None:
+        raise HTTPException(404)
+    return templates.TemplateResponse(request, "_messages.html", {"liste": [m]})
+
+
+@app.post("/demander/message/{msg_id}/ia", response_class=HTMLResponse)
+def demander_a_l_ia(request: Request, msg_id: int):
+    """Sous une réponse sans IA (ou en erreur) : la même question, cette fois à Claude."""
+    m = db.message(msg_id)
+    if m is None:
+        raise HTTPException(404)
+    conv = db.conversation(m["conversation_id"])
+    precedentes = [x for x in db.messages(conv["id"]) if x["role"] == "eleve" and x["id"] < msg_id]
+    if not precedentes:
+        raise HTTPException(400, "pas de question à reposer")
+    q = precedentes[-1]["contenu"]
+    eleve_id = db.ajouter_message(conv["id"], "eleve", q)
+    reponse_id = _lancer_reponse(conv, q, "ia")
+    return templates.TemplateResponse(request, "_messages.html", {
+        "liste": [db.message(eleve_id), db.message(reponse_id)]})
+
+
+@app.post("/demander/{conv_id}/supprimer")
+def supprimer_conversation(conv_id: int):
+    db.supprimer_conversation(conv_id)
+    return RedirectResponse("/demander", status_code=303)
+
+
+# --- Analyses : file, pause, arrêt, analyse sans Claude (local.py) --------------------
+
+ACTIONS_FILE = {"suspendre": "Ne pas analyser pour l'instant", "reprendre": "Remettre dans la file",
+                "local": "Analyser sans Claude (sur la VM)", "claude": "Analyser avec Claude",
+                "supprimer": "Supprimer (corbeille kDrive)"}
+
+
+def reglages_analyse() -> dict:
+    mode = db.etat_valeur("analyse_locale") or os.environ.get("ANALYSE_LOCALE") or "auto"
+    return {"mode": mode if mode in local.MODES else "auto",
+            "relire": (db.etat_valeur("relire_avec_claude") or "oui") == "oui",
+            "pause": db.etat_valeur("analyses_pause") == "oui"}
+
+
+templates.env.globals["analyses_en_pause"] = lambda: db.etat_valeur("analyses_pause") == "oui"
+
+
+@app.get("/analyses", response_class=HTMLResponse)
+def page_analyses(request: Request, message: str = ""):
+    s = etat_service()
+    return templates.TemplateResponse(request, "analyses.html", {
+        "s": s, "r": reglages_analyse(), "modes": local.MODES, "file": db.file_analyse(),
+        "attente": db.file_attente(), "nb_relire": db.nb_a_relire(), "actions": ACTIONS_FILE, "message": message,
+        "modele_local": local.OLLAMA_MODELE, "heure": _heure_fr})
+
+
+@app.post("/analyses/controle")
+def controle_analyses(action: str = Form(...)):
+    """Pause (le travail en cours finit), reprise, ou arrêt immédiat (les appels en cours sont coupés)."""
+    if action not in ("pause", "reprendre", "arreter"):
+        raise HTTPException(400, "action inconnue")
+    db.etat_ecrire("analyses_pause", None if action == "reprendre" else "oui")
+    if action == "arreter":
+        db.etat_ecrire("analyses_arreter", "oui")
+    db.demander_scan()
+    message = {"pause": "Pause demandée : les analyses en cours se terminent, aucune autre ne démarre.",
+               "arreter": "Arrêt demandé : les analyses en cours s'arrêtent dans les secondes qui viennent "
+                          "(les fichiers restent dans la file).",
+               "reprendre": "Les analyses reprennent."}[action]
+    return RedirectResponse(f"/analyses?{urlencode({'message': message})}", status_code=303)
+
+
+@app.post("/analyses/reglages")
+def reglages_analyses(mode: str = Form(...), relire: str = Form("")):
+    if mode not in local.MODES:
+        raise HTTPException(400, "mode inconnu")
+    db.etat_ecrire("analyse_locale", mode)
+    db.etat_ecrire("relire_avec_claude", "oui" if relire else "non")
+    db.demander_scan()
+    return RedirectResponse(f"/analyses?{urlencode({'message': 'Réglages enregistrés.'})}", status_code=303)
+
+
+@app.post("/analyses/file")
+def actions_file(ids: list[int] = Form([]), action: str = Form(...)):
+    if action not in ACTIONS_FILE:
+        raise HTTPException(400, "action inconnue")
+    if not ids:
+        raise HTTPException(400, "coche au moins un fichier")
+    n = db.file_choisir(ids, action)
+    if n:
+        db.demander_scan()
+    pluriel = "s" if n > 1 else ""
+    message = f"{n} fichier{pluriel} : {ACTIONS_FILE[action].lower()}."
+    return RedirectResponse(f"/analyses?{urlencode({'message': message})}", status_code=303)
+
+
+@app.post("/analyses/relire")
+def relectures(action: str = Form(...)):
+    """Documents analysés sans Claude : annuler leur relecture par Claude."""
+    if action != "annuler":
+        raise HTTPException(400, "action inconnue")
+    n = db.annuler_relectures()
+    return RedirectResponse(f"/analyses?{urlencode({'message': f'{n} relecture(s) annulée(s).'})}", status_code=303)
+
+
+# --- Matières en double (matieres.py) -----------------------------------------
+
+def _propositions_matieres() -> tuple[list[dict], list[dict]]:
+    comptes = db.matieres_par_annee()
+    toutes: dict[str, int] = defaultdict(int)
+    for r in comptes:
+        toutes[r["matiere"]] += r["n"]
+    return comptes, matieres.proposer(comptes, toutes)
+
+
+templates.env.globals["nb_matieres_en_double"] = lambda: len(_propositions_matieres()[1])
+
+
+@app.get("/organiser/matieres", response_class=HTMLResponse)
+def page_matieres(request: Request, message: str = ""):
+    comptes, groupes = _propositions_matieres()
+    par_niveau = defaultdict(list)
+    for r in comptes:
+        par_niveau[r["niveau"]].append(r)
+    niveaux = [n for n in reversed(NIVEAUX) if n in par_niveau]
+    return templates.TemplateResponse(request, "matieres.html", {
+        "groupes": groupes, "par_niveau": par_niveau, "niveaux": niveaux, "message": message,
+        "pause": _claude_en_pause()})
+
+
+@app.post("/organiser/matieres/ia", response_class=HTMLResponse)
+def matieres_ia(request: Request):
+    """Second avis de l'IA (court appel Haiku) ; les propositions locales restent affichées."""
+    comptes, groupes = _propositions_matieres()
+    erreur = None
+    if not comptes:
+        ia = []
+    else:
+        try:
+            ia = matieres.demander_ia(comptes, db.titres_par_matiere())
+        except LimiteAtteinte:
+            ia, erreur = [], "Limite de ton forfait Claude atteinte : réessaie plus tard."
+        except (ClaudeIndisponible, ErreurAgent) as e:
+            ia, erreur = [], f"L'IA n'a pas pu répondre : {str(e)[:200]}"
+    nouvelles = matieres.fusionner_propositions(groupes, ia)[len(groupes):]
+    return templates.TemplateResponse(request, "_matieres_ia.html", {"groupes": nouvelles, "erreur": erreur})
+
+
+@app.post("/organiser/matieres/fusionner")
+async def fusionner_matieres(request: Request):
+    """Fusionne des matières d'une même année sous un seul nom (choisi ou tapé)."""
+    f = await request.form()
+    niveau, nom = f.get("niveau", ""), " ".join((f.get("nom") or "").split())
+    noms = [n for n in f.getlist("noms") if n]
+    if niveau not in NIVEAUX or not nom or len(set(noms) | {nom}) < 2:
+        raise HTTPException(400, "choisis au moins deux matières de la même année et le nom à garder")
+    n = db.fusionner_matieres(niveau, noms, nom)
+    if n:
+        db.demander_scan()  # réveille le worker : il déplace les fichiers dans kDrive
+    message = (f"{niveau} : {', '.join(m for m in noms if m != nom)} → {nom}. "
+               f"{n} document{'s' if n > 1 else ''} renommé{'s' if n > 1 else ''}, "
+               "les fichiers sont déplacés dans kDrive en arrière-plan.")
+    return RedirectResponse(f"/organiser/matieres?{urlencode({'message': message})}", status_code=303)
+
+
 # --- Flashcards --------------------------------------------------------------
 
 @app.get("/cartes", response_class=HTMLResponse)
@@ -1192,8 +1532,9 @@ def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("
 def _agenda(request: Request, erreur: str | None = None, message: str | None = None):
     try:
         etat = pronote.Client().etat()
-    except pronote.ErreurPronote as e:
-        etat, erreur = {"connecte": False, "injoignable": True}, erreur or str(e)
+    except pronote.ErreurPronote:
+        # Service arrêté (mise à jour, redémarrage) : l'agenda de la dernière synchro reste lisible
+        etat = {"connecte": bool(db.etat_valeur("pronote_synchro")), "injoignable": True}
     ctx = {"etat": etat, "erreur": erreur, "message": message}
     if etat.get("connecte"):
         matieres = sorted({r["matiere"] for r in db.niveaux_matieres()})

@@ -14,6 +14,9 @@ def worker(monkeypatch):
 
     from claunote import db, worker as w
     monkeypatch.setattr(db, "sensible_decision", lambda kdrive_id: None)
+    monkeypatch.setattr(db, "import_suspendus_locaux", lambda ids: (set(), set()))
+    monkeypatch.setattr(db, "etat_valeur", lambda cle: None)
+    monkeypatch.delenv("ANALYSE_LOCALE", raising=False)
     return importlib.reload(w)
 
 
@@ -469,7 +472,7 @@ def test_documents_perdus_hors_de_l_inbox_sont_repris(worker, monkeypatch):
                 raise httpx.HTTPStatusError("404", request=None, response=httpx.Response(404))
             return {"id": fid, "name": "a.pdf"}
     items = worker.a_traiter(KD({}), [])
-    assert items == [{"id": 70, "name": "a.pdf", "type": "file", "dossiers": ["BTS1", "Réseaux"]}]
+    assert items == [{"id": 70, "name": "a.pdf", "type": "file", "dossiers": ["BTS1", "Réseaux"], "local": False}]
     assert supprimes == [2]  # le fichier n'existe plus : on oublie le document
 
 
@@ -492,13 +495,44 @@ def test_tour_sans_claude_continue_le_reste(worker, monkeypatch):
     monkeypatch.setattr(worker, "CLAUDE", worker.Garde("Claude"))
     monkeypatch.setattr(worker, "KDRIVE", worker.Garde("kDrive"))
     worker.CLAUDE.echec("limite", "usage limit", time.time() + 3600)
-    for nom in ("revisions_en_attente", "reclasser_en_attente", "comprendre_en_attente", "analyser_inbox"):
+    for nom in ("revisions_en_attente", "reclasser_en_attente", "comprendre_en_attente", "analyser_inbox",
+                "analyser_sans_claude", "relire_avec_claude"):
         monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
     for nom in ("ranger_en_attente", "pdf_manquants", "nettoyer_inbox"):
         monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
     monkeypatch.setattr(worker, "lire_inbox", lambda kd: fait.append("inbox") or [])
+    monkeypatch.setattr(worker, "a_traiter", lambda kd, items, sans_claude=False: [])
+    worker.tour(None, float("-inf"))
+    # Claude en pause : les scans sont lus sur la VM (OCR + classement local)
+    assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "analyser_sans_claude", "nettoyer_inbox"]
+    fait.clear()
+    monkeypatch.setattr(worker, "reglages_analyse", lambda: {"mode": "jamais", "relire": True})
     worker.tour(None, float("-inf"))
     assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "nettoyer_inbox"]
+    fait.clear()
+    worker.PAUSE.set()  # analyses en pause : ni Claude ni local
+    monkeypatch.setattr(worker, "reglages_analyse", lambda: {"mode": "auto", "relire": True})
+    worker.tour(None, float("-inf"))
+    worker.PAUSE.clear()
+    assert fait == ["ranger_en_attente", "pdf_manquants", "inbox", "nettoyer_inbox"]
+
+
+def test_tour_avec_claude_et_mode_toujours_local(worker, monkeypatch):
+    fait = []
+    monkeypatch.setattr(worker.db, "etat_ecrire", lambda k, v: None)
+    monkeypatch.setattr(worker, "CLAUDE", worker.Garde("Claude"))
+    monkeypatch.setattr(worker, "KDRIVE", worker.Garde("kDrive"))
+    for nom in ("revisions_en_attente", "reclasser_en_attente", "comprendre_en_attente", "analyser_inbox",
+                "analyser_sans_claude", "relire_avec_claude", "ranger_en_attente", "pdf_manquants", "nettoyer_inbox"):
+        monkeypatch.setattr(worker, nom, lambda *a, n=nom: fait.append(n))
+    monkeypatch.setattr(worker, "lire_inbox", lambda kd: [])
+    monkeypatch.setattr(worker, "a_traiter", lambda kd, items, sans_claude=False: [])
+    worker.tour(None, 0.0 + time.monotonic())
+    assert "analyser_inbox" in fait and "relire_avec_claude" in fait and "analyser_sans_claude" not in fait
+    fait.clear()
+    monkeypatch.setattr(worker, "reglages_analyse", lambda: {"mode": "toujours", "relire": False})
+    worker.tour(None, time.monotonic())
+    assert "analyser_sans_claude" in fait and "analyser_inbox" not in fait and "relire_avec_claude" not in fait
 
 
 def test_analyses_en_parallele_et_arret_a_la_limite(worker, monkeypatch):
@@ -506,12 +540,15 @@ def test_analyses_en_parallele_et_arret_a_la_limite(worker, monkeypatch):
     from claunote.agent import LimiteAtteinte
     monkeypatch.setattr(worker, "activite", lambda texte: None)
     monkeypatch.setattr(worker.db, "matieres", lambda: [])
-    barriere, faits = threading.Barrier(worker.PARALLELE, timeout=5), []
+    barriere, faits, limite_vue = threading.Barrier(worker.PARALLELE, timeout=5), [], threading.Event()
 
     def traiter(kd, item, matieres, dossiers):
         if item["id"] < worker.PARALLELE:
             barriere.wait()  # PARALLELE analyses tournent bien en même temps
+        else:
+            limite_vue.wait(5)  # les suivants attendent la limite : sinon le fil en plus les enchaîne tous
         if item["id"] == 1:
+            limite_vue.set()
             raise LimiteAtteinte("limit reached")
         faits.append(item["id"])
 
@@ -639,3 +676,61 @@ def test_gros_scan_decoupe_et_reprise(worker, base, monkeypatch, tmp_path):
     assert [f.raison for f in base["import"][:1]] == ["document 1/3 de « Année BTS1.pdf » (pages 1-2)"]
     assert base["decoupage"][7]["statut"] == "fait" and ([7], "decoupe") in base["marques"]
     assert ("Année BTS1.pdf", 3) in base["notifs"]
+
+
+def test_illisible_sans_claude_attend_claude(worker, monkeypatch):
+    """Un scan manuscrit illisible en local ne part pas en erreur : il attend Claude, et n'est pas relu en local."""
+    from claunote.agent import ErreurAgent
+    majs = []
+    monkeypatch.setattr(worker.db, "creer", lambda i, n: 7)
+    monkeypatch.setattr(worker.db, "maj", lambda i, **k: majs.append(k))
+    monkeypatch.setattr(worker, "avant_analyse", lambda *a: False)
+    monkeypatch.setattr(worker, "indice", lambda dossiers, nom: "")
+
+    class KD:
+        def download(self, fid, chemin):
+            return chemin
+
+    def illisible(*a, **k):
+        raise ErreurAgent("aucun texte lisible")
+
+    monkeypatch.setattr(worker.local, "analyser", illisible)
+    worker.traiter(KD(), {"id": 5, "name": "cahier.pdf", "dossiers": [], "local": True})
+    assert majs == [{"relire": True, "note": "Pas lisible sans Claude (aucun texte lisible) : en attente de Claude."}]
+    kd = FauxKD({10: [{"id": 5, "name": "cahier.pdf", "type": "file"}]})
+    monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {5: {"statut": "nouveau", "essais": 0, "relire": True}})
+    monkeypatch.setattr(worker.db, "import_connus", lambda ids: {5: "analyser"})
+    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: [])
+    monkeypatch.setattr(worker.db, "documents_orphelins", lambda ids, n: [])
+    assert worker.a_traiter(kd, sans_claude=True) == []
+    assert [i["name"] for i in worker.a_traiter(kd)] == ["cahier.pdf"]  # Claude revenu : il le lit
+
+
+def test_arreter_puis_reprendre_aussitot_ne_bloque_pas(worker, monkeypatch):
+    etat = {"analyses_arreter": "oui"}
+    monkeypatch.setattr(worker.db, "etat_consommer", lambda k: etat.pop(k, None) is not None)
+    monkeypatch.setattr(worker.db, "etat_valeur", lambda k: etat.get(k))
+    monkeypatch.setattr(worker.ARRET, "wait", lambda s: worker.ARRET.set())
+    worker.ARRET.clear()
+    worker.surveiller()
+    worker.ARRET.clear()
+    assert not worker.STOP.is_set() and not worker.PAUSE.is_set()
+    etat.update(analyses_arreter="oui", analyses_pause="oui")
+    tues = []
+    monkeypatch.setattr(worker.agent, "interrompre", lambda: tues.append(1) or 2)
+    monkeypatch.setattr(worker, "publier", lambda: None)
+    worker.surveiller()
+    worker.ARRET.clear()
+    assert worker.STOP.is_set() and worker.PAUSE.is_set() and tues == [1]
+    worker.STOP.clear()
+    worker.PAUSE.clear()
+
+
+def test_lot_mixte_claude_et_local(worker, monkeypatch):
+    monkeypatch.setattr(worker, "activite", lambda texte: None)
+    monkeypatch.setattr(worker.db, "matieres", lambda: [])
+    vus = []
+    monkeypatch.setattr(worker, "traiter", lambda kd, item, m, d: vus.append((item["name"], bool(item.get("local")))))
+    items = [{"id": 1, "name": "a.pdf", "dossiers": []}, {"id": 2, "name": "b.jpg", "dossiers": [], "local": True}]
+    worker.analyser_inbox(None, items)
+    assert sorted(vus) == [("a.pdf", False), ("b.jpg", True)]

@@ -32,6 +32,8 @@ TACHES = {
     "plan": "sonnet",
     "programme": "sonnet",   # programme jour par jour d'une campagne
     "examen": "opus",        # sujet + corrigé d'épreuve blanche : long raisonnement
+    "question": "sonnet",    # question posée dans « Demander » (Réviser) : réponse courte appuyée sur les cours
+    "matieres": "haiku",     # repérer les matières en double (liste de noms + quelques titres)
 }
 LIBELLES = {
     "scan": "Lecture d'un scan", "texte": "Classement d'un texte (Word, PDF numérique…)", "classement": "Reclassement",
@@ -40,9 +42,12 @@ LIBELLES = {
     "cartes": "Flashcards", "plan": "Plan de révision", "programme": "Programme de campagne",
     "condense": "Cours condensés",
     "examen": "Épreuve blanche",
+    "question": "Question posée (Demander)",
+    "matieres": "Matières en double",
     "sonde": "Test de Claude (bouton Réessayer)",
 }
-NOMS = {"haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus"}
+NOMS = {"haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus",
+        "local": "Local, sans Claude", "ollama": "Ollama (local)"}  # analyse sur la VM (local.py)
 
 INDISPONIBLE_MODELE = dt.timedelta(hours=24)  # modèle refusé par le forfait : on réessaie le lendemain
 

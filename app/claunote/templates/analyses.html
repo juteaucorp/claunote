@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Analyses{% endblock %}
+{% block vivant %}remplacer{% endblock %}
+{% block contenu %}
+<h1>Analyses</h1>
+{% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
+
+<div class="carte en-ce-moment">
+  <div class="rangee">
+    <span class="point {{ 'pause' if r.pause else ('actif' if s.en_cours else 'ok') }}"></span>
+    <div class="corps">
+      {% if r.pause %}<strong>Analyses en pause</strong>
+        <div class="doux">{% if s.en_cours %}Fin en cours : {{ s.en_cours|join(', ') }}{% else %}Rien ne tourne. Les révisions et les rangements continuent.{% endif %}</div>
+      {% elif s.en_cours %}<strong>{{ s.en_cours|length }} analyse{{ 's' if s.en_cours|length > 1 }} en cours</strong>
+        <ul class="en-cours">{% for e in s.en_cours %}<li>{{ e }}</li>{% endfor %}</ul>
+      {% elif not s.vivant %}<strong>Le worker ne répond pas</strong><div class="doux">Voir <a href="/etat">État du service</a>.</div>
+      {% else %}<strong>{{ s.activite or 'Rien en cours' }}</strong>
+        <div class="doux">{{ file|selectattr('decision', 'equalto', 'analyser')|list|length }} fichier(s) dans la file{% if s.claude.etat != 'ok' %} · Claude en pause{% endif %}</div>{% endif %}
+    </div>
+  </div>
+  <form method="post" action="/analyses/controle" class="boutons">
+    {% if r.pause %}
+      <button name="action" value="reprendre" class="principal">{{ icone('relancer', 18) }} Reprendre</button>
+      {% if s.en_cours %}<button name="action" value="arreter" class="danger">Arrêter maintenant</button>{% endif %}
+    {% else %}
+      <button name="action" value="pause">Mettre en pause</button>
+      <button name="action" value="arreter" class="danger" {{ 'disabled' if not s.en_cours }}
+              onclick="return confirm('Couper les analyses en cours ? Les fichiers restent dans la file et seront refaits à la reprise.')">Arrêter maintenant</button>
+    {% endif %}
+  </form>
+  <p class="doux petit">« Pause » laisse finir ce qui tourne ; « Arrêter maintenant » le coupe (rien n'est perdu, rien n'est mis en erreur).</p>
+</div>
+
+<h2>Sans Claude</h2>
+<form method="post" action="/analyses/reglages" class="carte reglages">
+  <p class="doux">Quand Claude n'est pas disponible (limite du forfait, panne), les documents peuvent être lus sur la VM :
+    texte des fichiers numériques, <strong>OCR Tesseract</strong> pour les scans, classement par
+    <strong>Ollama</strong> ({{ modele_local }}) s'il est installé, sinon par ressemblance avec tes cours déjà classés.
+    Plus lent (processeur seul) et moins bon sur l'écriture manuscrite.</p>
+  <fieldset>
+    <legend>Analyser sans Claude</legend>
+    {% for k, libelle in modes.items() %}
+    <label class="option"><input type="radio" name="mode" value="{{ k }}" {{ 'checked' if k == r.mode }}> {{ libelle }}</label>
+    {% endfor %}
+  </fieldset>
+  <label class="option"><input type="checkbox" name="relire" value="1" {{ 'checked' if r.relire }}>
+    Faire relire par Claude, à son retour, les documents lus sans lui <span class="doux">(meilleure transcription, consomme le forfait)</span></label>
+  <ul class="etat-outils">
+    <li><span class="point {{ 'ok' if s.local.ocr else 'ko' }}"></span>OCR Tesseract : {{ 'installé' if s.local.ocr else ('absent' if s.local.ocr is false else 'état inconnu') }}</li>
+    <li><span class="point {{ 'ok' if s.local.pret else 'pause' }}"></span>{{ s.local.message or 'Ollama : état inconnu' }}</li>
+  </ul>
+  <div><button class="principal">Enregistrer</button></div>
+</form>
+{% if nb_relire %}
+<form method="post" action="/analyses/relire" class="carte rangee">
+  <div class="corps"><strong>{{ nb_relire }} document{{ 's' if nb_relire > 1 }} à relire avec Claude</strong>
+    <div class="doux">Lus sans Claude ; relus quand la file est vide et que Claude est disponible.</div></div>
+  <button name="action" value="annuler">Annuler</button>
+</form>
+{% endif %}
+
+<h2>File d'analyse <span class="doux">· {{ file|length }} fichier{{ 's' if file|length > 1 }}</span></h2>
+{% if file %}
+<form method="post" action="/analyses/file" id="file">
+  <div class="carte barre-masse">
+    <label class="tout"><input type="checkbox" id="tout"> <span><strong id="nb">0</strong> coché(s)</span></label>
+    <select name="action" aria-label="Action">{% for k, v in actions.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+    <button class="principal" id="appliquer" disabled>Appliquer</button>
+  </div>
+  <ul class="carte lignes liste-file">
+    {% for f in file %}
+    <li class="{{ 'suspendu' if f.decision == 'suspendu' }}">
+      <input type="checkbox" name="ids" value="{{ f.kdrive_id }}" aria-label="Sélectionner {{ f.nom }}">
+      <div class="corps">
+        <span class="titre">{{ f.nom }}</span>
+        {% if f.decision == 'suspendu' %}<span class="pastille">en attente</span>{% endif %}
+        {% if f.local %}<span class="pastille">sans Claude</span>{% endif %}
+        {% if f.attend_claude %}<span class="pastille">attend Claude</span>{% endif %}
+        {% if f.chemin.startswith('Pronote/') %}<span class="pastille">prof</span>{% endif %}
+        {% if f.essais %}<span class="pastille alerte">{{ f.essais }} échec{{ 's' if f.essais > 1 }}</span>{% endif %}
+        <div class="doux meta">{{ f.chemin.rsplit('/', 1)[0] if '/' in f.chemin else 'inbox' }}{% if f.taille %} · {{ (f.taille / 1048576)|round(1) }} Mo{% endif %}</div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</form>
+<script>
+  (() => {
+    const form = document.getElementById("file"), tout = document.getElementById("tout");
+    const cases = () => [...form.querySelectorAll("input[name=ids]")];
+    const maj = () => {
+      const n = cases().filter((c) => c.checked).length;
+      document.getElementById("nb").textContent = n;
+      document.getElementById("appliquer").disabled = n === 0;
+      tout.checked = n > 0 && n === cases().length;
+    };
+    tout.addEventListener("change", () => { cases().forEach((c) => c.checked = tout.checked); maj(); });
+    form.addEventListener("change", (e) => { if (e.target.name === "ids") maj(); });
+    form.addEventListener("submit", (e) => {
+      if (form.action.value === "supprimer" && !confirm("Mettre ces fichiers à la corbeille kDrive ?")) e.preventDefault();
+    });
+  })();
+</script>
+{% else %}
+<div class="carte">La file est vide{% if attente.scans %} ({{ attente.scans }} en cours de tri){% endif %}. Dépose des documents depuis <a href="/deposer">Déposer</a>.</div>
+{% endif %}
+
+<style>
+  .en-ce-moment { display: grid; gap: 10px; }
+  .rangee { display: flex; align-items: center; gap: 12px; }
+  .rangee .corps { flex: 1; min-width: 0; }
+  .en-cours { margin: 4px 0 0; padding-left: 18px; color: var(--doux); }
+  .point { flex: none; display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+  .point.actif { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-pale); }
+  .point.pause { background: #c9a227; }
+  .point.ko { background: var(--alerte); }
+  .boutons { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+  button.danger { color: var(--alerte); border-color: var(--alerte); }
+  .petit { font-size: .85rem; margin: 0; }
+  .reglages { display: grid; gap: 10px; }
+  .reglages p { margin: 0; }
+  fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 4px; }
+  legend { font-weight: 600; margin-bottom: 4px; }
+  .option { display: flex; gap: 8px; align-items: flex-start; }
+  .option input { margin-top: 5px; }
+  .etat-outils { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: .92rem; }
+  .barre-masse { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; position: sticky; top: 70px; z-index: 3; }
+  .barre-masse .tout { display: inline-flex; gap: 8px; align-items: center; margin-right: auto; }
+  .barre-masse select { flex: 1 1 220px; min-width: 0; max-width: 340px; }
+  .liste-file li { display: flex; gap: 12px; align-items: flex-start; }
+  .liste-file li input { margin-top: 5px; }
+  .liste-file .corps { min-width: 0; overflow-wrap: anywhere; }
+  .liste-file .titre { font-weight: 500; }
+  .liste-file li.suspendu { opacity: .6; }
+  .pastille { display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px; font-size: .75rem; font-weight: 600;
+    border: 1px solid var(--bord); color: var(--doux); }
+  .pastille.alerte { color: var(--alerte); border-color: var(--alerte); }
+  @media (max-width: 760px) { .barre-masse { top: calc(env(safe-area-inset-top) + 58px); } .barre-masse button { flex: 1 0 100%; } }
+</style>
+{% endblock %}

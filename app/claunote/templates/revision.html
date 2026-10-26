@@ -43,7 +43,9 @@
 {% endif %}
 
 {% if rev.statut == 'en_attente' %}
-<div class="carte accent">L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).</div>
+<div class="carte accent rangee-attente"><span>L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).</span>
+  <form method="post" action="/revision/{{ rev.id }}/supprimer" onsubmit="return confirm('Annuler cette demande ?')"><button>Annuler</button></form></div>
+<style>.rangee-attente { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; } .rangee-attente form { margin: 0; }</style>
 {% elif rev.statut == 'erreur' %}
 <div class="carte"><p class="alerte">Erreur : {{ rev.erreur }}</p>
   <div class="actions">

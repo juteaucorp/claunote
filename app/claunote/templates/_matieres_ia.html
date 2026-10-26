@@ -1,0 +1,12 @@
+{# Réponse du bouton « Demander à l'IA » de la page Matières en double #}
+{% from "_fusion.html" import groupe %}
+<div id="ia">
+{% if erreur %}
+  <div class="carte">{{ erreur }}</div>
+{% elif groupes %}
+  <p class="doux">L'IA propose {{ groupes|length }} autre{{ 's' if groupes|length > 1 }} fusion{{ 's' if groupes|length > 1 }} : vérifie avant de valider.</p>
+  {% for g in groupes %}{{ groupe(g, 'ia' ~ loop.index) }}{% endfor %}
+{% else %}
+  <div class="carte">L'IA ne voit pas d'autre matière en double.</div>
+{% endif %}
+</div>

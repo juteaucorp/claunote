@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% from "_fusion.html" import groupe %}
+{% block titre %}Matières en double{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/organiser">Organiser</a> › Matières en double</p>
+<h1>Matières en double</h1>
+{% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
+<p class="doux">Sur une même année, l'IA a parfois donné plusieurs noms à la même matière (« Maths » et « Mathématiques »,
+  « Réseau » et « Réseaux »…). Fusionne-les : les documents prennent le nom gardé, les révisions aussi, et les fichiers
+  sont déplacés dans le bon dossier kDrive. Les prochains scans reprendront ce nom.</p>
+
+<h2>À fusionner</h2>
+{% for g in groupes %}{{ groupe(g, loop.index) }}
+{% else %}
+<div class="carte">Aucun doublon évident : chaque année a des noms de matières distincts.</div>
+{% endfor %}
+
+<div id="ia">
+  <button class="bouton-ia" hx-post="/organiser/matieres/ia" hx-target="#ia" hx-swap="outerHTML" hx-disabled-elt="this"
+          {{ 'disabled' if pause }}>{{ icone('bulle', 18) }} Demander à l'IA d'en chercher d'autres</button>
+  <span class="htmx-indicator doux">L'IA compare les noms et quelques titres de cours (≈ 20 s)…</span>
+  {% if pause %}<p class="doux">L'IA est en pause ({{ pause }}).</p>{% endif %}
+</div>
+
+<h2>Fusionner à la main</h2>
+<p class="doux">Coche au moins deux matières d'une même année, puis écris le nom à garder.</p>
+{% for niveau in niveaux %}
+<form method="post" action="/organiser/matieres/fusionner" class="carte groupe">
+  <input type="hidden" name="niveau" value="{{ niveau }}">
+  <div class="entete-groupe"><span class="etiquette">{{ niveau }}</span>
+    <span class="doux">{{ par_niveau[niveau]|length }} matière{{ 's' if par_niveau[niveau]|length > 1 }}</span></div>
+  <div class="noms">
+    {% for r in par_niveau[niveau] %}
+    <label><input type="checkbox" name="noms" value="{{ r.matiere }}"> {{ r.matiere }} <span class="doux">({{ r.n }})</span></label>
+    {% endfor %}
+  </div>
+  {% if par_niveau[niveau]|length > 1 %}
+  <div class="garder">
+    <label>Nom à garder<input name="nom" list="main-{{ loop.index }}" required placeholder="ex. Mathématiques"></label>
+    <datalist id="main-{{ loop.index }}">{% for r in par_niveau[niveau] %}<option value="{{ r.matiere }}">{% endfor %}</datalist>
+    <button>Fusionner la sélection</button>
+  </div>
+  {% endif %}
+</form>
+{% else %}
+<div class="carte">Pas encore de cours classés.</div>
+{% endfor %}
+
+<style>
+  .groupe { display: grid; gap: 10px; }
+  .entete-groupe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .entete-groupe .raison { font-size: .85rem; }
+  .etiquette { display: inline-flex; padding: 1px 10px; border-radius: 999px; font-size: .8rem; font-weight: 600; color: var(--accent-fonce); background: var(--accent-pale); }
+  .etat { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: .78rem; font-weight: 600; border: 1px solid var(--bord); color: var(--doux); }
+  .etat.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .etat.attente { color: var(--accent-fonce); border-color: var(--accent); background: var(--accent-pale); }
+  .noms { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  .noms label { display: inline-flex; align-items: center; gap: 6px; }
+  .garder { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .garder label { display: flex; flex-direction: column; flex: 1 1 220px; font-size: .9rem; }
+  #ia { margin: 14px 0; }
+  .bouton-ia { display: inline-flex; align-items: center; gap: 8px; }
+  #ia .htmx-indicator { display: none; margin-left: 8px; }
+  #ia .htmx-request ~ .htmx-indicator, #ia .htmx-request.htmx-indicator { display: inline; }
+</style>
+{% endblock %}

@@ -128,6 +128,35 @@ class ErreurAgent(Exception):
     pass
 
 
+class Interrompu(Exception):
+    """Analyse arrêtée depuis le site (bouton « Arrêter ») : le document reste dans la file, sans erreur."""
+
+
+# Analyses en cours : processus `claude -p` → tâche, pour pouvoir les arrêter depuis le site
+TACHES_ANALYSE = {"scan", "texte", "classement", "dossiers", "decoupage"}
+_processus: dict[subprocess.Popen, str] = {}
+_arretes: set[subprocess.Popen] = set()
+_verrou_processus = threading.Lock()
+
+
+def interrompre(taches: set[str] = TACHES_ANALYSE) -> int:
+    """Arrête tout de suite les appels à Claude de ces tâches ; renvoie combien ont été arrêtés."""
+    with _verrou_processus:
+        cibles = [p for p, t in _processus.items() if t in taches]
+        for p in cibles:
+            _arretes.add(p)
+            _tuer(p)
+    return len(cibles)
+
+
+def _tuer(p: subprocess.Popen):
+    """Le processus et ses enfants (outils lancés par Claude Code) : sinon la sortie reste ouverte."""
+    try:
+        os.killpg(p.pid, 9)
+    except (ProcessLookupError, PermissionError):
+        p.kill()
+
+
 def journal(**appel):
     """Remplacé par le worker pour garder une trace de chaque appel (page État)."""
 
@@ -242,8 +271,7 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
         try:
             with _places:
                 debut = time.monotonic()
-                p = subprocess.run(cmd, cwd=cwd, input=entree, capture_output=True, text=True, timeout=timeout,
-                                   env=ENV_FORFAIT)
+                p = _lancer(cmd, cwd, entree, timeout, tache)
         except subprocess.TimeoutExpired as e:
             journal(tache=tache, modele=modele, duree=timeout, resultat="erreur", detail="trop long")
             raise ErreurAgent(f"Claude Code trop long ({timeout // 60} min)") from e
@@ -273,6 +301,33 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
             raise echec
         time.sleep(attente)
     raise AssertionError("inatteignable")
+
+
+def _lancer(cmd: list[str], cwd: Path, entree: str | None, timeout: int, tache: str) -> subprocess.CompletedProcess:
+    """subprocess.run, mais le processus est connu de interrompre() le temps de l'appel."""
+    proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE if entree is not None else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=ENV_FORFAIT,
+                            start_new_session=True)
+    with _verrou_processus:
+        _processus[proc] = tache
+    try:
+        try:
+            sortie, erreurs = proc.communicate(entree, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _tuer(proc)
+            proc.communicate()
+            raise
+        with _verrou_processus:
+            if proc in _arretes:
+                _arretes.discard(proc)
+                journal(tache=tache, modele=cmd[cmd.index("--model") + 1], duree=0, resultat="erreur",
+                        detail="arrêté depuis le site")
+                raise Interrompu("analyse arrêtée depuis le site")
+        return subprocess.CompletedProcess(cmd, proc.returncode, sortie, erreurs)
+    finally:
+        with _verrou_processus:
+            _processus.pop(proc, None)
+            _arretes.discard(proc)
 
 
 def sonder():
@@ -565,17 +620,20 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
         indices += f"D'après l'organisation de ses dossiers (imparfaite, à confirmer par le contenu) : {indice}.\n"
     if indices:
         contexte += "\n" + indices
+    # Sans la liste, l'agent invente parfois un autre nom (« Maths » à côté de « Mathématiques »)
+    pour_classer = contexte + (f"\nMatières déjà utilisées dans ses cours : {', '.join(matieres)}. Si le document "
+                               "relève de l'une d'elles, reprends exactement ce nom.\n" if matieres else "")
 
     prompt, tache = None, "texte"
     if texte is not None:
-        a, classeur = classer_texte(texte, nom, origine, contexte)
+        a, classeur = classer_texte(texte, nom, origine, pour_classer)
         a.transcription, lecteur = texte, classeur
     elif suffixe == ".pdf" and pages_pdf(chemin) > SEUIL_MORCEAUX:
         transcription, lecteur = transcrire_par_morceaux(chemin, memoire, contexte)
-        a, classeur = classer_texte(transcription, nom, "transcription d'un scan", contexte)
+        a, classeur = classer_texte(transcription, nom, "transcription d'un scan", pour_classer)
         a.transcription, lecteur = transcription, lecteur or classeur
     else:
-        prompt, tache = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES)) + contexte, "scan"
+        prompt, tache = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES)) + pour_classer, "scan"
         a, classeur = demander(tache, prompt, chemin.parent, lire=parse_reponse, outils=["Read"])
         lecteur = classeur
     a.modele = lecteur

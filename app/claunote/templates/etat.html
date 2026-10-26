@@ -60,7 +60,8 @@
     {% if file.reclassements %}<li><strong>{{ file.reclassements }}</strong> document{{ 's' if file.reclassements > 1 }} à reclasser</li>{% endif %}
     {% if file.scans %}<li><strong>{{ file.scans }}</strong> fichier{{ 's' if file.scans > 1 }} à analyser</li>{% endif %}
   </ul>
-  <p class="doux">Dans cet ordre : ce que tu attends sur le site passe avant les scans.</p>
+  <p class="doux">Dans cet ordre : ce que tu attends sur le site passe avant les scans.
+    <a href="/analyses">Voir la file, mettre en pause, analyser sans Claude</a>.</p>
   {% else %}<p>Rien en attente.</p>{% endif %}
 </div>
 

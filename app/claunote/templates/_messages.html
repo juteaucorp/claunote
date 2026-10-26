@@ -1,0 +1,29 @@
+{# Messages du chat « Demander » ; une réponse en attente se recharge toute seule jusqu'à être prête #}
+{% from "_icones.html" import icone %}
+{% for m in liste %}
+{% set x = contexte_message(m) %}
+{% if m.role == 'eleve' %}
+<div class="msg eleve" id="msg-{{ m.id }}">{{ x.rendu }}</div>
+{% elif m.statut == 'en_attente' %}
+<div class="msg reponse attente" id="msg-{{ m.id }}" hx-get="/demander/message/{{ m.id }}" hx-trigger="every 2s" hx-swap="outerHTML">
+  <span class="points" aria-hidden="true"><i></i><i></i><i></i></span>
+  <span class="doux">{{ 'Claude lit tes cours et répond…' if m.role == 'ia' else 'Je cherche dans tes cours…' }}</span>
+</div>
+{% elif m.statut == 'erreur' %}
+<div class="msg reponse erreur" id="msg-{{ m.id }}">
+  <p>La réponse n'a pas pu être faite : {{ m.erreur or 'erreur inconnue' }}</p>
+  <button class="petit" hx-post="/demander/message/{{ m.id }}/ia" hx-target="#fil" hx-swap="beforeend">{{ icone('relancer', 16) }} Réessayer</button>
+</div>
+{% else %}
+<div class="msg reponse {{ m.role }}" id="msg-{{ m.id }}">
+  <div class="qui doux">{% if m.role == 'ia' and m.modele == 'local' %}Modèle local (Ollama){% elif m.role == 'ia' %}Claude{% if m.modele %} · {{ x.noms.get(m.modele, m.modele) }}{% endif %}{% else %}Tes cours · sans IA{% endif %}</div>
+  <div class="texte">{{ x.rendu }}</div>
+  {% if m.sources_web %}
+  <ul class="web doux">{% for w in m.sources_web %}<li>[{{ w.repere }}] <a href="{{ w.url }}" target="_blank" rel="noopener noreferrer">{{ w.titre }}</a></li>{% endfor %}</ul>
+  {% endif %}
+  {% if m.role == 'local' %}
+  <button class="petit" hx-post="/demander/message/{{ m.id }}/ia" hx-target="#fil" hx-swap="beforeend" hx-disabled-elt="this">{{ icone('bulle', 16) }} Demander à l'IA</button>
+  {% endif %}
+</div>
+{% endif %}
+{% endfor %}

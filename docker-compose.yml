@@ -54,6 +54,16 @@ services:
       db: {condition: service_healthy}
       pronote: {condition: service_started}
 
+  ollama:
+    # Analyse sans Claude (facultatif) : petit modèle de langue sur le processeur, pas de carte graphique.
+    # Démarrage : docker compose --profile local up -d (le modèle se télécharge tout seul, ~2 Go)
+    image: ollama/ollama:0.6.8
+    profiles: [local]
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama   # modèles téléchargés
+    # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
+
   pronote:
     build: ./pronote
     restart: unless-stopped
@@ -64,6 +74,7 @@ services:
     # pas de port publié : seuls web et worker lui parlent, sur le réseau Docker
 
 volumes:
+  ollama:
   pgdata:
   cache:
   pronote:
