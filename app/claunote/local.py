@@ -60,7 +60,10 @@ MODE_DEFAUT = "local"
 def reglages() -> dict:
     """Réglages de la page Activité : qui analyse (MODES), relecture par Claude, pause des analyses."""
     mode = db.etat_valeur("analyse_locale") or os.environ.get("ANALYSE_LOCALE") or MODE_DEFAUT
-    return {"mode": mode if mode in MODES else MODE_DEFAUT,
+    mode = mode if mode in MODES else MODE_DEFAUT
+    eteints = ressources.locaux_eteints()
+    # « mode » : ce qui s'applique (Claude uniquement si les modèles locaux sont éteints) ; « choisi » : le réglage
+    return {"mode": "jamais" if eteints else mode, "choisi": mode, "eteints": eteints,
             "relire": (db.etat_valeur("relire_avec_claude") or "oui") == "oui",
             "pause": db.etat_valeur("analyses_pause") == "oui"}
 
@@ -84,6 +87,8 @@ _verrou = threading.Lock()
 
 def etat_ollama(reverifier: bool = False) -> dict:
     """{"pret", "message"} ; vérifié au plus toutes les 2 min. Télécharge le modèle s'il manque."""
+    if ressources.locaux_eteints():   # Ollama n'est même pas contacté
+        return {**_ollama, "pret": False, "embed": False, "message": "Modèles locaux éteints"}
     with _verrou:
         if not reverifier and time.monotonic() - _ollama["vu"] < 120:
             return dict(_ollama)
@@ -157,6 +162,8 @@ def vecteurs(textes: list[str]) -> list[list[float]] | None:
 
 def liberer() -> bool:
     """Décharge le modèle de langue d'Ollama tout de suite (mémoire de la VM basse) ; rechargé au besoin."""
+    if ressources.locaux_eteints():
+        return False
     try:
         httpx.post(f"{OLLAMA_URL}/api/generate", json={"model": OLLAMA_MODELE, "keep_alive": 0}, timeout=30)
         return True
@@ -166,6 +173,8 @@ def liberer() -> bool:
 
 def ollama(systeme: str, texte: str, json_seul: bool = True, timeout: int = 900) -> str:
     """Une réponse du modèle local (CPU : de quelques secondes à quelques minutes)."""
+    if ressources.locaux_eteints():
+        raise ErreurAgent("modèles locaux éteints")
     corps = {"model": OLLAMA_MODELE, "stream": False, "keep_alive": GARDER,
              "messages": [{"role": "system", "content": systeme}, {"role": "user", "content": texte}],
              "options": {"temperature": 0.1, "num_ctx": 8192, "num_thread": THREADS}}

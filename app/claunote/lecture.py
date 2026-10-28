@@ -8,6 +8,7 @@
 
 Tout est facultatif : si Docling ou le service manque (ou tombe), on garde l'extraction d'avant.
 Le service n'est pas rappelé pendant PAUSE secondes après une panne : pas d'attente à chaque document.
+Modèles locaux éteints (page Analyses) : ni Docling ni le service, l'extraction d'avant pour tout.
 """
 import logging
 import os
@@ -16,6 +17,8 @@ import time
 from pathlib import Path
 
 import httpx
+
+from claunote import ressources
 
 URL = os.environ.get("LECTURE_URL", "http://lecture:8000").rstrip("/")
 PAUSE = 300
@@ -36,7 +39,7 @@ class LectureIndisponible(Exception):
 def office(chemin: Path) -> str | None:
     """Markdown structuré d'un .docx/.pptx/.xlsx, ou None (Docling absent, fichier qu'il ne sait pas lire)."""
     global _convertisseur
-    if chemin.suffix.lower() not in OFFICE:
+    if chemin.suffix.lower() not in OFFICE or ressources.locaux_eteints():
         return None
     try:
         from docling.document_converter import DocumentConverter
@@ -55,6 +58,8 @@ def office(chemin: Path) -> str | None:
 # --- Service lecture (PDF, formules, tri des passages) ----------------------------------
 
 def _appel(methode: str, chemin: str, timeout: float, **k) -> dict:
+    if ressources.locaux_eteints():
+        raise LectureIndisponible("modèles locaux éteints")
     if time.time() < _panne["jusqu_a"]:
         raise LectureIndisponible("service lecture en pause après une panne")
     try:

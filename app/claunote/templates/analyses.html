@@ -37,6 +37,36 @@
 </div>
 
 <h2>Qui fait le travail</h2>
+<div class="carte reglages" id="modeles-locaux">
+  {% if r.eteints %}
+  <p><span class="point pause"></span> <strong>Modèles locaux éteints</strong> : Ollama et le service lecture sont arrêtés,
+    plus aucune analyse, aucun chat ni aucune recherche par le sens sur la VM. <strong>Tout passe par Claude</strong> ;
+    sans Claude, le chat répond avec les passages trouvés par les mots.</p>
+  <form method="post" action="/analyses/locaux" class="boutons">
+    <button name="action" value="allumer" class="principal">Rallumer les modèles locaux</button>
+  </form>
+  {% else %}
+  <p><span class="point ok"></span> <strong>Modèles locaux allumés</strong> : Ollama ({{ modele_local }}), service lecture
+    (Docling, formules, tri des passages) et lecture des scans sur la VM.</p>
+  <form method="post" action="/analyses/locaux" class="boutons">
+    <button name="action" value="eteindre" class="danger"
+            onclick="return confirm('Éteindre complètement les modèles locaux ? Leurs conteneurs sont arrêtés et tout passe par Claude (forfait).')">Éteindre les modèles locaux</button>
+  </form>
+  {% endif %}
+  {% if not maj_present %}<p class="doux petit">Le service maj ne tourne pas : les conteneurs ne s'arrêtent pas seuls
+    (<code>docker compose stop ollama lecture</code> sur la VM). Le site, lui, ne les appelle plus.</p>{% endif %}
+  {% set lignes, releve = conso %}
+  {% if lignes %}
+  <details{{ ' open' if not r.eteints }}>
+    <summary>Qui consomme le processeur {% if releve %}<span class="doux">(relevé de {{ heure(releve) }})</span>{% endif %}</summary>
+    <table class="petit">
+      <tr><th>Service</th><th>Processeur</th><th>Mémoire</th></tr>
+      {% for c in lignes %}<tr><td>{{ c.nom }}</td><td>{{ c.cpu }}</td><td>{{ c.mem }}</td></tr>{% endfor %}
+    </table>
+    <p class="doux petit">100 % = un cœur entier. Relevé à chaque vérification (Réglages → Mise à jour → Vérifier) et toutes les 6 h.</p>
+  </details>
+  {% endif %}
+</div>
 <form method="post" action="/analyses/reglages" class="carte reglages">
   <p class="doux">Le <strong>modèle local</strong> tourne sur la VM (processeur seul) : texte des fichiers numériques,
     <strong>OCR Tesseract</strong> pour les scans, <strong>Ollama</strong> ({{ modele_local }}) pour comprendre et classer.
@@ -44,8 +74,9 @@
     corrige ; la même règle sert aux reclassements, aux noms de dossiers, aux matières et au chat.</p>
   <fieldset>
     <legend>Analyses et petites tâches</legend>
+    {% if r.eteints %}<p class="doux petit">Modèles locaux éteints : Claude uniquement, quel que soit ce réglage.</p>{% endif %}
     {% for k, libelle in modes.items() %}
-    <label class="option"><input type="radio" name="mode" value="{{ k }}" {{ 'checked' if k == r.mode }}> {{ libelle }}</label>
+    <label class="option"><input type="radio" name="mode" value="{{ k }}" {{ 'checked' if k == r.get('choisi', r.mode) }}> {{ libelle }}</label>
     {% endfor %}
   </fieldset>
   <label class="option"><input type="checkbox" name="relire" value="1" {{ 'checked' if r.relire }}>

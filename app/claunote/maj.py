@@ -94,6 +94,49 @@ def demander(action: str) -> None:
     temp.replace(DOSSIER / "demande")   # d'un coup : le service ne lit jamais une demande à moitié écrite
 
 
+LOCAUX_ETEINTS = "locaux_eteints"   # présent : le service maj garde Ollama et le service lecture arrêtés
+LOCAUX_ALLUMER = "locaux_allumer"   # demande ponctuelle : il les reconstruit si besoin et les relance
+
+
+def locaux(eteindre: bool) -> str:
+    """Éteint ou rallume les conteneurs des modèles locaux (ollama, lecture) par le service maj.
+
+    Le site pose un fichier dans /maj puis demande une vérification : le service applique ce fichier au
+    début de chaque action (et toutes les 6 h), donc aussi après un « docker compose up -d » fait à la main.
+    Renvoie ce qui va se passer, pour la page.
+    """
+    if eteindre:
+        (DOSSIER / LOCAUX_ETEINTS).write_text("oui")
+        (DOSSIER / LOCAUX_ALLUMER).unlink(missing_ok=True)
+    else:
+        (DOSSIER / LOCAUX_ETEINTS).unlink(missing_ok=True)
+        (DOSSIER / LOCAUX_ALLUMER).write_text("oui")
+    if not present():
+        return ("Le service maj ne tourne pas : sur la VM, " +
+                ("docker compose stop ollama lecture" if eteindre else "docker compose up -d ollama lecture") + ".")
+    if action_en_cours():
+        return "Appliqué à la fin de l'action en cours (mise à jour…)."
+    try:
+        demander("verifier")
+    except RuntimeError:
+        return "Appliqué à la fin de l'action en cours (mise à jour…)."
+    return ("Ollama et le service lecture s'arrêtent dans quelques secondes." if eteindre
+            else "Ollama et le service lecture redémarrent (reconstruction si le code a changé).")
+
+
+def conso() -> tuple[list[dict], dt.datetime | None]:
+    """Processeur et mémoire de chaque conteneur au dernier relevé du service maj (docker stats)."""
+    e = _etat_brut()
+    lignes = [c for c in e.get("conso") or [] if isinstance(c, dict)]
+
+    def cpu(c):
+        try:
+            return float(str(c.get("cpu") or "0").rstrip("%"))
+        except ValueError:
+            return 0.0
+    return sorted(lignes, key=cpu, reverse=True), _instant(e.get("conso_le"))
+
+
 def disponibles() -> int:
     """Nouveautés sur GitHub pas encore récupérées, + 1 si le code de la VM n'est pas celui qui tourne (0 si inconnu)."""
     try:

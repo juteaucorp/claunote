@@ -221,3 +221,17 @@ def test_garder_et_liberer_ollama(monkeypatch):
     monkeypatch.setattr(local.httpx, "post", lambda url, json=None, timeout=None: envois.append((url, json)))
     assert local.liberer() and envois[-1][1] == {"model": local.OLLAMA_MODELE, "keep_alive": 0}
     assert local.GARDER == "5m"
+
+
+def test_modeles_locaux_eteints_aucun_appel(monkeypatch):
+    from claunote import lecture
+    monkeypatch.undo()   # etat_ollama d'origine (la fixture le remplace)
+    monkeypatch.setattr(local.ressources, "locaux_eteints", lambda: True)
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: pytest.fail("Ollama ne doit pas être contacté"))
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("Ollama ne doit pas être contacté"))
+    monkeypatch.setattr(httpx, "request", lambda *a, **k: pytest.fail("le service lecture ne doit pas être contacté"))
+    assert local.etat_ollama(reverifier=True)["pret"] is False and local.disponible()
+    assert local.vecteurs(["x"]) is None and local.liberer() is False and local.essayer_json("s", "t") is None
+    with pytest.raises(ErreurAgent, match="éteints"):
+        local.ollama("s", "t")
+    assert lecture.etat() == {} and lecture.classer("q", ["a", "b"]) is None and lecture.liberer() == []

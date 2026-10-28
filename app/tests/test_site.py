@@ -1386,3 +1386,22 @@ def test_reponse_locale_gardee_si_claude_ne_peut_pas_verifier(client, monkeypatc
     (msg_id, statut, contenu, *_), k = ecrit[-1]
     assert statut == "pret" and "non vérifiée par Claude" in contenu and "Un VLAN segmente." in contenu
     assert k["modele"] == "local" and "non vérifié" in k["detail"]
+
+
+def test_eteindre_et_rallumer_les_modeles_locaux(client, monkeypatch, tmp_path):
+    from claunote import local, maj
+    monkeypatch.setattr(maj, "DOSSIER", tmp_path)   # service maj absent : la commande à lancer est donnée
+    client.etat["analyse_locale"] = "local"
+    r = client.post("/analyses/locaux", data={"action": "eteindre"}, follow_redirects=False)
+    assert r.status_code == 303 and client.etat["modeles_locaux"] == "eteints" and "scan" in client.appels
+    assert "docker+compose+stop+ollama+lecture" in r.headers["location"] and (tmp_path / "locaux_eteints").exists()
+    r = local.reglages()
+    assert (r["mode"], r["choisi"], r["eteints"]) == ("jamais", "local", True)
+    page = client.get("/analyses").text
+    assert "Modèles locaux éteints" in page and "Rallumer les modèles locaux" in page
+    assert 'value="local" checked' in page   # le réglage choisi est gardé pour le rallumage
+    client.post("/analyses/locaux", data={"action": "allumer"})
+    assert client.etat.get("modeles_locaux") is None and local.reglages()["mode"] == "local"
+    assert (tmp_path / "locaux_allumer").exists() and not (tmp_path / "locaux_eteints").exists()
+    assert "Éteindre les modèles locaux" in client.get("/analyses").text
+    assert client.post("/analyses/locaux", data={"action": "autre"}).status_code == 400

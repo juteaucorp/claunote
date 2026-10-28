@@ -536,7 +536,11 @@ La page *Activité* affiche la moyenne sur la durée et si le travail de fond es
 
 Ollama démarre avec le reste (`docker compose up -d`) et télécharge ses deux modèles au premier lancement
 (~2,3 Go). Pour une petite VM (4 Go) : `OLLAMA_MODELE=qwen2.5:1.5b`. Avec 16 Go : `qwen2.5:7b`, plus fin mais plus lent.
-Pour t'en passer : `ANALYSE_LOCALE=auto` dans `.env`, puis `docker compose stop ollama`.
+Pour t'en passer : **Analyses → « Éteindre les modèles locaux »** sur le site. Ollama et le service
+`lecture` sont arrêtés (par le service `maj`), plus jamais appelés ni reconstruits, et tout passe par Claude.
+Le bouton « Rallumer » les relance (reconstruit `lecture` si le code a changé). Même page : **qui consomme le
+processeur**, conteneur par conteneur (relevé à chaque « Vérifier » de la mise à jour et toutes les 6 h).
+Sans le service `maj` : `docker compose stop ollama lecture` à la main.
 
 ### Réglages (Activité → Qui fait le travail)
 

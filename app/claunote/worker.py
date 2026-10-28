@@ -194,8 +194,8 @@ def battement():
                 log(ressources.BUDGET.raison() or f"processeur redescendu à {round(ressources.BUDGET.moyenne * 100)} % "
                                                   "en moyenne : le travail de fond reprend à pleine vitesse")
             liberer_si_besoin()
-            ETAT["local"] = {"ocr": ocr.disponible(), **{k: v for k, v in local.etat_ollama().items()
-                                                         if k in ("pret", "message")}}
+            ETAT["local"] = {"ocr": ocr.disponible(), "eteints": ressources.locaux_eteints(),
+                             **{k: v for k, v in local.etat_ollama().items() if k in ("pret", "message")}}
             publier()
         except Exception as e:
             log(f"état non publié : {e}")
@@ -1121,6 +1121,8 @@ def repartir(items: list[dict], mode: str, claude_ok: bool) -> tuple[list[dict],
     choisis_local = [i for i in items if i.get("moteur") == "local"]
     choisis_claude = [i for i in items if i.get("moteur") == "claude"] if claude_ok else []
     libres = [i for i in items if not i.get("moteur")]
+    if ressources.locaux_eteints():   # même ceux confiés au modèle local partent chez Claude
+        return [], (choisis_local + choisis_claude + libres)[:LOT] if claude_ok else []
     if mode == "jamais":
         return choisis_local[:LOT_LOCAL], (choisis_claude + libres)[:LOT] if claude_ok else []
     if mode == "toujours" or (mode == "auto" and not claude_ok) or (mode == "local" and not claude_ok):
