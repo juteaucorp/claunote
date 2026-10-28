@@ -131,3 +131,19 @@ def test_bandeau_worker_pendant_une_mise_a_jour(client, dossier, monkeypatch):
     (dossier / "action-vu").unlink()
     texte, detail, _ = main.bandeau_service()
     assert "ne répond plus" in texte and "si aucune mise à jour n'est en cours" in detail
+
+
+def test_modeles_locaux_eteints_par_le_service(dossier):
+    assert "s'arrêtent" in maj.locaux(True)
+    assert (dossier / "locaux_eteints").exists() and (dossier / "demande").read_text() == "verifier"
+    (dossier / "demande").unlink()
+    assert "redémarrent" in maj.locaux(False)
+    assert not (dossier / "locaux_eteints").exists() and (dossier / "locaux_allumer").exists()
+
+
+def test_conso_triee_par_processeur(dossier):
+    assert maj.conso() == ([], None)
+    (dossier / "etat.json").write_text(json.dumps({"conso_le": "2026-10-28T18:00:00+01:00", "conso": [
+        {"nom": "web", "cpu": "1.5%", "mem": "120MiB"}, {"nom": "ollama", "cpu": "312.0%", "mem": "2.1GiB"}]}))
+    lignes, le = maj.conso()
+    assert [c["nom"] for c in lignes] == ["ollama", "web"] and le.hour == 18

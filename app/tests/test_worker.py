@@ -907,3 +907,11 @@ def test_index_en_retard_garde_le_rythme(worker, monkeypatch):
     monkeypatch.setattr(worker.index, "vectoriser", lambda n, a: 40)       # fini
     worker.indexer_si_calme()
     assert worker.ETAT["index_en_retard"] is False
+
+
+def test_repartir_modeles_locaux_eteints(worker, monkeypatch):
+    items = [{"id": 1, "moteur": "local"}, {"id": 2, "moteur": "claude"}, {"id": 3}]
+    monkeypatch.setattr(worker.ressources, "locaux_eteints", lambda: True)
+    loc, cla = worker.repartir(items, "local", True)
+    assert loc == [] and [i["id"] for i in cla] == [1, 2, 3]   # même ceux confiés au local partent chez Claude
+    assert worker.repartir(items, "toujours", False) == ([], [])

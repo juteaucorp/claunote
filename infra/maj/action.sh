@@ -34,7 +34,10 @@ fin() {  # fin <ok|erreur> <message>
   echo "== $2"
   [ "$1" = ok ] || exit 1
 }
-services() { docker compose config --services | grep -vx maj; }   # tout sauf ce service-ci
+services() {   # tout sauf ce service-ci (et sauf les modèles locaux s'ils sont éteints)
+  if [ -f /maj/locaux_eteints ]; then docker compose config --services | grep -vx -e maj -e ollama -e lecture
+  else docker compose config --services | grep -vx maj; fi
+}
 DEBUT=$(date +%s)
 duree() { s=$(( $(date +%s) - ${1:-$DEBUT} )); [ $s -ge 60 ] && echo "$((s / 60)) min $((s % 60)) s" || echo "$s s"; }
 etape() { echo "== $1 ($(duree))"; ecrire '.message=$m' --arg m "$1"; }
@@ -45,7 +48,10 @@ etape() { echo "== $1 ($(duree))"; ecrire '.message=$m' --arg m "$1"; }
 # plus l'ancien code tourner sous un « Mis à jour ».
 MARQUES=/maj/construit
 mkdir -p "$MARQUES"
-CONSTRUITS="web worker lecture pronote"   # services construits depuis le dépôt
+# Modèles locaux éteints depuis le site (page Analyses) : Ollama et lecture restent arrêtés, jamais reconstruits
+LOCAUX="ollama lecture"
+locaux_eteints() { [ -f /maj/locaux_eteints ]; }
+if locaux_eteints; then CONSTRUITS="web worker pronote"; else CONSTRUITS="web worker lecture pronote"; fi
 dossier_de() {
   case "$1" in web|worker) echo "app/" ;; lecture) echo "lecture/" ;; pronote) echo "pronote/" ;;
                caddy) echo "infra/caddy/" ;; esac
@@ -61,6 +67,30 @@ a_installer() {  # services dont la version en service est en retard sur le code
   for svc in $CONSTRUITS caddy; do a_jour "$svc" || printf '%s ' "$svc"; done
 }
 noter_installe() { for svc in $CONSTRUITS caddy; do git_ rev-parse HEAD > "$MARQUES/$svc"; done; }
+
+appliquer_locaux() {  # l'interrupteur du site : arrête les modèles locaux, ou les relance sur demande
+  if locaux_eteints; then
+    if [ -n "$(docker compose ps -q --status running $LOCAUX 2>/dev/null)" ]; then
+      echo "== modèles locaux éteints depuis le site : arrêt de $LOCAUX"
+      docker compose stop $LOCAUX
+    fi
+  elif [ -f /maj/locaux_allumer ]; then
+    rm -f /maj/locaux_allumer
+    echo "== modèles locaux rallumés depuis le site"
+    if ! a_jour lecture; then   # le code a pu changer pendant qu'il était éteint
+      docker compose build lecture && git_ rev-parse HEAD > "$MARQUES/lecture"
+    fi
+    docker compose up -d $LOCAUX
+  fi
+}
+
+releve() {  # processeur et mémoire de chaque conteneur, pour la page Analyses
+  conso=$(docker stats --no-stream --format '{{json .}}' 2>/dev/null \
+    | jq -c '{nom: (.Name | sub("^[^-]+-"; "") | sub("-[0-9]+$"; "")), cpu: .CPUPerc, mem: (.MemUsage | split(" / ")[0])}' \
+    | jq -s . 2>/dev/null) || return 0
+  [ -n "$conso" ] && ecrire '.conso=$c | .conso_le=$t' --argjson c "$conso" --arg t "$(maintenant)"
+  return 0
+}
 
 decrire() {  # version installée et nouveautés disponibles sur GitHub
   if ! erreur=$(git_ fetch --quiet origin 2>&1); then
@@ -94,8 +124,10 @@ trap 'kill $BATTEMENT 2>/dev/null; rm -f /maj/action-vu; [ -n "$EN_PAUSE" ] && d
 ecrire '.action=$a | .statut="en_cours" | .debut=$t | .fin=null | .message=null' \
   --arg a "$action" --arg t "$(maintenant)"
 echo "== $action ($(maintenant))"
+appliquer_locaux
 case "$action" in
   verifier)
+    releve
     decrire || fin erreur "Vérification impossible : $raison"
     fin ok "Vérifié." ;;
   mettre_a_jour)
@@ -112,7 +144,7 @@ case "$action" in
       # « up -d » plus bas les relance. Une construction (pip, PyTorch) à côté de tout le reste peut sinon
       # saturer la VM.
       libre=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
-      if [ "${libre:-0}" -lt 3000 ]; then
+      if [ "${libre:-0}" -lt 3000 ] && ! locaux_eteints; then
         echo "== mémoire libre : $libre Mo → Ollama et le service lecture en pause pendant la construction"
         docker compose stop ollama lecture >/dev/null 2>&1 && EN_PAUSE="ollama lecture"
       fi

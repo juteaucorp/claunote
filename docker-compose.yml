@@ -59,7 +59,7 @@ services:
   ollama:
     # Modèle local (« local d'abord ») : petit modèle de langue sur le processeur, pas de carte graphique.
     # Les modèles se téléchargent tout seuls au premier lancement (~2,3 Go). Pour s'en passer :
-    # ANALYSE_LOCALE=auto dans .env, puis docker compose stop ollama.
+    # Analyses → « Éteindre les modèles locaux » sur le site (arrête ollama et lecture, tout passe par Claude).
     image: ollama/ollama:0.6.8
     restart: unless-stopped
     cpu_shares: 256    # priorité basse : il prend le processeur libre, pas celui du site
@@ -79,7 +79,7 @@ services:
     # Petits modèles sur le processeur : PDF lus avec leurs tableaux (Docling), photo d'une formule → LaTeX
     # (pix2tex), meilleurs passages en tête pour le chat (FlashRank). Facultatif : sans lui, tout marche
     # comme avant. ~1,5 Go de mémoire quand tout est chargé, rendue après 10 min sans usage.
-    # Pour s'en passer : docker compose stop lecture.
+    # Pour s'en passer : Analyses → « Éteindre les modèles locaux » sur le site.
     build: ./lecture
     restart: unless-stopped
     cpu_shares: 256    # priorité basse, comme Ollama

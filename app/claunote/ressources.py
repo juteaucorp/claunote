@@ -31,6 +31,16 @@ ATTENTE_MAX_MIN = int(os.environ.get("LOCAL_ATTENTE_MAX_MIN") or 30)
 DUREE_DEPART = 120.0  # secondes par document lu sur la VM, avant d'avoir mesuré
 
 
+def locaux_eteints() -> bool:
+    """Modèles locaux éteints depuis le site (Analyses → Modèles locaux) : ni Ollama, ni service lecture, ni
+    lecture locale des scans ; tout passe par Claude. Lu dans la base (cache de quelques secondes)."""
+    try:
+        from claunote import db
+        return db.etat_valeur("modeles_locaux") == "eteints"
+    except Exception:   # pas de base (tests, démarrage) : allumés, comme avant
+        return False
+
+
 def coeurs() -> int:
     try:
         return len(os.sched_getaffinity(0)) or 1

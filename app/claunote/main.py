@@ -1490,7 +1490,29 @@ def page_analyses(request: Request, message: str = ""):
         "s": s, "r": reglages_analyse(), "modes": local.MODES, "file": db.file_analyse(),
         "attente": db.file_attente(), "nb_relire": db.nb_a_relire(), "actions": ACTIONS_FILE, "message": message,
         "modele_local": local.OLLAMA_MODELE, "heure": _heure_fr, "vm": ressources.etat(),
-        "fiabilite": db.fiabilite_locale(), "index": db.bilan_index()})
+        "fiabilite": db.fiabilite_locale(), "index": db.bilan_index(), "conso": _conso(), "maj_present": maj.present()})
+
+
+def _conso() -> tuple[list[dict], dt.datetime | None]:
+    lignes, releve = maj.conso()
+    return lignes, releve.astimezone(pronote.PARIS) if releve else None
+
+
+@app.post("/analyses/locaux")
+def modeles_locaux(action: str = Form(...)):
+    """Éteint complètement les modèles locaux (conteneurs arrêtés, plus aucun appel) ou les rallume."""
+    if action not in ("eteindre", "allumer"):
+        raise HTTPException(400, "action inconnue")
+    eteindre = action == "eteindre"
+    db.etat_ecrire("modeles_locaux", "eteints" if eteindre else None)
+    db.demander_scan()
+    try:
+        suite = maj.locaux(eteindre)
+    except OSError as e:
+        suite = f"le service maj n'a pas pu être prévenu ({e})"
+    message = ("Modèles locaux éteints : tout passe par Claude. " if eteindre
+               else "Modèles locaux rallumés. ") + suite
+    return RedirectResponse(f"/analyses?{urlencode({'message': message})}", status_code=303)
 
 
 @app.post("/analyses/controle")
