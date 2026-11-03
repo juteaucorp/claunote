@@ -7,6 +7,7 @@ matières des cours classés (« CEJM »).
 import base64
 import datetime as dt
 import difflib
+import hashlib
 import html
 import os
 import re
@@ -157,22 +158,39 @@ def libelle_note(valeur: dict | None, sur: dict | None = None) -> str:
     return points
 
 
+def id_stable(prefixe: str, matiere: str, le: dt.datetime, description: str = "") -> str:
+    """Id tiré du contenu : les ids Pronote changent à chaque connexion. Avec eux, chaque synchro
+    voyait des contrôles « nouveaux » (re-notifiés) et perdait le lien vers leur fiche (refaite)."""
+    cle = f"{prefixe}{matiere}:{le.isoformat(timespec='minutes')}"
+    if description:
+        cle += ":" + hashlib.sha1(description.encode()).hexdigest()[:10]
+    return cle
+
+
 def evenements(donnees: dict) -> list[dict]:
     """Synchro brute → lignes de la table pronote_evenements."""
-    lignes = []
+    lignes, vus = [], set()
     for c in donnees.get("controles") or []:
+        le = date_locale(c["debut"])
         lignes.append({
-            "id": f"cours:{c['id']}", "genre": "evaluation", "matiere": c["matiere"],
+            "id": id_stable("cours:", c["matiere"], le), "genre": "evaluation", "matiere": c["matiere"],
             "titre": "Contrôle prévu à l'emploi du temps", "description": texte(c.get("notes", "")),
-            "le": date_locale(c["debut"]), "fait": False})
+            "le": le, "fait": False})
     for d in donnees.get("devoirs") or []:
         description = texte(d["description"])
         eval_ = annonce_evaluation(description)
+        le = date_locale(d["pour_le"])
         lignes.append({
-            "id": f"devoir:{d['id']}", "genre": "evaluation" if eval_ else "devoir", "matiere": d["matiere"],
+            "id": id_stable("devoir:", d["matiere"], le, description or str(d.get("themes"))),
+            "genre": "evaluation" if eval_ else "devoir", "matiere": d["matiere"],
             "titre": (", ".join(d.get("themes") or []) or description.split("\n")[0])[:120],
-            "description": description, "le": date_locale(d["pour_le"]), "fait": d["fait"]})
-    return lignes
+            "description": description, "le": le, "fait": d["fait"]})
+    uniques = []  # deux cours identiques (même matière, même heure) = un seul contrôle
+    for e in lignes:
+        if e["id"] not in vus:
+            vus.add(e["id"])
+            uniques.append(e)
+    return uniques
 
 
 def preparer(ev: dict, aujourd_hui: dt.date | None = None) -> int | None:

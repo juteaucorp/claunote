@@ -5,7 +5,8 @@ et chiffre le message pour l'appareil ; Apple (ou Google) ne fait que le transme
 pouvoir le lire. Le téléphone reçoit donc les notifications même hors VPN : seule la VM a
 besoin d'Internet pour les envoyer.
 
-Ce qui part (une file en base, une clé par notification pour ne jamais doubler) :
+Ce qui part (une file en base, une clé par notification tirée du contenu, jamais d'un id Pronote ;
+en plus, même titre + même texte en moins de 20 h = pas renvoyé, et plus de 3 d'un coup = un résumé) :
 - une fois par jour à l'heure choisie, le rappel le plus utile : évaluation proche sans fiche,
   flashcards à revoir, fiche à relire, ou nouveaux cours sans révision ;
 - le matin d'une évaluation, un dernier rappel ;
@@ -29,6 +30,7 @@ PARIS = pronote.PARIS
 CONTACT = os.environ.get("CLAUNOTE_PUSH_CONTACT") or "mailto:claunote@example.com"
 DUREE_VIE = 12 * 3600   # Apple/Google gardent le message 12 h si le téléphone est éteint
 INTERVALLE = 30         # secondes entre deux tours de la boucle
+MAX_PAR_TOUR = 3        # au-delà, les notifications du tour partent en un seul résumé
 DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
           "rappel": True, "pronote": True, "revisions": True}
 PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
@@ -124,7 +126,17 @@ def vider_file(maintenant: dt.datetime):
     p = preferences()
     if en_silence(maintenant, p):
         return
-    for n in db.notifications_en_attente():
+    file = db.reserver_notifications()
+    if len(file) > MAX_PAR_TOUR:  # une rafale (synchro, import…) = une seule notification résumée
+        envoyes, erreurs = envoyer_a_tous(
+            f"{len(file)} nouveautés sur Claunote", " · ".join(n["titre"] for n in file)[:300], "/notifications",
+            "resume")
+        statut, erreur = ("envoye", None) if envoyes or not erreurs else ("erreur", " ; ".join(erreurs))
+        for n in file:
+            db.maj_notification(n["id"], statut, erreur)
+        log(f"{len(file)} notifications regroupées en une : {statut}")
+        return
+    for n in file:
         envoyes, erreurs = envoyer_a_tous(n["titre"], n["corps"], n["url"], n["cle"])
         if envoyes or not erreurs:
             db.maj_notification(n["id"], "envoye")
@@ -195,7 +207,8 @@ def planifier(maintenant: dt.datetime):
         for e in db.evenements_a_venir("evaluation", 1):
             if e["le"].astimezone(PARIS).date() == jour and e["le"] > maintenant:
                 url = f"/revision/{e['revision_id']}" if e["revision_id"] else "/agenda"
-                db.notifier(f"jour:{e['id']}:{jour}", f"{e['matiere']} aujourd'hui à {e['le'].astimezone(PARIS):%H:%M}",
+                heure = e["le"].astimezone(PARIS)
+                db.notifier(f"jour:{e['matiere']}:{heure:%Y-%m-%dT%H:%M}", f"{e['matiere']} aujourd'hui à {heure:%H:%M}",
                             "Un dernier coup d'œil à ta fiche ?" if e["revision_id"] else e["titre"], url)
 
 
@@ -221,10 +234,15 @@ def campagne_prete(campagne_id: int):
 def apres_synchro_pronote(documents_deposes: int = 0):
     """Nouveaux contrôles et documents des profs vus pendant la synchro Pronote."""
     actif = preferences()["pronote"] and bool(db.abonnements())
+    # Clés d'avant les ids stables : au premier passage, les contrôles déjà connus sont notés sans être ré-annoncés
+    if not db.etat_valeur("notifications_cles_stables"):
+        actif = False
+        db.etat_ecrire("notifications_cles_stables", "1")
     for e in db.evenements_a_venir("evaluation", 60):
         le = e["le"].astimezone(PARIS)
-        # Sans appareil abonné, on note seulement les contrôles déjà connus pour ne pas tout annoncer d'un coup
-        db.notifier(f"nouvelle:{e['id']}", f"Nouveau contrôle : {e['matiere']}",
+        # Sans appareil abonné, on note seulement les contrôles déjà connus pour ne pas tout annoncer d'un coup.
+        # Clé tirée du contenu (matière + date), jamais d'un id Pronote : ceux-là changent à chaque connexion.
+        db.notifier(f"nouvelle:{e['matiere']}:{le:%Y-%m-%dT%H:%M}", f"Nouveau contrôle : {e['matiere']}",
                     f"{JOURS[le.weekday()]} {le:%d/%m} · {e['titre']}", "/agenda",
                     statut="attente" if actif else "ignore")
     if actif and documents_deposes:
