@@ -68,12 +68,19 @@ SYNCHRO = {
 
 
 def test_evenements():
-    evs = {e["id"]: e for e in pronote.evenements(SYNCHRO)}
-    assert evs["cours:c1"]["genre"] == "evaluation"
-    assert evs["cours:c1"]["le"].hour == 9  # 8h UTC = 9h à Paris en hiver
-    assert evs["devoir:d1"]["genre"] == "evaluation" and evs["devoir:d1"]["titre"] == "Suites"
-    assert evs["devoir:d2"]["genre"] == "devoir" and evs["devoir:d2"]["titre"] == "Lire le dossier 4"
-    assert evs["devoir:d2"]["fait"] is True
+    evs = {e["id"].split(":")[0] + ":" + e["matiere"]: e for e in pronote.evenements(SYNCHRO)}
+    assert evs["cours:SISR - RESEAUX"]["genre"] == "evaluation"
+    assert evs["cours:SISR - RESEAUX"]["le"].hour == 9  # 8h UTC = 9h à Paris en hiver
+    assert evs["devoir:MATHEMATIQUES"]["genre"] == "evaluation" and evs["devoir:MATHEMATIQUES"]["titre"] == "Suites"
+    assert evs["devoir:CEJM"]["genre"] == "devoir" and evs["devoir:CEJM"]["titre"] == "Lire le dossier 4"
+    assert evs["devoir:CEJM"]["fait"] is True
+
+
+def test_ids_stables_entre_deux_connexions():
+    """Pronote change ses ids à chaque connexion : les nôtres viennent du contenu, ils ne bougent pas."""
+    autre = {**SYNCHRO, "controles": [{**c, "id": c["id"] + "-session2"} for c in SYNCHRO["controles"]],
+             "devoirs": [{**d, "id": d["id"] + "-session2"} for d in SYNCHRO["devoirs"]]}
+    assert [e["id"] for e in pronote.evenements(SYNCHRO)] == [e["id"] for e in pronote.evenements(autre)]
 
 
 def faux_service(reponses: dict):

@@ -1107,6 +1107,16 @@ def enregistrer_pronote(evenements: list[dict], debut, sources: list[str], notes
     """
     with connect() as c, c.transaction():
         ids = [e["id"] for e in evenements]
+        for e in evenements:
+            # Même contrôle déjà connu sous un autre id (ancien id Pronote, ou devoir dont le texte a
+            # changé) : on le renomme, il garde sa fiche et n'est ni re-préparé ni ré-annoncé.
+            c.execute("""UPDATE pronote_evenements SET id = %(id)s WHERE id = (
+                           SELECT id FROM pronote_evenements
+                            WHERE id LIKE split_part(%(id)s, ':', 1) || ':%%' AND matiere = %(matiere)s
+                              AND le = %(le)s AND NOT (id = ANY(%(ids)s))
+                            ORDER BY revision_id IS NULL, vu_le DESC LIMIT 1)
+                         AND NOT EXISTS (SELECT 1 FROM pronote_evenements WHERE id = %(id)s)""",
+                      {**e, "ids": ids})
         for prefixe in sources:
             c.execute("DELETE FROM pronote_evenements WHERE le >= %s AND id LIKE %s AND NOT (id = ANY(%s))",
                       (debut, prefixe + "%", ids))
@@ -1216,11 +1226,22 @@ def abonnements():
 
 
 def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str = "attente") -> bool:
-    """Met une notification dans la file ; faux si cette clé a déjà servi."""
+    """Met une notification dans la file ; faux si cette clé a déjà servi.
+
+    Garde-fou anti-doublon : le même titre avec le même texte déjà parti (ou en file) depuis moins
+    de 20 h est noté « ignore » au lieu d'être renvoyé, quelle que soit sa clé.
+    """
     with connect() as c:
-        return c.execute("INSERT INTO notifications (cle, titre, corps, url, statut) VALUES (%s, %s, %s, %s, %s) "
-                         "ON CONFLICT (cle) DO NOTHING RETURNING id", (cle, titre, corps, url, statut)
-                         ).fetchone() is not None
+        return c.execute(
+            """INSERT INTO notifications (cle, titre, corps, url, statut)
+               SELECT %(cle)s, %(titre)s, %(corps)s, %(url)s,
+                      CASE WHEN %(statut)s = 'attente' AND EXISTS (
+                             SELECT 1 FROM notifications WHERE titre = %(titre)s AND corps = %(corps)s
+                              AND statut IN ('attente', 'envoi', 'envoye')
+                              AND cree_le > now() - interval '20 hours')
+                           THEN 'ignore' ELSE %(statut)s END
+               ON CONFLICT (cle) DO NOTHING RETURNING id""",
+            {"cle": cle, "titre": titre, "corps": corps, "url": url, "statut": statut}).fetchone() is not None
 
 
 def notification_connue(cle: str) -> bool:
@@ -1228,10 +1249,14 @@ def notification_connue(cle: str) -> bool:
         return c.execute("SELECT 1 FROM notifications WHERE cle = %s", (cle,)).fetchone() is not None
 
 
-def notifications_en_attente():
+def reserver_notifications():
+    """Prend la file d'un coup (statut « envoi ») : un second worker, ou un tour suivant, ne peut
+    pas renvoyer les mêmes. Un arrêt en plein envoi en perd au pire une, jamais de doublon."""
     with connect() as c:
-        return c.execute("SELECT * FROM notifications WHERE statut = 'attente' "
-                         "AND cree_le > now() - interval '12 hours' ORDER BY id").fetchall()
+        c.execute("UPDATE notifications SET statut = 'ignore', erreur = 'trop ancienne' "
+                  "WHERE statut = 'attente' AND cree_le <= now() - interval '12 hours'")
+        return sorted(c.execute("UPDATE notifications SET statut = 'envoi' WHERE statut = 'attente' "
+                                "RETURNING *").fetchall(), key=lambda n: n["id"])
 
 
 def maj_notification(notif_id: int, statut: str, erreur: str | None = None):

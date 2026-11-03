@@ -22,12 +22,18 @@ class Base:
     def notifier(self, cle, titre, corps="", url="/", statut="attente"):
         if cle in self.file:
             return False
+        if statut == "attente" and any(n["titre"] == titre and n["corps"] == corps
+                                       and n["statut"] in ("attente", "envoi", "envoye") for n in self.file.values()):
+            statut = "ignore"  # comme la base : même texte récent = pas renvoyé
         self.file[cle] = {"id": len(self.file) + 1, "cle": cle, "titre": titre, "corps": corps, "url": url,
                           "statut": statut}
         return True
 
-    def en_attente(self):
-        return [n for n in self.file.values() if n["statut"] == "attente"]
+    def reserver(self):
+        pris = [n for n in self.file.values() if n["statut"] == "attente"]
+        for n in pris:
+            n["statut"] = "envoi"
+        return pris
 
     def maj(self, i, statut, erreur=None):
         for n in self.file.values():
@@ -43,7 +49,7 @@ def base(monkeypatch):
     monkeypatch.setattr(db, "etat_initialiser", lambda k, v: b.etat.setdefault(k, v))
     monkeypatch.setattr(db, "notifier", b.notifier)
     monkeypatch.setattr(db, "notification_connue", lambda cle: cle in b.file)
-    monkeypatch.setattr(db, "notifications_en_attente", b.en_attente)
+    monkeypatch.setattr(db, "reserver_notifications", b.reserver)
     monkeypatch.setattr(db, "maj_notification", b.maj)
     monkeypatch.setattr(db, "abonnements", lambda: list(b.abos))
     monkeypatch.setattr(db, "retirer_abonnement", lambda e: b.abos.remove(next(a for a in b.abos if a["endpoint"] == e)))
@@ -117,7 +123,7 @@ def test_planifier_une_fois_par_jour(base):
 def test_matin_du_controle(base):
     base.evals = [evaluation(0, heure=14, revision_id=3)]
     nt.planifier(LUNDI.replace(hour=8))
-    n = base.file["jour:cours:0:2026-10-26"]
+    n = base.file["jour:MATHEMATIQUES:2026-10-26T14:00"]
     assert n["titre"] == "MATHEMATIQUES aujourd'hui à 14:00" and n["url"] == "/revision/3"
 
 
@@ -155,15 +161,55 @@ def test_echec_d_envoi_garde_l_erreur(base, monkeypatch):
 
 
 def test_pronote_sans_appareil_n_annonce_pas_le_passe(base):
+    base.etat["notifications_cles_stables"] = "1"
     base.evals = [evaluation(5)]
     nt.apres_synchro_pronote(3)
-    assert base.file["nouvelle:cours:5"]["statut"] == "ignore" and len(base.file) == 1
+    assert base.file["nouvelle:MATHEMATIQUES:2026-10-31T10:00"]["statut"] == "ignore" and len(base.file) == 1
     base.abos = [abonnement()]
     base.evals.append({**evaluation(9), "id": "cours:9", "titre": "Oral"})
     nt.apres_synchro_pronote(2)
-    nouvelle = base.file["nouvelle:cours:9"]
+    nouvelle = base.file["nouvelle:MATHEMATIQUES:2026-11-04T10:00"]
     assert nouvelle["statut"] == "attente" and nouvelle["corps"] == "mer. 04/11 · Oral"
     assert any(c.startswith("documents:") and "2 documents" in n["corps"] for c, n in base.file.items())
+
+
+def test_pronote_ids_qui_changent_ne_reannoncent_rien(base):
+    """Le bug : Pronote donne de nouveaux ids à chaque connexion, chaque synchro ré-annonçait tout."""
+    base.etat["notifications_cles_stables"] = "1"
+    base.abos = [abonnement()]
+    base.evals = [{**evaluation(5), "id": "cours:25#abc"}]
+    nt.apres_synchro_pronote()
+    for nouvel_id in ("cours:25#xyz", "cours:25#def", "cours:25#ghi"):
+        base.evals = [{**evaluation(5), "id": nouvel_id}]
+        nt.apres_synchro_pronote()
+    assert len(base.file) == 1
+
+
+def test_premier_passage_apres_mise_a_jour_n_annonce_rien(base):
+    base.abos = [abonnement()]
+    base.evals = [evaluation(5), evaluation(6)]
+    nt.apres_synchro_pronote()
+    assert {n["statut"] for n in base.file.values()} == {"ignore"} and base.etat["notifications_cles_stables"]
+    base.evals.append(evaluation(7))
+    nt.apres_synchro_pronote()
+    assert base.file["nouvelle:MATHEMATIQUES:2026-11-02T10:00"]["statut"] == "attente"
+
+
+def test_meme_texte_pas_renvoye_et_rafale_resumee(base, monkeypatch):
+    envois = []
+    monkeypatch.setattr(nt, "envoyer", lambda abo, charge: envois.append(charge))
+    monkeypatch.setattr(nt, "badge", lambda: 0)
+    base.abos = [abonnement()]
+    base.notifier("documents:1", "Nouveaux documents des profs", "2 documents")
+    base.notifier("documents:2", "Nouveaux documents des profs", "2 documents")  # autre clé, même texte
+    nt.vider_file(LUNDI)
+    nt.vider_file(LUNDI)  # un second tour ne renvoie rien
+    assert len(envois) == 1 and base.file["documents:2"]["statut"] == "ignore"
+    for i in range(5):
+        base.notifier(f"x:{i}", f"Truc {i}")
+    nt.vider_file(LUNDI)
+    assert len(envois) == 2 and envois[1]["titre"] == "5 nouveautés sur Claunote" and "Truc 4" in envois[1]["corps"]
+    assert all(base.file[f"x:{i}"]["statut"] == "envoye" for i in range(5))
 
 
 def test_revision_prete(base):
