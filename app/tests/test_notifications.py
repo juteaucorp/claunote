@@ -132,7 +132,7 @@ def test_envoi_chiffre_et_appareil_expire(base, monkeypatch):
 
     class Reponse:
         def __init__(self, code):
-            self.status_code, self.reason, self.text = code, "", ""
+            self.status_code, self.reason, self.text, self.headers = code, "", "", {}
 
     def post(url, data=None, headers=None, timeout=None):
         envois.append((url, data, headers))

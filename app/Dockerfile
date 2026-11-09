@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 # Pango + polices : WeasyPrint, pour les PDF des révisions ; catdoc : texte des vieux .doc/.xls/.ppt ;
 # poppler + Tesseract : lecture locale (sans IA) des scans, pour le garde-fou et le découpage des gros scans
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \

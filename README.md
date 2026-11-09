@@ -154,11 +154,15 @@ se font aussi sur le site.
 ```bash
 cd app
 pip install -r requirements.txt pytest
-pytest                      # ~300 tests, sans base ni kDrive (tout est simulé)
+pytest                      # ~390 tests, sans base ni kDrive (tout est simulé)
 cd ../pronote && npm ci && npm test   # service Pronote
 ```
 
 Les tests de lecture locale (OCR) se lancent si Tesseract est installé (`apt install tesseract-ocr tesseract-ocr-fra`).
+
+Sur GitHub, ces deux suites tournent à chaque PR (`.github/workflows/tests.yml`), et Dependabot propose chaque mois
+les mises à jour de dépendances (`.github/dependabot.yml`) : une PR verte peut être fusionnée, puis installée par
+Réglages → Mise à jour.
 
 ## Organisation du code
 

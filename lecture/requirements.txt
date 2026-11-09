@@ -1,10 +1,10 @@
 # PyTorch est installé avant, version processeur seul (voir Dockerfile)
-docling-slim[format-pdf,convert-core,models-local,cli]==2.142.1
+docling-slim[format-pdf,convert-core,models-local,cli]==2.149.0
 pix2tex==0.1.4
 flashrank==0.2.10
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-python-multipart==0.0.20
+fastapi==0.162.2
+uvicorn[standard]==0.54.0
+python-multipart==0.0.33
 # Versions éprouvées pour pix2tex (2022) : sans elles, pip prendrait numpy 2 et transformers 5
 numpy==1.26.4
 transformers==4.53.3

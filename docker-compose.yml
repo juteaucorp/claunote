@@ -28,7 +28,7 @@ services:
 
   caddy:
     # HTTPS pour l'appli iPhone et les notifications (voir infra/SETUP.md, section 13)
-    image: caddy:2.10-alpine
+    image: caddy:2.11-alpine
     restart: unless-stopped
     environment:
       CLAUNOTE_HOTE: ${CLAUNOTE_HOTE:-localhost}
@@ -60,7 +60,7 @@ services:
     # Modèle local (« local d'abord ») : petit modèle de langue sur le processeur, pas de carte graphique.
     # Les modèles se téléchargent tout seuls au premier lancement (~2,3 Go). Pour s'en passer :
     # Analyses → « Éteindre les modèles locaux » sur le site (arrête ollama et lecture, tout passe par Claude).
-    image: ollama/ollama:0.6.8
+    image: ollama/ollama:0.40.15
     restart: unless-stopped
     cpu_shares: 256    # priorité basse : il prend le processeur libre, pas celui du site
     environment:
