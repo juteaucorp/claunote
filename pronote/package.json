@@ -10,5 +10,5 @@
   "dependencies": {
     "@blockshub/pawnote-lts": "1.6.4"
   },
-  "engines": { "node": ">=20" }
+  "engines": { "node": ">=22" }
 }

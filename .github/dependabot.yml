@@ -1,0 +1,34 @@
+# Propose chaque mois les mises à jour de dépendances sous forme de PR (testées par la CI avant fusion).
+# Les versions figées volontairement (pix2tex, PostgreSQL 16) sont ignorées : voir les commentaires.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /app
+    schedule: {interval: monthly}
+    groups:
+      python: {patterns: ["*"]}
+  - package-ecosystem: pip
+    directory: /lecture
+    schedule: {interval: monthly}
+    ignore:
+      # pix2tex (2022) ne marche qu'avec ces versions
+      - dependency-name: numpy
+      - dependency-name: transformers
+      - dependency-name: opencv-python-headless
+    groups:
+      lecture: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /pronote
+    schedule: {interval: monthly}
+  - package-ecosystem: docker
+    directories: [/app, /lecture, /pronote]
+    schedule: {interval: monthly}
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule: {interval: monthly}
+    ignore:
+      # Changer de version majeure de PostgreSQL demande une migration des données (pg_upgrade)
+      - dependency-name: pgvector/pgvector
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: monthly}

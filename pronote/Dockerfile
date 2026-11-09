@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:24-slim
 WORKDIR /srv
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev

@@ -395,7 +395,7 @@
       const value = options[key];
       if (typeof value === "number") derivedOptions[key] = value;
     });
-    const booleanKeys = ["zoom", "pan"];
+    const booleanKeys = ["autoFit", "zoom", "pan"];
     booleanKeys.forEach((key) => {
       const value = options[key];
       if (value != null) derivedOptions[key] = !!value;
