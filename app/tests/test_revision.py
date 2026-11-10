@@ -207,6 +207,10 @@ def test_entree_programme():
         [{"le": dt.datetime(2026, 11, 3, 8), "matiere": "MATHS", "genre": "evaluation", "titre": "DS"}])
     assert "BTS blanc lundi" in e and "Maths (BTS2) sur « suites » : supports préparés : Épreuve blanche, Fiche" in e
     assert "mardi 03/11/2026 : MATHS (evaluation) DS" in e
+    e = revision.entree_programme("", [], [], [{"matiere": "Maths", "date": "2026-11-03", "heure": "08:00"},
+                                               {"matiere": "CEJM", "date": "2026-11-04", "heure": ""}])
+    assert "Épreuves (dates fixées par l'élève) :\n- Maths : mardi 03/11/2026 à 08 h 00\n- CEJM : mercredi 04/11/2026" in e
+    assert "plusieurs années" in revision.prompt_programme("BTS blanc", dt.date(2026, 11, 2), dt.date(2026, 11, 6))
 
 
 def test_sources_web_d_un_quiz():

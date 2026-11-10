@@ -953,7 +953,7 @@ def test_creer_campagne(client, monkeypatch):
                "matieres": ["BTS1|Réseaux"], "genres": ["examen", "fiche", "plan"], "sujet:BTS1|Réseaux": "vlan"}
     r = client.post("/campagne", data=donnees, follow_redirects=False)
     assert r.headers["location"] == "/campagne/9"
-    assert ("campagne", "BTS blanc", "Maths lundi", date(2026, 11, 2), date(2026, 11, 6)) in client.appels
+    assert ("campagne", "BTS blanc", "Maths lundi", date(2026, 11, 2), date(2026, 11, 6), []) in client.appels
     revs = [a for a in client.appels if a[0] == "rev"]
     assert revs == [("rev", "examen", "Réseaux : vlan", [1], date(2026, 11, 6), {"consigne": "Maths lundi", "campagne_id": 9}),
                     ("rev", "fiche", "Réseaux : vlan", [1], None, {"consigne": "Maths lundi", "campagne_id": 9})]
@@ -963,6 +963,28 @@ def test_creer_campagne(client, monkeypatch):
     assert 'name="pieces"' in client.get("/campagne/nouvelle").text
     assert client.post("/campagne", data={**donnees, "fin": "2026-10-01"}).status_code == 400
     assert client.post("/campagne", data={**donnees, "genres": ["plan"]}).status_code == 400
+
+
+def test_campagne_plusieurs_annees_et_dates_d_epreuves(client, monkeypatch):
+    """Maths cochée en BTS1 et BTS2 : un seul jeu de supports sur les cours des deux années, à la date saisie."""
+    monkeypatch.setattr(db, "niveaux_matieres_comptes", lambda: [
+        {"niveau": "BTS1", "matiere": "Maths", "n": 2}, {"niveau": "BTS2", "matiere": "Mathématiques", "n": 1}])
+    monkeypatch.setattr(db, "choisir_documents", lambda n, m, q="": {"BTS1": [1, 2], "BTS2": [3]}[n])
+    monkeypatch.setattr(db, "creer_campagne", lambda *a: client.appels.append(("campagne",) + a) or 9)
+    page = client.get("/campagne/nouvelle").text
+    assert page.count('data-concept="mathematique"') == 2 and 'id="epreuves"' in page
+    r = client.post("/campagne", data={
+        "titre": "BTS blanc", "consigne": "", "debut": "2026-11-02", "fin": "2026-11-06",
+        "matieres": ["BTS1|Maths", "BTS2|Mathématiques"], "genres": ["examen", "fiche"],
+        "epreuve_matiere": ["Mathématiques", "CEJM"], "epreuve_date": ["2026-11-03", "2026-11-04"],
+        "epreuve_heure": ["08:00", "x"]}, follow_redirects=False)
+    assert r.status_code == 303
+    campagne = next(a for a in client.appels if a[0] == "campagne")
+    assert campagne[-1] == [{"cle": "mathematique", "matiere": "Mathématiques", "date": "2026-11-03", "heure": "08:00"}]
+    revs = [a for a in client.appels if a[0] == "rev"]
+    assert [(g, s, ids, d) for _, g, s, ids, d, _ in revs] == [
+        ("examen", "Mathématiques", [3, 1, 2], date(2026, 11, 3)), ("fiche", "Mathématiques", [3, 1, 2], None)]
+    assert "plusieurs années (BTS1, BTS2)" in revs[0][-1]["consigne"]
 
 
 def test_page_campagne(client, monkeypatch):
@@ -979,7 +1001,9 @@ def test_page_campagne(client, monkeypatch):
              "fait_le": None, "score": None, "erreur": None, "doc_ids": [1]}]
     monkeypatch.setattr(db, "campagne", lambda i: campagne if i == 9 else None)
     monkeypatch.setattr(db, "revisions_campagne", lambda i: revs)
+    campagne["epreuves"] = [{"cle": "reseau", "matiere": "Réseaux", "date": jour.isoformat(), "heure": "08:00"}]
     r = client.get("/campagne/9")
+    assert "Épreuves :" in r.text and "<strong>Réseaux</strong>" in r.text and "08 h 00" in r.text
     assert "Courage !" in r.text and "1</strong>/2 tâches" in r.text and 'id="aujourdhui"' in r.text
     assert 'href="/revision/5"' in r.text and "Génération en cours · 1/2" in r.text and 'data-vivant="recharger"' in r.text
     assert "/campagne/9/pdf" in r.text

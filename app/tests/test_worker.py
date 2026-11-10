@@ -162,6 +162,15 @@ def test_programme_de_campagne(worker, monkeypatch):
         {"niveau": "BTS2", "matiere": "Maths", "sujet": "suites", "supports": ["examen", "fiche"],
          "cours": ["Cours 3", "Cours 4"]},
         {"niveau": "BTS2", "matiere": "CEJM", "sujet": "", "supports": ["fiche"], "cours": ["Cours 5"]}]
+    # Même matière sur plusieurs années : le programme voit l'année de chaque cours
+    revs[:] = [{"id": 1, "genre": "fiche", "sujet": "Maths", "niveau": "BTS2", "matiere": "Maths", "doc_ids": [3, 1],
+                "statut": "pret"}]
+    monkeypatch.setattr(db, "documents", lambda ids: [{"id": i, "titre": f"Cours {i}", "nom": "",
+                                                       "niveau": "BTS2" if i == 3 else "BTS1"} for i in ids])
+    worker.traiter_campagne({"id": 8, "titre": "BTS blanc", "consigne": "", "debut": dt.date(2026, 11, 2),
+                             "fin": dt.date(2026, 11, 6)})
+    assert vu["matieres"] == [{"niveau": "BTS1, BTS2", "matiere": "Maths", "sujet": "", "supports": ["fiche"],
+                               "cours": ["[BTS2] Cours 3", "[BTS1] Cours 1"]}]
 
 
 def test_statut_et_note(worker):
