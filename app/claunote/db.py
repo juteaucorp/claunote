@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS campagnes (
     cree_le    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS campagne_id INT REFERENCES campagnes(id) ON DELETE SET NULL;
+-- Dates des épreuves saisies par l'élève : [{"matiere", "date": "AAAA-MM-JJ", "heure": "HH:MM"}]
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS epreuves JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS consigne TEXT NOT NULL DEFAULT '';
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS niveau TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS matiere TEXT;
@@ -868,10 +870,10 @@ def niveaux_matieres_comptes():
 
 # --- Campagnes (plusieurs révisions d'un coup, avec un programme jour par jour) --
 
-def creer_campagne(titre: str, consigne: str, debut, fin) -> int:
+def creer_campagne(titre: str, consigne: str, debut, fin, epreuves: list[dict] | None = None) -> int:
     with connect() as c:
-        return c.execute("INSERT INTO campagnes (titre, consigne, debut, fin) VALUES (%s, %s, %s, %s) RETURNING id",
-                         (titre, consigne, debut, fin)).fetchone()["id"]
+        return c.execute("INSERT INTO campagnes (titre, consigne, debut, fin, epreuves) VALUES (%s, %s, %s, %s, %s) "
+                         "RETURNING id", (titre, consigne, debut, fin, Jsonb(epreuves or []))).fetchone()["id"]
 
 
 def campagne(campagne_id: int):

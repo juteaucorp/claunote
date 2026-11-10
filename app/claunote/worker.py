@@ -32,7 +32,7 @@ import httpx
 
 from claunote import (agent, db, decoupage, importation, index, lecture, local, modeles, notifications, ocr, pdf,
                       pronote, rangement, ressources, revision, sensible)
-from claunote.agent import ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte, analyser
+from claunote.agent import NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive, KDriveIndisponible
 from claunote.matieres import harmoniser
 
@@ -725,15 +725,22 @@ def traiter_campagne(campagne: dict):
     revs = db.revisions_campagne(campagne["id"])
     matieres = {}
     for r in revs:
-        m = matieres.setdefault((r["niveau"], r["matiere"]), {
+        m = matieres.setdefault(r["matiere"] or "?", {
             "niveau": r["niveau"] or "?", "matiere": r["matiere"] or "?", "sujet": "", "supports": [], "cours": []})
         m["supports"].append(r["genre"])
-        m.setdefault("ids", set()).update(r["doc_ids"])
+        m.setdefault("ids", []).extend(i for i in r["doc_ids"] if i not in m["ids"])
         sujet = r["sujet"].split(" : ", 1)[-1]
         if sujet != r["matiere"]:
             m["sujet"] = sujet
     for m in matieres.values():
-        m["cours"] = [d["titre"] or d["nom"] for d in db.documents(sorted(m.pop("ids")))]
+        docs = db.documents(m.pop("ids"))
+        niveaux = sorted({d.get("niveau") for d in docs if d.get("niveau")},
+                         key=lambda n: NIVEAUX.index(n) if n in NIVEAUX else -1)
+        if len(niveaux) > 1:  # même matière sur plusieurs années : le programme voit l'année de chaque cours
+            m["niveau"] = ", ".join(niveaux)
+            m["cours"] = [f"[{d.get('niveau')}] {d['titre'] or d['nom']}" for d in docs]
+        else:
+            m["cours"] = [d["titre"] or d["nom"] for d in docs]
     activite(f"Programme de « {campagne['titre']} »")
     try:
         programme = revision.generer_programme(campagne, list(matieres.values()),

@@ -39,7 +39,7 @@
         {% for c in par_niveau[n] %}
         {% set cle = c.niveau ~ '|' ~ c.matiere %}
         <div class="matiere">
-          <label class="tete"><input type="checkbox" name="matieres" value="{{ cle }}">
+          <label class="tete"><input type="checkbox" name="matieres" value="{{ cle }}" data-concept="{{ c.concept }}" data-nom="{{ c.matiere }}">
             <span><strong>{{ c.matiere }}</strong> <span class="doux">{{ c.n }} cours</span></span></label>
           <div class="options">
             <input name="sujet:{{ cle }}" placeholder="Chapitres à cibler (facultatif)" aria-label="Chapitres en {{ c.matiere }}">
@@ -54,8 +54,19 @@
     {% endfor %}
   </section>
 
+  <section id="section-epreuves" hidden>
+    <h2><span class="num">3</span> Dates des épreuves <span class="doux">facultatif</span></h2>
+    <div class="carte">
+      <table class="epreuves">
+        <thead><tr><th>Matière</th><th>Jour</th><th>Heure</th></tr></thead>
+        <tbody id="epreuves"></tbody>
+      </table>
+      <p class="doux" id="multi-annees" hidden>Une matière cochée sur plusieurs années donne un seul jeu de supports, avec des rappels sur toutes ces années.</p>
+    </div>
+  </section>
+
   <section>
-    <h2><span class="num">3</span> Pour chaque matière</h2>
+    <h2><span class="num">4</span> Pour chaque matière</h2>
     <div class="genres-campagne">
       {% for g, libelle in genres.items() if g != 'plan' %}
       <label class="genre g-{{ g }}"><input type="checkbox" name="genres" value="{{ g }}" {{ 'checked' if g in ('examen', 'fiche') }}>
@@ -66,9 +77,9 @@
   </section>
 
   <section>
-    <h2><span class="num">4</span> Contexte pour l'IA</h2>
-    <div class="carte"><textarea name="consigne" rows="5" style="width: 100%" placeholder="ex. BTS blanc du 3 au 7 novembre : maths lundi 8 h (2 h), CEJM mardi (4 h), anglais jeudi. Je suis faible en probabilités. Pas de révision le mercredi après-midi."></textarea>
-      <p class="doux">Dates et durées des épreuves, points faibles, consignes des profs, disponibilités… Plus c'est précis, plus le programme colle.</p>
+    <h2><span class="num">5</span> Contexte pour l'IA</h2>
+    <div class="carte"><textarea name="consigne" rows="5" style="width: 100%" placeholder="ex. Maths dure 2 h, CEJM 4 h. Je suis faible en probabilités. Pas de révision le mercredi après-midi."></textarea>
+      <p class="doux">Durées des épreuves, points faibles, consignes des profs, disponibilités… Plus c'est précis, plus le programme colle.</p>
       {% with exemple="Ton emploi du temps, le planning des épreuves blanches, une convocation…" %}{% include "_joindre.html" %}{% endwith %}</div>
   </section>
 
@@ -110,6 +121,13 @@
   .genre:has(input:checked) { border-color: var(--g); background: color-mix(in srgb, var(--g) 8%, var(--carte)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--g) 18%, transparent); }
   .genre:has(input:checked)::after { content: "✓"; position: absolute; top: 6px; right: 10px; color: var(--g); font-weight: 700; }
   .genre:has(input:focus-visible) { outline: 2px solid var(--g); outline-offset: 2px; }
+  .epreuves { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .epreuves th { text-align: left; font: 600 .8rem system-ui, sans-serif; color: var(--doux, inherit); }
+  .epreuves th, .epreuves td { padding: 4px 3px; vertical-align: middle; }
+  .epreuves td:first-child { font-weight: 600; overflow-wrap: break-word; hyphens: auto; }
+  .epreuves input { width: 100%; min-width: 0; box-sizing: border-box; padding-left: 6px; padding-right: 4px; }
+  .epreuves th:nth-child(2) { width: 37%; }
+  .epreuves th:nth-child(3) { width: 27%; }
   .resume { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
   .resume button { display: inline-flex; align-items: center; gap: 8px; }
   .resume button:disabled { opacity: .5; cursor: not-allowed; }
@@ -126,7 +144,7 @@
     if (!form) return;
     const MODELES = {
       blanc: { titre: "Semaine de BTS blanc", genres: ["examen", "fiche"],
-        consigne: "Épreuves blanches du … au … :\n- lundi : … (… h)\n- mardi : … (… h)\nJe veux m'entraîner en conditions réelles et relire les corrigés le soir." },
+        consigne: "Je veux m'entraîner en conditions réelles et relire les corrigés le soir." },
       vacances: { titre: "Révisions de vacances", genres: ["fiche", "quiz", "cartes"],
         consigne: "Vacances : 1 h à 1 h 30 par jour maximum, repos le dimanche. Revoir les chapitres du trimestre." },
       controles: { titre: "Contrôles de la semaine", genres: ["fiche", "quiz"],
@@ -140,8 +158,38 @@
       maj();
       form.titre.scrollIntoView({ behavior: "smooth", block: "center" });
     }));
-    const maj = () => {
-      const nm = form.querySelectorAll("[name=matieres]:checked").length;
+    // Une ligne par matière cochée (la même matière sur plusieurs années = une seule ligne), saisies gardées
+    const corps = document.getElementById("epreuves"), gardees = {};
+    const lignes = () => {
+      corps.querySelectorAll("tr").forEach((tr) => {
+        gardees[tr.dataset.concept] = [tr.querySelector("[name=epreuve_date]").value, tr.querySelector("[name=epreuve_heure]").value];
+      });
+      const vues = new Map();
+      let multi = false;
+      form.querySelectorAll("[name=matieres]:checked").forEach((c) => {
+        if (vues.has(c.dataset.concept)) multi = true; else vues.set(c.dataset.concept, c.dataset.nom);
+      });
+      corps.replaceChildren(...[...vues].map(([concept, nom]) => {
+        const tr = document.createElement("tr");
+        tr.dataset.concept = concept;
+        const [jour, heure] = gardees[concept] || ["", ""];
+        tr.innerHTML = `<td></td><td><input type="date" name="epreuve_date"></td><td><input type="time" name="epreuve_heure"></td>`;
+        tr.cells[0].textContent = nom;
+        const cache = Object.assign(document.createElement("input"), { type: "hidden", name: "epreuve_matiere", value: nom });
+        tr.cells[0].append(cache);
+        tr.querySelector("[name=epreuve_date]").value = jour;
+        tr.querySelector("[name=epreuve_heure]").value = heure;
+        tr.querySelector("[name=epreuve_date]").setAttribute("aria-label", `Jour de l'épreuve de ${nom}`);
+        tr.querySelector("[name=epreuve_heure]").setAttribute("aria-label", `Heure de l'épreuve de ${nom}`);
+        return tr;
+      }));
+      document.getElementById("section-epreuves").hidden = !vues.size;
+      document.getElementById("multi-annees").hidden = !multi;
+      return vues.size;
+    };
+    const maj = (e) => {
+      if (e && e.target && e.target.name && e.target.name.startsWith("epreuve_")) return;
+      const nm = lignes();
       const ng = form.querySelectorAll("[name=genres]:checked").length;
       const n = nm * ng;
       document.getElementById("nb-matieres").textContent = nm ? `· ${nm} choisie${nm > 1 ? "s" : ""}` : "";

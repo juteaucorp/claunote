@@ -193,6 +193,7 @@ def quand(iso: str | None) -> str:
 
 templates.env.filters["quand"] = quand
 templates.env.filters["paris"] = lambda d: d.astimezone(pronote.PARIS).strftime("%d/%m/%Y %H:%M") if d else ""
+templates.env.filters["jour_iso"] = dt.date.fromisoformat
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 EXTENSIONS = importation.DOCUMENTS
 
@@ -1137,12 +1138,32 @@ def supprimer_revision(rev_id: int):
 
 # --- Campagnes ----------------------------------------------------------------
 
+def _rang_niveau(niveau: str) -> int:
+    return NIVEAUX.index(niveau) if niveau in NIVEAUX else -1
+
+
+def _epreuves(f, groupes: dict[str, dict]) -> list[dict]:
+    """Tableau « date et heure de chaque épreuve » : lignes remplies et matières choisies seulement."""
+    epreuves = []
+    for nom, jour, heure in zip(f.getlist("epreuve_matiere"), f.getlist("epreuve_date"), f.getlist("epreuve_heure")):
+        cle = matieres.concept(nom)
+        try:
+            jour = dt.date.fromisoformat(jour).isoformat()
+        except ValueError:
+            continue
+        if cle not in groupes or any(e["cle"] == cle for e in epreuves):
+            continue
+        heure = heure if re.fullmatch(r"\d{2}:\d{2}", heure or "") else ""
+        epreuves.append({"cle": cle, "matiere": groupes[cle]["matiere"], "date": jour, "heure": heure})
+    return sorted(epreuves, key=lambda e: (e["date"], e["heure"]))
+
+
 @app.get("/campagne/nouvelle", response_class=HTMLResponse)
 def nouvelle_campagne(request: Request):
     choix = db.niveaux_matieres_comptes()
     par_niveau = defaultdict(list)
     for c in choix:
-        par_niveau[c["niveau"]].append(c)
+        par_niveau[c["niveau"]].append({**c, "concept": matieres.concept(c["matiere"])})
     niveaux = [n for n in reversed(NIVEAUX) if n in par_niveau]  # l'année en cours d'abord
     aujourdhui = dt.datetime.now(pronote.PARIS).date()
     lundi = aujourdhui + dt.timedelta(days=7 - aujourdhui.weekday())
@@ -1164,26 +1185,41 @@ async def creer_campagne(request: Request):
     if fin < debut or (fin - debut).days > 60:
         raise HTTPException(400, "la période doit aller de 1 à 60 jours")
     genres = [g for g in f.getlist("genres") if g in revision.GENRES and g != "plan"]
-    matieres = [m for m in f.getlist("matieres") if "|" in m]
-    if not genres or not matieres:
+    choisies = [m for m in f.getlist("matieres") if "|" in m]
+    if not genres or not choisies:
         raise HTTPException(400, "choisis au moins une matière et un type de support")
-    demandes = []
-    for nm in matieres:
+    # Même matière sur plusieurs années (ex. Maths en BTS1 et BTS2) : un seul jeu de supports
+    # qui couvre les cours de toutes ces années, l'année la plus récente d'abord.
+    groupes: dict[str, dict] = {}
+    for nm in sorted(choisies, key=lambda nm: -_rang_niveau(nm.partition("|")[0])):
         niveau, _, matiere = nm.partition("|")
         sujet = (f.get(f"sujet:{nm}") or "").strip()
         choisis = [int(i) for i in f.getlist(f"docs:{nm}") if str(i).isdigit()]
         ids = choisis or db.choisir_documents(niveau, matiere, sujet) or db.choisir_documents(niveau, matiere)
         if not ids:
             raise HTTPException(400, f"aucun cours classé en {matiere} ({niveau})")
-        demandes.append((matiere, sujet, ids))
+        g = groupes.setdefault(matieres.concept(matiere), {"matiere": matiere, "niveaux": [], "sujets": [], "ids": []})
+        g["niveaux"].append(niveau)
+        g["ids"] += [i for i in ids if i not in g["ids"]]
+        if sujet and sujet not in g["sujets"]:
+            g["sujets"].append(sujet)
+    epreuves = _epreuves(f, groupes)
     pieces = await _pieces(f)
-    campagne_id = db.creer_campagne(titre, consigne, debut, fin)
+    campagne_id = db.creer_campagne(titre, consigne, debut, fin, epreuves)
     if pieces:
         db.ajouter_pieces(pieces, campagne_id=campagne_id)
-    for matiere, sujet, ids in demandes:
-        for g in genres:
-            db.creer_revision(g, f"{matiere} : {sujet}" if sujet else matiere, ids, fin if g == "examen" else None,
-                              consigne=consigne, campagne_id=campagne_id)
+    for cle, g in groupes.items():
+        sujet = ", ".join(g["sujets"])
+        consigne_rev = consigne
+        if len(g["niveaux"]) > 1:
+            annees = ", ".join(reversed(g["niveaux"]))
+            consigne_rev = (f"{consigne}\n\n" if consigne else "") + (
+                f"Ce support couvre {g['matiere']} sur plusieurs années ({annees}) : reprends les notions "
+                "de chacune de ces années, pas seulement la plus récente.")
+        date_epreuve = next((dt.date.fromisoformat(e["date"]) for e in epreuves if e["cle"] == cle), fin)
+        for genre in genres:
+            db.creer_revision(genre, f"{g['matiere']} : {sujet}" if sujet else g["matiere"], g["ids"],
+                              date_epreuve if genre == "examen" else None, consigne=consigne_rev, campagne_id=campagne_id)
     db.demander_scan()
     return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
 

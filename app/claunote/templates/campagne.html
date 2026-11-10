@@ -10,6 +10,10 @@
 <p class="doux sous-titre">{{ icone('campagne', 16) }} Du {{ COURT[campagne.debut.weekday()] }} {{ campagne.debut.strftime('%d/%m') }}
   au {{ COURT[campagne.fin.weekday()] }} {{ campagne.fin.strftime('%d/%m') }} · {{ revs|length }} support{{ 's' if revs|length > 1 }}
   · {{ par_matiere|length }} matière{{ 's' if par_matiere|length > 1 }}</p>
+{% if campagne.epreuves %}
+<p class="doux epreuves-campagne">{{ icone('examen', 16) }} Épreuves :
+  {% for e in campagne.epreuves %}{% set d = e.date|jour_iso %}<strong>{{ e.matiere }}</strong> {{ COURT[d.weekday()] }} {{ d.strftime('%d/%m') }}{% if e.heure %} {{ e.heure|replace(':', ' h ') }}{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</p>
+{% endif %}
 
 {% set pretes = revs|selectattr('statut', 'equalto', 'pret')|list|length %}
 <div class="barre-actions">
@@ -110,6 +114,8 @@
 <style>
   .sous-titre { margin: -12px 0 16px; }
   .sous-titre svg { vertical-align: -2px; margin-right: 2px; }
+  .epreuves-campagne { margin: -8px 0 16px; line-height: 1.6; }
+  .epreuves-campagne svg { vertical-align: -2px; margin-right: 2px; }
   .generation { display: grid; gap: 8px; }
   .alerte-carte { border-color: var(--alerte); display: flex; align-items: center; gap: 12px; justify-content: space-between; flex-wrap: wrap; }
   .enligne { margin: 0; }

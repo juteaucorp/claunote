@@ -410,6 +410,11 @@ fournies ci-dessous. Règles :
   parmi : {supports} (ou "" si aucun).
 - Alterne les matières, garde de la place pour relire les corrigés et refaire les erreurs.
 - Respecte en priorité le contexte de l'élève (emploi du temps, dates d'épreuves, disponibilités).
+- Les épreuves datées par l'élève sont fixes : l'épreuve blanche de la matière se fait à ce jour et
+  cette heure, la matière est revue plus souvent à l'approche de sa date (rappel court la veille),
+  et le jour J rien de lourd avant l'épreuve.
+- Une matière qui couvre plusieurs années (ex. « BTS1, BTS2 ») : répartis des rappels sur les cours
+  de chacune de ces années (repérées par [année]), pas seulement la plus récente.
 {pieces}Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {{"conseil": "une phrase d'encouragement et de méthode", "jours": [{{"date": "AAAA-MM-JJ", "titre": "...",
   "taches": [{{"matiere": "...", "quoi": "...", "duree": 45, "support": "fiche"}}]}}]}}
@@ -425,10 +430,12 @@ def prompt_programme(titre: str, debut: dt.date, fin: dt.date, aujourdhui: dt.da
                                    supports=", ".join(f'"{g}"' for g in GENRES if g != "plan"))
 
 
-def entree_programme(consigne: str, matieres: list[dict], evenements: list[dict]) -> str:
-    """Texte fourni au programme : contexte, puis pour chaque matière ses supports et ses cours.
+def entree_programme(consigne: str, matieres: list[dict], evenements: list[dict],
+                     epreuves: list[dict] | None = None) -> str:
+    """Texte fourni au programme : contexte, épreuves datées, puis pour chaque matière ses supports et ses cours.
 
     `matieres` : [{"matiere", "niveau", "sujet", "supports": [genres], "cours": [titres]}].
+    `epreuves` : [{"matiere", "date": "AAAA-MM-JJ", "heure": "HH:MM" ou ""}], saisies par l'élève.
     """
     parties = [f"Contexte donné par l'élève :\n{consigne.strip() or '(aucun)'}", "Matières :"]
     for m in matieres:
@@ -436,6 +443,10 @@ def entree_programme(consigne: str, matieres: list[dict], evenements: list[dict]
         cours = "; ".join(m["cours"]) or "?"
         parties.append(f"- {m['matiere']} ({m['niveau']}){' sur « ' + m['sujet'] + ' »' if m.get('sujet') else ''}"
                        f" : supports préparés : {supports}. Cours : {cours}")
+    if epreuves:
+        parties.append("Épreuves (dates fixées par l'élève) :")
+        parties += [f"- {e['matiere']} : {date_fr(dt.date.fromisoformat(e['date']))}"
+                    + (f" à {e['heure'].replace(':', ' h ')}" if e.get("heure") else "") for e in epreuves]
     if evenements:
         parties.append("Évaluations et devoirs Pronote sur la période :")
         parties += [f"- {date_fr(e['le'].date())} : {e['matiere']} ({e['genre']}) {e['titre']}" for e in evenements]
@@ -504,7 +515,7 @@ def generer_programme(campagne: dict, matieres: list[dict], evenements: list[dic
                       pieces: list[dict] | None = None) -> dict:
     with tempfile.TemporaryDirectory() as dossier:
         a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
-        entree = entree_programme(campagne["consigne"], matieres, evenements)
+        entree = entree_programme(campagne["consigne"], matieres, evenements, campagne.get("epreuves"))
         if texte_pieces:
             entree += f"\n\nFichiers joints par l'élève :\n{texte_pieces}"
         programme, _ = demander("programme", prompt_programme(campagne["titre"], campagne["debut"], campagne["fin"],
