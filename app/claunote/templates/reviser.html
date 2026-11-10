@@ -6,34 +6,32 @@
 {% include "_reviser.html" %}
 <h1>Réviser</h1>
 
-<div class="lancer">
-  <a class="carte tuile" href="/reviser/nouvelle">
-    <span class="pastille-genre">{{ icone('nouveau') }}</span>
-    <span><strong>Une révision</strong><span class="doux">Fiche, quiz, flashcards, épreuve blanche ou plan sur un chapitre</span></span>
-  </a>
-  <a class="carte tuile tuile-question" href="/demander">
-    <span class="pastille-genre">{{ icone('bulle') }}</span>
-    <span><strong>Une question</strong><span class="doux">Une info, une notion à réexpliquer : l'IA ou tes cours répondent dans un chat</span></span>
-  </a>
-  <a class="carte tuile tuile-campagne" href="/campagne/nouvelle">
-    <span class="pastille-genre">{{ icone('campagne') }}</span>
-    <span><strong>Une campagne</strong><span class="doux">Plusieurs matières d'un coup + un programme jour par jour (ex. semaine de BTS blanc)</span></span>
-  </a>
-</div>
-
-<p class="liens-rapides doux"><a href="/progression">Ta progression</a> · <a href="/cartes">Toutes tes flashcards</a> · <a href="/demander">Tes questions</a> · <a href="/campagne/nouvelle">Nouvelle campagne</a></p>
+{# 1. Ce qui est à faire maintenant : contrôles qui arrivent, programme du jour, flashcards dues #}
 {% set dues = nb_cartes_a_revoir() %}
-{% if dues %}
-<div class="carte accent rangee">
-  <span class="pastille-genre g-cartes">{{ icone('cartes') }}</span>
-  <div class="corps"><strong>{{ dues }} flashcard{{ 's' if dues > 1 }} à revoir</strong>
-    <div class="doux">environ {{ ((dues * 12) / 60)|round(0, 'ceil')|int }} min</div></div>
-  <a class="bouton principal" href="/cartes/session">C'est parti</a>
-</div>
+{% if evaluations or du_jour or dues %}
+<h2 class="premier">À faire maintenant</h2>
+{% if evaluations %}
+<ul class="carte lignes prochaines">
+  {% for e in evaluations %}
+  {% set le = e.le.astimezone(paris) %}
+  {% set j = (le.date() - aujourdhui).days %}
+  <li>
+    <span class="compte-a-rebours {{ 'proche' if j <= 3 }}">{% if j <= 0 %}auj.{% elif j == 1 %}demain{% else %}J-{{ j }}{% endif %}</span>
+    <div class="corps"><strong>{{ e.titre }}</strong>
+      <div class="doux">{{ le.strftime('%d/%m') }} · {{ e.cours or e.matiere }}</div></div>
+    <div class="fin">
+      {% if e.revision_id %}
+        <a class="bouton" href="/revision/{{ e.revision_id }}">{{ 'En préparation…' if e.revision_statut == 'en_attente' else 'Réviser' }}</a>
+      {% else %}
+        <form method="post" action="/agenda/preparer"><input type="hidden" name="ev_id" value="{{ e.id }}">
+          <button class="principal">Préparer</button></form>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
 {% endif %}
-
 {% if du_jour %}
-<h2>Au programme</h2>
 <div class="carte programme-jour">
   <div class="rangee">
     <div class="corps"><a href="/campagne/{{ du_jour.id }}"><strong>{{ du_jour.titre }}</strong></a>
@@ -50,6 +48,35 @@
   {% endif %}
 </div>
 {% endif %}
+
+{% if dues %}
+<div class="carte accent rangee">
+  <span class="pastille-genre g-cartes">{{ icone('cartes') }}</span>
+  <div class="corps"><strong>{{ dues }} flashcard{{ 's' if dues > 1 }} à revoir</strong>
+    <div class="doux">environ {{ ((dues * 12) / 60)|round(0, 'ceil')|int }} min</div></div>
+  <a class="bouton principal" href="/cartes/session">C'est parti</a>
+</div>
+{% endif %}
+{% endif %}
+
+{# 2. Créer #}
+<h2>Préparer</h2>
+<div class="lancer">
+  <a class="carte tuile" href="/reviser/nouvelle">
+    <span class="pastille-genre">{{ icone('nouveau') }}</span>
+    <span><strong>Une révision</strong><span class="doux">Fiche, quiz, flashcards, épreuve blanche ou plan sur un chapitre</span></span>
+  </a>
+  <a class="carte tuile tuile-question" href="/demander">
+    <span class="pastille-genre">{{ icone('bulle') }}</span>
+    <span><strong>Une question</strong><span class="doux">Une info, une notion à réexpliquer : l'IA ou tes cours répondent dans un chat</span></span>
+  </a>
+  <a class="carte tuile tuile-campagne" href="/campagne/nouvelle">
+    <span class="pastille-genre">{{ icone('campagne') }}</span>
+    <span><strong>Une campagne</strong><span class="doux">Plusieurs matières d'un coup + un programme jour par jour (ex. semaine de BTS blanc)</span></span>
+  </a>
+</div>
+
+<p class="liens-rapides doux"><a href="/progression">Ta progression</a> · <a href="/cartes">Toutes tes flashcards</a></p>
 
 {% if campagnes %}
 <h2>Campagnes</h2>
@@ -112,6 +139,11 @@
 
 
 <style>
+  h2.premier { margin-top: 4px; }
+  .prochaines li { align-items: center; } .prochaines form { margin: 0; }
+  .compte-a-rebours { flex: none; min-width: 58px; text-align: center; padding: 3px 8px; border-radius: 999px; background: var(--fond-doux); border: 1px solid var(--bord); font-size: .82rem; font-weight: 600; }
+  .compte-a-rebours.proche { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .programme-jour { margin-top: 12px; }
   .lancer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
   .tuile-question { --g: var(--g-quiz); }
   .tuile { display: flex; gap: 12px; align-items: flex-start; margin: 0; text-decoration: none; color: var(--texte); transition: border-color .15s, transform .15s; }

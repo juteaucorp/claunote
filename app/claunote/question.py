@@ -42,6 +42,10 @@ Règles :
   exemple si ça aide). Développe seulement si l'élève le demande.
 """ + REGLES + """
 - Formules de maths, de physique ou de chimie en LaTeX entre $…$ (ex. $u_n = u_0 \\times q^n$) : le site les dessine.
+- Un schéma quand il explique mieux qu'un texte (étapes, architecture, comparaison de flux, courbe) : un bloc
+  « ```dot Légende » … « ``` » en Graphviz (`digraph {{ rankdir=LR; A -> B [label="…"] }}`, sans couleurs
+  ni polices) ou « ```svg Légende » … « ``` » (`<svg viewBox="0 0 720 H">`, formes simples, texte de taille 14
+  au moins, rien qui se chevauche). Le site le dessine. Pas de schéma pour une réponse d'une ligne.
 - Si ses documents ne suffisent pas ou si c'est une info pratique ou récente, tu peux chercher sur le web
   (WebSearch, WebFetch), sur des sources fiables ; marque chaque apport du web [W1], [W2]…
 {brouillon}Réponds uniquement avec ta réponse{web_md}.

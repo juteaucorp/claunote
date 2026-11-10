@@ -126,6 +126,17 @@ def test_page_reviser(client):
     assert 'value="BTS1|Réseaux"' in r.text and "Plan de révision" in r.text and 'name="consigne"' in r.text
 
 
+def test_reviser_met_les_controles_proches_en_premier(client, monkeypatch):
+    import datetime as dt
+    le = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+    monkeypatch.setattr(db, "evenements_a_venir", lambda genre=None, jours=60: [
+        {"id": "eval:1", "genre": "evaluation", "titre": "Contrôle VLAN", "matiere": "RESEAUX", "le": le,
+         "revision_id": None, "revision_statut": None}] if genre == "evaluation" else [])
+    r = client.get("/reviser")
+    assert "À faire maintenant" in r.text and "Contrôle VLAN" in r.text and 'value="eval:1"' in r.text
+    assert r.text.index("À faire maintenant") < r.text.index("/reviser/nouvelle") < r.text.index("Déjà fait")
+
+
 def test_demander_une_fiche_depuis_un_document(client):
     r = client.post("/reviser", data={"genre": "fiche", "doc_id": "1"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/revision/5"
