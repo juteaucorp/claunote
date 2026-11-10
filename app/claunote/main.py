@@ -25,7 +25,7 @@ from starlette.background import BackgroundTask
 
 from claunote import (agent, anki, auth, carte_mentale, cles, db, decoupage, formules, importation, index,
                       lecture, local, maj, matieres, modeles, notifications, pdf, progression, pronote, question,
-                      rangement, ressources, revision, sensible)
+                      rangement, ressources, revision, schemas, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -213,14 +213,18 @@ templates.env.filters["surligner_md"] = lambda extrait: surligner(re.sub(r"\*\*(
 
 def rendu_markdown(texte: str | None) -> str:
     # Formules mises à l'abri du Markdown, puis rendues par KaTeX dans le navigateur (voir formules.py)
-    texte, maths = formules.proteger(texte or "")
+    # Schémas (blocs ```dot / ```svg) dessinés ici en SVG, les mêmes que dans le PDF (voir schemas.py)
+    texte, figures = schemas.proteger(texte or "")
+    texte, maths = formules.proteger(texte)
     # Le HTML brut éventuel de la transcription est neutralisé avant le rendu
     texte = texte.replace("&", "&amp;").replace("<", "&lt;")
-    return formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths)
+    rendu = formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths)
+    return schemas.restaurer(rendu, figures)
 
 
 # Texte simple (questions de quiz, flashcards) avec des formules $…$
 templates.env.filters["maths"] = formules.en_ligne
+templates.env.filters["schema"] = schemas.figure
 
 
 def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Markup:
@@ -980,8 +984,13 @@ def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str
         jour = next((j for j in revision.jours_programme(du_jour["programme"], du_jour["faits"],
                                                           db.revisions_campagne(du_jour["id"]))
                      if j["date"] >= aujourdhui), None)
+    # Les contrôles des 14 prochains jours : ce qu'il est le plus utile de réviser maintenant
+    noms = sorted({r["matiere"] for r in db.niveaux_matieres()})
+    evaluations = [{**e, "cours": pronote.trouver_matiere(e["matiere"], noms)}
+                   for e in db.evenements_a_venir("evaluation", 14)][:4]
     return templates.TemplateResponse(request, "reviser.html", {
         **contexte, "campagnes": campagnes, "du_jour": du_jour, "jour": jour, "compte": db.compte_revisions(),
+        "evaluations": evaluations, "paris": pronote.PARIS,
         "a_choisir": bool(db.niveaux_matieres())})
 
 

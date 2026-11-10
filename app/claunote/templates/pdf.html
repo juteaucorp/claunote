@@ -37,6 +37,17 @@
   .jour ul { margin: 0; padding-left: 14pt; }
   .case { display: inline-block; width: 8pt; height: 8pt; border: .8pt solid #8a857c; margin-right: 4pt; }
   blockquote { margin: 6pt 0; padding: 4pt 10pt; border-left: 3pt solid #e4ddd2; color: #4a4741; }
+  figure.schema { margin: 10pt 0; text-align: center; break-inside: avoid; }
+  figure.schema svg { max-width: 100%; height: auto; }
+  figure.schema figcaption { margin-top: 3pt; font-size: 8.5pt; color: #6f6b63; font-style: italic; }
+  blockquote.encadre { break-inside: avoid; margin: 8pt 0; padding: 6pt 10pt; border-left: 3pt solid #d97757; background: #fdf1ea; color: #1f1e1d; border-radius: 0 5pt 5pt 0; }
+  blockquote.encadre > p:first-child { margin-top: 0; } blockquote.encadre > p:last-child { margin-bottom: 0; }
+  blockquote.encadre > p:first-child > strong:first-child { color: #b5583a; }
+  .e-attention { border-left-color: #c0392b !important; background: #fcecea !important; } .e-attention > p:first-child > strong:first-child { color: #c0392b !important; }
+  .e-exemple { border-left-color: #3b6fb6 !important; background: #edf2fa !important; } .e-exemple > p:first-child > strong:first-child { color: #3b6fb6 !important; }
+  .e-methode { border-left-color: #3f8a57 !important; background: #ecf5ef !important; } .e-methode > p:first-child > strong:first-child { color: #3f8a57 !important; }
+  .e-definition { border-left-color: #8a4fb8 !important; background: #f4eef9 !important; } .e-definition > p:first-child > strong:first-child { color: #8a4fb8 !important; }
+  h2 { break-after: avoid; } h3 { break-after: avoid; } tr { break-inside: avoid; }
 </style>
 </head>
 <body>
@@ -71,6 +82,7 @@
   <ol class="questions">
     {% for q in s.questions %}
     <li><strong>{{ q.question|maths }}</strong>
+      {% if q.schema %}{{ q.schema|schema }}{% endif %}
       <ol class="choix">{% for c in q.choix %}<li>{{ c|maths }}</li>{% endfor %}</ol></li>
     {% endfor %}
   </ol>

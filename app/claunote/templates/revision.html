@@ -59,6 +59,7 @@
   {% set i = loop.index0 %}
   <fieldset class="carte question" data-reponse="{{ q.reponse }}">
     <legend><span class="num-q">{{ loop.index }}</span> {{ q.question|maths }}</legend>
+    {% if q.schema %}{{ q.schema|schema }}{% endif %}
     {% for c in q.choix %}
     <label class="choix-q"><input type="radio" name="q{{ i }}" value="{{ loop.index0 }}"><span class="lettre">{{ 'ABCDEFGH'[loop.index0] }}</span><span>{{ c|maths }}</span></label>
     {% endfor %}
@@ -118,7 +119,23 @@
 </details>
 {% endfor %}
 {% else %}
-<div class="carte transcription contenu-revision">{{ contenu }}</div>
+<nav class="sommaire" id="sommaire" hidden aria-label="Sommaire"></nav>
+<div class="carte transcription contenu-revision" id="texte-revision">{{ contenu }}</div>
+<script>
+  // Sommaire : une puce par grande partie (titres ##), dès qu'il y en a au moins quatre
+  (() => {
+    const titres = [...document.querySelectorAll("#texte-revision h2")];
+    const nav = document.getElementById("sommaire");
+    if (titres.length < 4) return;
+    titres.forEach((h, i) => {
+      h.id = "partie-" + (i + 1);
+      const a = document.createElement("a");
+      a.href = "#" + h.id; a.textContent = h.textContent.split(/\s[:(]/)[0];
+      nav.append(a);
+    });
+    nav.hidden = false;
+  })();
+</script>
 {% if corrige %}
 <details class="carte corrige"><summary>Voir le corrigé</summary><div class="transcription contenu-revision">{{ corrige }}</div></details>
 {% elif rev.genre == 'examen' %}<p class="doux">Pas de corrigé séparé dans ce sujet.</p>{% endif %}
@@ -152,6 +169,11 @@
   .tete-revision { margin-bottom: 4px; }
   .tete-revision + h1 { margin-top: 4px; margin-bottom: 4px; }
   h1 + p.meta { margin: 0 0 16px; }
+  .sommaire { display: flex; gap: 6px; overflow-x: auto; padding: 0 0 10px; scrollbar-width: none; }
+  .sommaire::-webkit-scrollbar { display: none; }
+  .sommaire a { flex: none; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--bord); background: var(--carte); color: var(--texte); text-decoration: none; font-size: .86rem; font-weight: 500; }
+  .sommaire a:hover { border-color: var(--accent); color: var(--accent-fonce); }
+  .contenu-revision h2 { scroll-margin-top: 76px; }
   .contenu-revision h2 { font-size: 1.15rem; margin: 22px 0 8px; color: var(--accent-fonce); }
   .contenu-revision h1 { font-size: 1.35rem; }
   .contenu-revision table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }

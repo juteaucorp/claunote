@@ -12,19 +12,23 @@ import markdown
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from claunote import formules, revision
+from claunote import formules, revision, schemas
 
 _env = Environment(loader=FileSystemLoader(Path(__file__).parent / "templates"), autoescape=select_autoescape())
 _env.filters["maths"] = formules.en_ligne_texte
+_env.filters["schema"] = schemas.figure
 LOGO = (Path(__file__).parent / "static" / "logo.svg").as_uri()
 
 
 def md(texte: str | None) -> Markup:
     """Markdown → HTML ; le HTML brut éventuel est neutralisé, les repères [D1] restent du texte.
     Les formules $…$ deviennent du texte lisible (« √(x²+1) ≤ α ») : pas de JavaScript dans un PDF."""
-    texte, maths = formules.proteger(texte or "")
+    texte, figures = schemas.proteger(texte or "")
+    texte, maths = formules.proteger(texte)
     texte = texte.replace("&", "&amp;").replace("<", "&lt;")
-    return Markup(formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths, texte=True))
+    rendu = formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths,
+                               texte=True)
+    return Markup(schemas.restaurer(rendu, figures))
 
 
 def section(rev: dict, sources: dict[int, str], cartes: list[dict] | None = None, corrige: bool = True) -> dict:

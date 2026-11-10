@@ -20,6 +20,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import random
 import re
 import tempfile
 from pathlib import Path
@@ -27,7 +28,7 @@ from zoneinfo import ZoneInfo
 
 import fsrs
 
-from claunote import agent
+from claunote import agent, schemas
 from claunote.agent import ErreurAgent, demander
 from claunote.rangement import slug
 
@@ -45,10 +46,14 @@ SOURCES_WEB = "## Sources web"  # fin d'un support Markdown : les pages web cons
 OUTILS_WEB = ["WebSearch", "WebFetch"]
 
 COMMUN = """Tu aides un élève (du collège au BTS SIO) à réviser à partir de SES cours, fournis
-ci-dessous. Chaque document commence par un repère [D1], [D2]…
+ci-dessous. Chaque document commence par un repère [D1], [D2]… et indique son niveau, sa matière et son type.
 Règles :
 - Ses cours d'abord : ils sont la base de tout, cite la source de chaque point important avec
   son repère, par exemple [D2]. N'invente rien.
+- Pertinence avant tout. Avant d'écrire, repère dans les cours : le niveau réel (collège, lycée, BTS),
+  le vocabulaire et les notations du professeur (garde-les), et ce sur quoi il insiste (répété, encadré,
+  donné en exercice, en TP ou en contrôle) : c'est la priorité. Laisse l'anecdotique et le hors-sujet.
+  Couvre tous les cours fournis qui touchent au sujet, pas seulement les premiers.
 - Le web seulement si c'est utile, à toi d'en juger (WebSearch, WebFetch) : une notion des cours
   incomplète ou illisible, un point à confirmer (définition, chiffre, article de loi, commande,
   date), une erreur probable dans les cours, ou le format officiel d'une épreuve. Si les cours
@@ -56,52 +61,120 @@ Règles :
   de désaccord, garde les deux et signale-le (« Attention : le cours dit…, la source officielle dit… »).
 - Sources fiables seulement (sites officiels, éducation nationale, documentation officielle,
   Légifrance, Wikipédia en dernier recours). Marque chaque apport du web par [W1], [W2]…
-- Écris en français, simplement, sans HTML. Formules de maths, de physique ou de chimie en LaTeX entre
+- Écris en français, simplement. Formules de maths, de physique ou de chimie en LaTeX entre
   $…$ (ex. $u_n = u_0 \\times q^n$, $\\ce{{H2O}}$) : le site les affiche proprement.
 {consigne}"""
 
+# Ce que l'IA peut dessiner (rendu par schemas.py, sur le site comme dans le PDF)
+VISUEL = """
+Mise en page : pas un mur de texte. Tu disposes de vrais outils de dessin, rendus en image sur le site
+et dans le PDF ; sers-t'en chaque fois qu'un dessin explique mieux qu'une phrase :
+- Schéma automatique (Graphviz), dans un bloc de code « ```dot Légende du schéma » … « ``` » :
+  organigramme, étapes d'une méthode, architecture réseau, arbre, cycle, états, MCD, causes et
+  conséquences, carte des notions. Écris seulement les nœuds et les liens, par exemple
+  `digraph {{ rankdir=LR; pc [label="PC client"]; pc -> srv [label="1. DHCP Discover"] }}` :
+  libellés courts entre guillemets ("\\n" pour aller à la ligne), sans couleurs ni polices (le site
+  les met), 4 à 14 nœuds. La mise en place est automatique : rien ne se chevauche.
+- Dessin libre, dans un bloc « ```svg Légende » … « ``` » : courbe dans un repère, figure de géométrie,
+  circuit, frise chronologique, échange de messages entre deux machines, pile de couches, croquis.
+  `<svg viewBox="0 0 720 H">` avec des formes simples (rect, circle, line, path, polygon, text),
+  texte de taille 14 au moins, traits et textes foncés sur fond clair, deux ou trois couleurs sobres,
+  des marges, aucun texte qui en chevauche un autre ou sort du cadre. Pas de <style>, d'image, de lien.
+- Tableau Markdown pour comparer (2 à 5 colonnes, cellules courtes).
+- Encadrés : une citation qui commence par un mot-clé en gras, « > **À retenir** … », « > **Attention** … »,
+  « > **Exemple** … », « > **Méthode** … », « > **Définition** … ».
+Un schéma doit être juste, tiré des cours (cite son repère [Dn] dans la phrase qui l'introduit) et utile :
+jamais décoratif. Dans un schéma : texte simple, ni LaTeX ni Markdown. Hors des blocs ```svg, pas de HTML.
+"""
+
 PROMPTS = {
-    "fiche": COMMUN + """
-Fais une fiche de révision sur « {sujet} », en Markdown, avec ces sections :
-## L'essentiel (5 lignes maximum)
-## Définitions
-## Formules, commandes ou règles à connaître
-## Méthodes (étapes numérotées)
-## Pièges fréquents
-## Pour s'entraîner (3 questions, puis les réponses dans une section « Réponses »)
+    "fiche": COMMUN + VISUEL + """
+Fais une fiche de révision sur « {sujet} », en Markdown. Elle doit permettre de réviser sans rouvrir
+les cours et aller droit à ce qui rapporte des points.
+Structure :
+# Titre de la fiche
+## L'essentiel : 5 lignes maximum, ce qu'il faut savoir si on n'a que deux minutes.
+## Vue d'ensemble : un schéma (dot ou svg) qui montre comment les notions s'articulent.
+Puis 3 à 6 sections « ## » choisies pour CE sujet, pas un plan passe-partout. Par exemple : en technique ou
+en sciences, « Définitions », « Formules, commandes ou règles à connaître », « Méthodes pas à pas » ; en
+histoire-géographie, « Repères et dates » (avec une frise), « Acteurs », « Causes et conséquences » ; en
+français ou en langues, « Notions », « Exemples à citer », « Méthode de l'épreuve » ; en économie, droit
+ou management, « Notions », « Mécanismes », « Cas et exemples à connaître ».
+## Pièges fréquents : les erreurs réelles (corrections d'exercices, remarques du professeur dans les cours).
+## Ce qui tombe le plus souvent : 3 à 5 points, d'après les exercices et contrôles présents dans les cours
+(s'il n'y en a aucun, ne mets pas cette section).
+## Pour s'entraîner : 4 questions de difficulté croissante, dont au moins une d'application du type des
+exercices des cours ; puis une section « ## Réponses », courte.
+Forme : phrases courtes, listes, gras sur les mots-clés seulement. Une méthode = des étapes numérotées
+suivies d'un exemple traité. Chaque formule avec le sens de chaque lettre et les unités. Chaque commande
+avec un exemple réel. Au moins deux schémas quand le sujet s'y prête (processus, architecture, chronologie,
+comparaison, courbe). Longueur selon la matière des cours : complet, sans remplissage.
 Réponds uniquement avec la fiche{web_md}.
 """,
     "quiz": COMMUN + """
-Fais un quiz de {nb} questions à choix multiples sur « {sujet} ».
+Fais un quiz de {nb} questions à choix multiples sur « {sujet} », qui couvre l'ensemble des cours.
+- Un tiers de connaissance (définition, formule, date), un tiers de compréhension (pourquoi, différence
+  entre deux notions), un tiers d'application (petit cas concret, calcul, lecture d'une commande, d'une
+  configuration ou d'un schéma). Difficulté croissante.
+- 4 choix par question, une seule bonne réponse, indiscutable d'après les cours. Les mauvaises réponses
+  sont des erreurs plausibles (les confusions classiques), de même longueur et de même style que la bonne.
+  Jamais « toutes les réponses », « aucune des réponses » ni de double négation.
+- Les choix seront mélangés : ne parle jamais de leur lettre ou de leur position.
+- `explication` : en 1 à 3 phrases, pourquoi c'est juste et quelle erreur se cache derrière le piège principal.
+- `schema`, facultatif : quand la question porte sur un schéma (topologie réseau, courbe, figure, MCD…),
+  son code Graphviz (`digraph {{ … }}`) ou SVG (`<svg viewBox="0 0 720 H">…</svg>`, texte de taille 14 au
+  moins) dans une chaîne ; le site le dessine au-dessus de la question. Sinon, omets cette clé.
 Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {{"questions": [{{"question": "...", "choix": ["...", "...", "...", "..."], "reponse": 0,
   "explication": "...", "source": "D1"}}]{web_json}}}
 `reponse` est l'indice (à partir de 0) de la bonne réponse dans `choix`.
 {note_web}""",
     "cartes": COMMUN + """
-Fais {nb_cartes} flashcards sur « {sujet} » : une notion par carte (définition, commande,
-formule, date, schéma à expliquer…). Recto : une question courte et précise. Verso : la réponse
-en 1 à 3 lignes, sans recopier la question.
+Fais {nb_cartes} flashcards sur « {sujet} », de l'indispensable au détail, en couvrant tous les cours.
+- Une seule information par carte (définition, commande, formule, date, étape, rôle d'un élément). Une
+  liste à apprendre se découpe en plusieurs cartes : pas de « citer les 7 couches ».
+- Recto : une question courte, précise et compréhensible seule (rappelle le contexte : « En SQL, … »).
+  Pas de question à réponse oui/non. Varie les formes : du terme vers sa définition et l'inverse,
+  « à quoi sert… », « quelle commande pour… », « que se passe-t-il si… », un exemple à reconnaître.
+- Verso : la réponse en 1 à 3 lignes, sans recopier la question, avec un exemple très court si ça aide.
 Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {{"cartes": [{{"recto": "...", "verso": "...", "source": "D1"}}]{web_json}}}
 {note_web}""",
-    "examen": COMMUN + """
-Fais un sujet d'épreuve blanche sur « {sujet} », comme un vrai sujet d'examen de ce niveau
-(contrôle, bac ou BTS selon les cours), faisable en {duree}. En Markdown :
+    "examen": COMMUN + VISUEL + """
+Fais un sujet d'épreuve blanche sur « {sujet} », comme un vrai sujet d'examen de ce niveau, faisable
+en {duree}. Repère d'abord l'épreuve visée d'après les cours (contrôle de chapitre, brevet, bac, épreuve
+de BTS SIO…) et reprends sa forme ; vérifie le format officiel sur le web si tu as un doute.
+En Markdown :
 # Titre de l'épreuve
 Une ligne avec la durée, le barème total sur 20 et le matériel autorisé.
-## Exercice 1 (n points) … et ainsi de suite : des questions progressives, avec un barème par question,
-appuyées sur les notions et exercices des cours (cite les repères [Dn] seulement dans le corrigé).
-Puis une section qui commence exactement par la ligne « """ + CORRIGE + """ » : la réponse rédigée de chaque
-question, le barème détaillé et les erreurs qui coûtent des points.
+Pour un BTS, un bac technologique ou une étude de cas : d'abord un contexte réaliste (une organisation,
+une situation, une mission), puis des documents ou annexes sur lesquels portent les questions (tableau de
+données, extrait de configuration ou de code, schéma réseau ou MCD dessiné en dot, courbe en svg…).
+## Exercice 1 (n points) … et ainsi de suite : des questions progressives, avec un barème par question.
+- Environ 30 % de restitution, 50 % d'application, 20 % d'analyse ou de justification, avec les verbes
+  de consigne d'un vrai sujet (Définir, Calculer, Justifier, Proposer, Comparer…).
+- Reprends les types d'exercices des cours avec des données nouvelles : ni copie d'un exercice déjà
+  corrigé, ni notion absente des cours.
+- Le total des barèmes fait exactement 20 : vérifie la somme. Le tout tient dans la durée.
+- Dans le sujet : aucun indice, aucune réponse, aucun repère [Dn].
+Puis une section qui commence exactement par la ligne « """ + CORRIGE + """ » : pour chaque question, la
+réponse rédigée attendue (le schéma corrigé si un schéma était demandé), les points accordés à chaque
+élément de réponse, les erreurs qui coûtent des points, et le repère [Dn] du cours à revoir. Termine le
+corrigé par un tableau « Question ratée | Notion à revoir | Cours [Dn] ».
 Réponds uniquement avec le sujet puis le corrigé{web_md}.
 """,
-    "plan": COMMUN + """
+    "plan": COMMUN + VISUEL + """
 L'évaluation sur « {sujet} » a lieu le {date_eval}. Aujourd'hui nous sommes le {aujourdhui}.
-Fais un plan de révision en Markdown, jour par jour jusqu'à la veille de l'évaluation :
-pour chaque jour, un titre « ### {{jour}} {{date}} », 20 à 45 minutes de travail, les notions
-à revoir avec leur repère [Dn] et un petit exercice. Garde le dernier jour pour une révision
-globale. Termine par une liste des 5 notions les plus probables à l'évaluation{web_md}.
+Fais un plan de révision en Markdown, jour par jour jusqu'à la veille de l'évaluation.
+Commence par un tableau récapitulatif « Jour | Notions | Durée », puis pour chaque jour un titre
+« ### {{jour}} {{date}} », 20 à 45 minutes de travail, les notions à revoir avec leur repère [Dn] et un
+petit exercice précis (tiré des cours quand ils en ont).
+- Les notions les plus lourdes ou les plus probables d'abord ; chaque notion importante revient au moins
+  deux fois, à quelques jours d'écart (répétition espacée).
+- Rappel actif : chaque séance commence par se tester de mémoire sur la séance précédente (2 ou 3
+  questions que tu écris), avant de relire.
+- Garde le dernier jour pour une révision globale légère, sans notion nouvelle.
+Termine par une liste des 5 notions les plus probables à l'évaluation{web_md}.
 """,
 }
 
@@ -149,7 +222,8 @@ Règles :
 - Pour chaque document, une section qui commence par sa ligne d'en-tête exacte, ex. « ### [D3] Titre (…) ».
   Un document sans rien d'utile : seulement son en-tête et « (rien d'utile) ».
 - Garde tout ce qui sert à réviser : définitions, formules, commandes, règles, méthodes, exemples
-  et exercices types (énoncé court + résultat), pièges signalés. Priorité à ce qui touche au sujet.
+  et exercices types (énoncé court + résultat), pièges signalés, schémas et figures (décris-les
+  en une ou deux lignes : éléments, liens, sens des flèches). Priorité à ce qui touche au sujet.
 - Supprime les répétitions, les bavardages, la mise en page et ce qui est hors sujet.
 - Vise environ un quart de la longueur d'origine. N'invente rien, n'ajoute rien.
 {consigne}Réponds uniquement avec le texte condensé, en Markdown simple, sans HTML ; garde les formules en LaTeX ($…$).
@@ -332,7 +406,11 @@ def _liste_json(texte: str, cle: str, quoi: str) -> list:
         raise ErreurAgent(f"{quoi} illisible : {texte[:200]!r}") from e
 
 
-def parse_quiz(texte: str) -> list[dict]:
+# Choix qui parlent des autres (« les deux », « A et B ») : leur ordre ne doit pas bouger
+FIGE = re.compile(r"réponses|ci-dessus|précédent|les deux\b|\b[A-D] et [A-D]\b", re.I)
+
+
+def parse_quiz(texte: str, melanger: bool = False) -> list[dict]:
     questions = _liste_json(texte, "questions", "quiz")
     propres = []
     for q in questions:
@@ -342,9 +420,17 @@ def parse_quiz(texte: str) -> list[dict]:
         except (TypeError, ValueError):
             continue
         if q.get("question") and len(choix) >= 2 and 0 <= rep < len(choix):
-            propres.append({"question": str(q["question"]), "choix": choix, "reponse": rep,
-                            "explication": str(q.get("explication") or ""),
-                            "source": str(q.get("source") or "")})
+            if melanger and not any(FIGE.search(c) for c in choix):
+                # L'IA met trop souvent la bonne réponse en premier : l'ordre des choix est tiré au sort
+                ordre = random.sample(range(len(choix)), len(choix))
+                choix, rep = [choix[i] for i in ordre], ordre.index(rep)
+            propre = {"question": str(q["question"]), "choix": choix, "reponse": rep,
+                      "explication": str(q.get("explication") or ""), "source": str(q.get("source") or "")}
+            schema = str(q.get("schema") or "").strip()
+            if schema and schemas.nettoyer(schema if "```" in schema or schema.startswith("<svg")
+                                           else f"```dot\n{schema}\n```")[1]:
+                propre["schema"] = schema
+            propres.append(propre)
     if not propres:
         raise ErreurAgent("le quiz ne contient aucune question valide")
     return propres
@@ -376,12 +462,13 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
     def lire(texte: str):
         # Réponse inutilisable : demander() réessaie avec le modèle au-dessus
         if genre == "quiz":
-            return json.dumps(parse_quiz(texte), ensure_ascii=False), web_json(texte)
+            return json.dumps(parse_quiz(texte, melanger=True), ensure_ascii=False), web_json(texte)
         if genre == "cartes":
             return json.dumps(parse_cartes(texte), ensure_ascii=False), web_json(texte)
         if len(texte.strip()) < 80:
             raise ErreurAgent(f"réponse trop courte : {texte[:200]!r}")
-        return separer_web(texte.strip())
+        texte, web = separer_web(texte.strip())
+        return schemas.nettoyer(texte)[0], web  # un schéma au code faux est retiré plutôt qu'affiché en brut
 
     with tempfile.TemporaryDirectory() as dossier:  # les cours sont dans l'entrée, les pièces jointes ici
         a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
