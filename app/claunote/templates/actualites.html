@@ -59,12 +59,13 @@
       <div class="meta doux">
         {% if not a.lu %}<span class="point" aria-label="non lu"></span>{% endif %}
         <span class="source">{{ a.source }}</span> · {{ a.publie_le.astimezone(paris).strftime('%H:%M') }}
-        {% if a.tri == 'ia' and a.score is not none and a.score >= 0.75 %}<span class="important">Important</span>{% endif %}
+        {% if a.alerte %}<span class="important alerte-actu">Alerte</span>
+        {% elif a.tri == 'ia' and a.score is not none and a.score >= 0.75 %}<span class="important">Important</span>{% endif %}
       </div>
       {% if a.lien %}<a class="titre" href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}">{{ a.titre }}</a>
       {% else %}<span class="titre">{{ a.titre }}</span>{% endif %}
-      {% if a.pourquoi %}<p class="pourquoi">{{ a.pourquoi }}</p>{% endif %}
-      {% if a.extrait and a.extrait != a.titre %}<p class="extrait doux">{{ a.extrait }}</p>{% endif %}
+      {% if a.pourquoi %}<p class="pourquoi">{{ a.pourquoi }}</p>
+      {% elif a.extrait and a.extrait != a.titre %}<p class="extrait doux">{{ a.extrait }}</p>{% endif %}
       {% if a.noms_sujets %}<div class="sujets">{% for n in a.noms_sujets %}<span>{{ n }}</span>{% endfor %}</div>{% endif %}
     </div>
     <div class="fin">{% include "_actualite_favori.html" %}</div>
@@ -108,7 +109,8 @@
   .actus .titre { display: block; color: var(--texte); text-decoration: none; font-weight: 500; line-height: 1.35; }
   .actus .nonlu .titre { font-weight: 650; }
   .actus a.titre:hover { color: var(--accent-fonce); text-decoration: underline; }
-  .actus .pourquoi { margin: 4px 0 0; font-size: .92rem; color: var(--accent-fonce); }
+  .actus .pourquoi { margin: 4px 0 0; font-size: .95rem; line-height: 1.4; color: var(--texte); }
+  .actus .alerte-actu { background: var(--alerte); color: #fff; }
   .actus .extrait { margin: 4px 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .actus .sujets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .actus .sujets span { font-size: .75rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--bord); color: var(--doux); }

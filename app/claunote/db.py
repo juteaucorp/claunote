@@ -390,6 +390,8 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 CREATE INDEX IF NOT EXISTS articles_publie ON articles (publie_le DESC);
 CREATE INDEX IF NOT EXISTS articles_attente ON articles (id) WHERE tri = 'attente' OR NOT annonce;
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS alerte BOOLEAN NOT NULL DEFAULT false;  -- rare et grave (IA)
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS evenement TEXT;  -- même événement relayé par plusieurs sites
 -- Journal de sécurité (securite.py) : connexions, appareils, refus, alertes ; gardé 180 jours
 CREATE TABLE IF NOT EXISTS securite (
     id           SERIAL PRIMARY KEY,
@@ -2049,7 +2051,8 @@ def articles_trier(resultats: list[dict]):
     with connect() as c:
         for r in resultats:
             c.execute("UPDATE articles SET tri = %(tri)s, sujets = %(sujets)s, score = %(score)s, "
-                      "pourquoi = %(pourquoi)s WHERE id = %(id)s", r)
+                      "pourquoi = %(pourquoi)s, alerte = %(alerte)s, evenement = %(evenement)s WHERE id = %(id)s",
+                      {"alerte": False, "evenement": None, **r})
 
 
 def articles_a_annoncer():
@@ -2058,6 +2061,15 @@ def articles_a_annoncer():
             """SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, f.notifier AS flux_notifier
                FROM articles a JOIN flux f ON f.id = a.flux_id
                WHERE NOT a.annonce AND a.tri <> 'attente' ORDER BY a.publie_le""").fetchall()
+
+
+def alertes_recentes(jours: int = 7) -> list[str]:
+    """Étiquettes des alertes de la semaine : l'IA réutilise la même pour un événement déjà vu."""
+    with connect() as c:
+        return [r["evenement"] for r in c.execute(
+            "SELECT evenement, max(publie_le) AS le FROM articles WHERE alerte AND evenement IS NOT NULL "
+            "AND publie_le > now() - make_interval(days => %s) GROUP BY evenement ORDER BY le DESC LIMIT 40",
+            (jours,)).fetchall()]
 
 
 def articles_annonces(ids: list[int]):

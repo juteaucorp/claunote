@@ -1,16 +1,16 @@
-"""Actualités : flux RSS que tu choisis, triés par l'IA selon les sujets que tu suis, avec notifications.
+"""Actualités : flux RSS que tu choisis, résumés et triés par l'IA selon tes sujets, alertes pour le rare et le grave.
 
-    flux RSS / Atom ──┐                          ┌─► page Actualités (« Pour toi », tout, favoris)
+    flux RSS / Atom ──┐                          ┌─► page Actualités : résumé en une phrase (« Pour toi », tout…)
     (sites ajoutés)   ├─► relevé toutes les ─► articles ─► tri par l'IA (Haiku, par lots de 40) ─┤
-    Google Actualités ┘   30 min (ETag)      (dédup par lien)  sinon mots-clés                    └─► notification
-    (recherche d'un sujet)                                                                           regroupée
+    Google Actualités ┘   30 min (ETag)      (dédup par lien)  sinon mots-clés                    └─► notification si
+    (recherche d'un sujet)                                                                           ALERTE (rare, grave)
 
 - Dédup : un article = son lien nettoyé (sans utm_…, sans #) ; le même dans deux flux n'apparaît qu'une fois.
-- Pas de spam : à son premier relevé, un flux n'annonce rien (ses anciens articles sont rangés sans bruit) ;
-  seuls les articles jugés importants (score ≥ 0,75) d'un sujet « à notifier », ou d'un flux « tout
-  m'intéresse », sonnent ; plusieurs d'un coup pour un même sujet = une seule notification ; puis la file
-  commune (notifications.py) : heures de silence, même texte en moins de 20 h ignoré, plus de 3 = un résumé.
-- Sans Claude (limite, panne, réglage) : repérage par mots-clés, refait par l'IA à son retour si possible.
+- Pas de spam : à son premier relevé, un flux n'annonce rien ; seule une « alerte » (jugée par l'IA : grosse
+  fuite, faille critique exploitée dans un produit répandu, panne majeure) d'un sujet « à notifier » sonne, une
+  seule fois par événement (étiquette commune aux articles qui en parlent) ; ou chaque nouveauté d'un flux
+  « tout m'intéresse » ; puis la file commune (notifications.py) : silence, même texte < 20 h, plus de 3 = résumé.
+- Sans Claude (limite, panne, réglage) : repérage par mots-clés (rien ne sonne), refait par l'IA à son retour.
 """
 import datetime as dt
 import hashlib
@@ -33,7 +33,7 @@ RELEVE = 30 * 60          # secondes entre deux relevés des flux
 LOT = 40                  # articles par appel à l'IA
 FRAIS = 14                # jours : au-delà, un article n'est pas envoyé à l'IA (mots-clés seulement)
 SANS_IA_APRES = 3 * 3600  # Claude absent plus longtemps : tri par mots-clés pour ne pas bloquer
-SEUIL_NOTIF = 0.75
+SEUIL_IMPORTANT = 0.75   # badge « Important » sur la page (les notifications, elles, ne partent que pour une alerte)
 AGE_NOTIF = 2             # jours : un article plus vieux ne sonne jamais (flux qui republie ses archives)
 UA = "Mozilla/5.0 (compatible; Claunote/1.0; lecteur RSS personnel)"
 DEFAUT = {"ia": True}
@@ -45,7 +45,10 @@ FLUX_DEFAUT = [
     ("https://next.ink/feed/", "Next"),
     ("https://korben.info/feed", "Korben"),
     ("https://www.lemondeinformatique.fr/flux-rss/thematique/toutes-les-actualites/rss.xml", "Le Monde Informatique"),
+    ("https://www.numerama.com/feed/", "Numerama"),
+    ("https://www.01net.com/feed/", "01net"),
 ]
+FLUX_AJOUTES = {"actualites_flux_2": ["Numerama", "01net"]}   # ajoutés après coup aux installations existantes
 SUJETS_DEFAUT = [   # option SISR du BTS SIO : infrastructure, réseau, sécurité
     ("Cybersécurité", "Failles critiques à corriger, cyberattaques marquantes, rançongiciels, fuites de données, "
      "recommandations de l'ANSSI.",
@@ -70,19 +73,28 @@ ANCIENS_DEFAUT = {
 }
 
 PROMPT = """Tu fais la veille d'actualités d'un étudiant en BTS SIO option SISR (infrastructures, réseaux,
-systèmes et cybersécurité ; lycée en France).
+systèmes et cybersécurité ; lycée en France). Il veut du condensé, rapide à lire, et n'être alerté que pour le
+rare et le grave.
 Ses sujets suivis :
 {sujets}
-
+{deja}
 Sur l'entrée : des articles, un par ligne en JSON (id, source, titre, extrait).
 Pour chaque article :
 - "sujets" : les codes des sujets qu'il concerne VRAIMENT (pas un simple mot en commun ; [] si aucun) ;
-- "score" : son importance pour cet étudiant, de 0 à 1 (0,9 : à ne surtout pas rater, faille critique
-  massivement exploitée, annonce majeure ; 0,6 : intéressant ; 0,3 : anecdotique ; 0 : hors sujet, pub, promo) ;
-- "pourquoi" : en français, une phrase de 15 mots au plus qui dit ce qu'il y a à retenir (vide si hors sujet).
+- "score" : son importance pour cet étudiant, de 0 à 1 (0,9 : événement majeur ; 0,6 : intéressant ;
+  0,3 : anecdotique ; 0 : hors sujet, pub, promo, bon plan, test de produit) ;
+- "resume" : en français, style dépêche, 20 mots au plus : ce qui s'est passé, qui est touché, l'ampleur, et
+  s'il y a quelque chose à faire (« Mettre à jour FortiOS en 7.4.5 »). Chiffres concrets, pas de « cet article »
+  ni de formule creuse. Vide si hors sujet ;
+- "alerte" : true SEULEMENT pour un événement rare et grave qu'un futur admin réseau doit connaître le jour
+  même : piratage ou fuite massive d'une grande organisation (France Travail, Crédit Mutuel, un opérateur, un
+  hôpital, des millions de personnes) ; faille critique activement exploitée dans un produit très répandu
+  (Fortinet, Cisco, Ivanti, Microsoft, VMware, Citrix…) ; panne mondiale majeure. Quelques-unes par semaine
+  au plus ; dans le doute, false. Un tutoriel, une mise à jour courante, une faille non exploitée : false ;
+- "evenement" : si alerte, une étiquette courte de l'événement en minuscules avec tirets (« fuite-france-travail »,
+  « fortios-cve-2026-24858 »), la même pour tous les articles qui parlent du même événement ; sinon "".
 Réponds seulement en JSON, un objet par article, tous les articles :
-[{{"id": 12, "sujets": ["S1"], "score": 0.8, "pourquoi": "..."}}]"""
-
+[{{"id": 12, "sujets": ["S1"], "score": 0.9, "resume": "...", "alerte": true, "evenement": "..."}}]"""
 
 def log(msg: str):
     print(f"actualités : {msg}", flush=True)
@@ -115,12 +127,36 @@ def passer_en_sisr():
     log(f"sujets de départ passés en option SISR ({', '.join(s['nom'] for s in remplaces)} remplacés)")
 
 
+def ajouter_nouveaux_flux():
+    """Flux ajoutés à la sélection de départ après coup : proposés une fois aux installations existantes."""
+    par_titre = {t: u for u, t in FLUX_DEFAUT}
+    for cle, titres in FLUX_AJOUTES.items():
+        if db.etat_valeur(cle):
+            continue
+        db.etat_ecrire(cle, "1")
+        for t in titres:
+            db.flux_ajouter(par_titre[t], t, urlsplit(par_titre[t]).hostname or "")
+        log(f"flux ajoutés : {', '.join(titres)}")
+
+
+def resumes_condenses():
+    """Une fois : les articles de la semaine sont relus pour avoir le résumé condensé (sans renotifier)."""
+    if not db.etat_valeur("actualites_resumes"):
+        db.etat_ecrire("actualites_resumes", "1")
+        db.articles_retrier()
+
+
 def initialiser():
     """Au tout premier démarrage : une sélection de départ (modifiable sur la page Sources)."""
     if db.etat_valeur("actualites_init"):
         passer_en_sisr()
+        ajouter_nouveaux_flux()
+        resumes_condenses()
         return
     db.etat_ecrire("actualites_sisr", "1")
+    db.etat_ecrire("actualites_resumes", "1")
+    for cle in FLUX_AJOUTES:
+        db.etat_ecrire(cle, "1")
     db.etat_ecrire("actualites_init", "1")
     for nom, description, mots in SUJETS_DEFAUT:
         db.sujet_ajouter(nom, description, mots)
@@ -324,11 +360,18 @@ def _codes(sujets: list[dict]) -> dict[str, int]:
     return {f"S{i + 1}": s["id"] for i, s in enumerate(sujets)}
 
 
-def prompt(sujets: list[dict]) -> str:
+def prompt(sujets: list[dict], deja: list[str] | None = None) -> str:
     lignes = [f"{code} — {s['nom']} : {s['description'] or s['nom']}"
               + (f" (mots-clés : {', '.join(s['mots_cles'])})" if s["mots_cles"] else "")
               for code, s in zip(_codes(sujets), sujets)]
-    return PROMPT.format(sujets="\n".join(lignes))
+    connus = (f"\nAlertes déjà repérées ces 7 derniers jours (réutilise l'étiquette si c'est le même événement) : "
+              f"{', '.join(deja)}\n" if deja else "")
+    return PROMPT.format(sujets="\n".join(lignes), deja=connus)
+
+
+def _etiquette(texte) -> str | None:
+    e = re.sub(r"[^a-z0-9]+", "-", _sans_accents(str(texte or ""))).strip("-")[:80]
+    return e or None
 
 
 def lire_reponse(texte: str, ids: set[int], codes: dict[str, int]) -> dict[int, dict]:
@@ -350,15 +393,18 @@ def lire_reponse(texte: str, ids: set[int], codes: dict[str, int]) -> dict[int, 
         if i not in ids:
             continue
         sujets = [codes[c] for c in (d.get("sujets") or []) if isinstance(c, str) and c in codes]
+        alerte = d.get("alerte") is True and bool(sujets)
         resultats[i] = {"id": i, "tri": "ia", "sujets": sujets, "score": max(0.0, min(score, 1.0)),
-                        "pourquoi": str(d.get("pourquoi") or "").strip()[:200] or None}
+                        "pourquoi": str(d.get("resume") or d.get("pourquoi") or "").strip()[:220] or None,
+                        "alerte": alerte, "evenement": _etiquette(d.get("evenement")) if alerte else None}
     if not resultats:
         raise agent.ErreurAgent("réponse sans aucun article reconnu")
     return resultats
 
 
 def _sans_ia(a: dict, sujets: list[dict]) -> dict:
-    return {"id": a["id"], "tri": "mots_cles", "sujets": par_mots_cles(sujets, a), "score": None, "pourquoi": None}
+    return {"id": a["id"], "tri": "mots_cles", "sujets": par_mots_cles(sujets, a), "score": None, "pourquoi": None,
+            "alerte": False, "evenement": None}
 
 
 def trier(claude_ok) -> int:
@@ -386,7 +432,7 @@ def trier(claude_ok) -> int:
         db.articles_trier(trop_vieux)
         return len(sans) + len(trop_vieux)
     codes = _codes(sujets)
-    consigne = prompt(sujets)
+    consigne = prompt(sujets, db.alertes_recentes())
     faits = len(sans)
     for debut in range(0, len(a_ia), LOT):
         lot = a_ia[debut:debut + LOT]
@@ -406,15 +452,13 @@ def trier(claude_ok) -> int:
 
 # --- Notifications ------------------------------------------------------------------
 
-def _important(a: dict, notifiants: set[int]) -> list[int]:
-    """Sujets « à notifier » pour lesquels cet article mérite de sonner."""
-    if a["tri"] == "ia" and (a["score"] or 0) < SEUIL_NOTIF:
-        return []
-    return [s for s in a["sujets"] if s in notifiants]
-
-
 def annoncer(maintenant: dt.datetime | None = None) -> int:
-    """Décide une fois pour toutes, pour chaque article trié, s'il sonne ; regroupe par sujet ou par flux."""
+    """Décide une fois pour toutes, pour chaque article trié, s'il sonne.
+
+    Sonne : une alerte (rare et grave, jugée par l'IA) d'un sujet « à notifier », une seule fois par événement
+    même si plusieurs sites en parlent ; ou chaque nouveauté d'un flux marqué « tout m'intéresse ».
+    Sans l'IA, rien ne sonne pour les sujets : les mots-clés ne savent pas juger de la gravité.
+    """
     articles = db.articles_a_annoncer()
     if not articles:
         return 0
@@ -422,31 +466,22 @@ def annoncer(maintenant: dt.datetime | None = None) -> int:
     actif = notifications.preferences().get("actualites", True) and bool(db.abonnements())
     sujets = {s["id"]: s for s in db.sujets()}
     notifiants = {i for i, s in sujets.items() if s["notifier"]}
-    groupes: dict[str, list[dict]] = {}
-    for a in articles:
+    n, vus = 0, set()
+    for a in sorted(articles, key=lambda a: -(a["score"] or 0)):
         if not actif or a["publie_le"] < maintenant - dt.timedelta(days=AGE_NOTIF):
             continue
-        importants = _important(a, notifiants)
-        if importants:
-            groupe = min((sujets[i]["nom"] for i in importants), key=str.lower)
+        resume = a["pourquoi"] or a["extrait"][:200]
+        url = f"/actualites?article={a['id']}#a{a['id']}"
+        if a.get("alerte") and any(s in notifiants for s in a["sujets"]):
+            evenement = a.get("evenement") or a["cle"]
+            if evenement in vus:
+                continue
+            vus.add(evenement)
+            # La clé de l'événement : la même fuite relayée par trois sites ne sonne qu'une fois
+            n += db.notifier(f"actu-alerte:{evenement}"[:400], f"🚨 {a['titre']}"[:120],
+                             f"{resume} ({a['source']})"[:300], url)
         elif a["flux_notifier"] and (a["tri"] != "ia" or (a["score"] or 0) >= 0.3 or not a["sujets"]):
-            groupe = a["source"]
-        else:
-            continue
-        groupes.setdefault(groupe, []).append(a)
-    n = 0
-    for groupe, liste in groupes.items():
-        liste.sort(key=lambda a: -(a["score"] if a["score"] is not None else 0.8))
-        if len(liste) == 1:
-            a = liste[0]
-            corps = f"{groupe} · {a['source']}" if groupe != a["source"] else a["source"]
-            if a["pourquoi"]:
-                corps += f" : {a['pourquoi']}"
-            n += db.notifier(f"actu:{a['cle']}"[:400], a["titre"][:120], corps[:300], f"/actualites?article={a['id']}#a{a['id']}")
-        else:
-            ids = sorted(a["id"] for a in liste)
-            n += db.notifier(f"actu:{groupe}:{ids[0]}-{ids[-1]}:{len(ids)}"[:400], f"{len(liste)} actualités : {groupe}",
-                             " · ".join(a["titre"] for a in liste)[:300], "/actualites")
+            n += db.notifier(f"actu:{a['cle']}"[:400], a["titre"][:120], (f"{a['source']} : {resume}" if resume else a["source"])[:300], url)
     db.articles_annonces([a["id"] for a in articles])
     return n
 
