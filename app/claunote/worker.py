@@ -674,7 +674,7 @@ def traiter_revision(kd: KDrive, rev: dict):
         contenu, reperes, web = revision.generer(
             rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]), rev["date_eval"], rev.get("consigne") or "",
             pieces=db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True), memoire=db.Condenses(),
-            progres=lambda etape: activite(f"{quoi} : {etape}"))
+            progres=lambda etape: activite(f"{quoi} : {etape}"), strict=bool(rev.get("strict")))
     except ErreurAgent as e:
         db.maj_revision(rev["id"], "erreur", erreur=str(e))
         log(f"erreur de révision {rev['id']} : {e}")

@@ -356,7 +356,8 @@ templates.env.filters["schema"] = schemas.figure
 
 
 def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Markup:
-    """Transforme les repères [D1] du texte en liens vers le cours d'origine, et [W1] vers la page web."""
+    """Transforme les repères [D1] du texte en liens vers le cours d'origine, [W1] vers la page web,
+    et [IA] (ajouté par l'IA, pas dans les cours) en étiquette visible."""
     pages = {w["repere"]: w["url"] for w in web or []}
 
     def lien(m):
@@ -366,7 +367,12 @@ def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Ma
                     f'[{m.group(1)}]</a>') if url else m.group(0)
         doc_id = reperes.get(m.group(1))
         return f'<a href="/doc/{doc_id}">[{m.group(1)}]</a>' if doc_id else m.group(0)
-    return Markup(re.sub(r"\[([DW]\d+)\]", lien, rendu))
+    rendu = re.sub(r"\[([DW]\d+)\]", lien, rendu)
+    return Markup(re.sub(r"\[IA\]", HORS_COURS, rendu))
+
+
+HORS_COURS = '<span class="ajout-ia" title="Ajouté par l\'IA : ce n\'est pas dans tes cours">pas dans tes cours</span>'
+templates.env.globals["HORS_COURS"] = Markup(HORS_COURS)
 
 
 # --- Connexion --------------------------------------------------------------
@@ -1322,7 +1328,7 @@ async def demander_revision(request: Request):
     if not ids:
         raise HTTPException(400, "aucun document classé pour ce choix")
     pieces = await _pieces(f)
-    rev_id = db.creer_revision(genre, sujet, ids, eval_le, consigne=consigne)
+    rev_id = db.creer_revision(genre, sujet, ids, eval_le, consigne=consigne, strict=bool(f.get("strict")))
     if pieces:
         db.ajouter_pieces(pieces, revision_id=rev_id)
     db.demander_scan()
@@ -1359,7 +1365,10 @@ def voir_revision(request: Request, rev_id: int):
         "cartes": cartes, "reperes": reperes, "sources": sources,
         "cours": [(r, par_id[i]) for r, i in reperes.items() if i in par_id],
         "pieces": db.pieces_jointes(rev_id, rev.get("campagne_id")),
-        "web": {w["repere"]: w for w in web}})
+        "web": {w["repere"]: w for w in web},
+        # Ajouts de l'IA hors des cours ([IA] dans le texte, "source": "IA" dans un quiz ou des flashcards)
+        "ajout_ia": rev["statut"] == "pret" and bool(re.search(r'\[IA\]|"source": "IA"', rev["contenu"] or "")),
+        "sans_texte": revision.sans_texte(sources)})
 
 
 def _pdf(contenu: bytes, nom: str, telecharger: bool) -> Response:

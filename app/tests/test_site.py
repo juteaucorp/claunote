@@ -1456,3 +1456,25 @@ def test_eteindre_et_rallumer_les_modeles_locaux(client, monkeypatch, tmp_path):
     assert (tmp_path / "locaux_allumer").exists() and not (tmp_path / "locaux_eteints").exists()
     assert "Éteindre les modèles locaux" in client.get("/analyses").text
     assert client.post("/analyses/locaux", data={"action": "autre"}).status_code == 400
+
+
+def test_revision_complement_hors_cours(client, monkeypatch):
+    vu = {}
+    monkeypatch.setattr(db, "creer_revision", lambda *a, **k: vu.update(k) or 5)
+    client.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux", "sujet": "VLAN"},
+                follow_redirects=False)
+    assert vu["strict"] is False  # par défaut : l'IA complète ce que les cours ne couvrent pas
+    client.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux", "sujet": "VLAN", "strict": "1"},
+                follow_redirects=False)
+    assert vu["strict"] is True
+    assert 'name="strict"' in client.get("/reviser/nouvelle").text
+    base = {"id": 5, "genre": "fiche", "sujet": "Suites", "date_eval": None, "erreur": None, "reperes": {"D1": 1},
+            "statut": "pret", "contenu": "## Suites [IA]\n> **Hors de tes cours** : pas encore vu.\n\nUn VLAN [D1]."}
+    quiz = {**base, "id": 7, "genre": "quiz", "contenu": '[{"question": "Q?", "choix": ["a", "b"], '
+            '"reponse": 1, "explication": "car", "source": "IA"}]'}
+    monkeypatch.setattr(db, "revision", lambda i: {5: base, 7: quiz, 8: {**base, "id": 8, "contenu": "Un VLAN [D1]."}}[i])
+    r = client.get("/revision/5")
+    assert 'class="ajout-ia"' in r.text and "Complété hors de tes cours" in r.text
+    assert 'class="encadre e-ia"' in r.text and "[IA]" not in r.text
+    assert "Complété hors de tes cours" in client.get("/revision/7").text
+    assert "Complété hors de tes cours" not in client.get("/revision/8").text

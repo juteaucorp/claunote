@@ -46,6 +46,8 @@
   .e-attention { border-left-color: #c0392b !important; background: #fcecea !important; } .e-attention > p:first-child > strong:first-child { color: #c0392b !important; }
   .e-exemple { border-left-color: #3b6fb6 !important; background: #edf2fa !important; } .e-exemple > p:first-child > strong:first-child { color: #3b6fb6 !important; }
   .e-methode { border-left-color: #3f8a57 !important; background: #ecf5ef !important; } .e-methode > p:first-child > strong:first-child { color: #3f8a57 !important; }
+  .ajout-ia { font-size: 7.5pt; padding: 0 4pt; border: 0.6pt dashed #a0701c; border-radius: 6pt; color: #8a5f14; white-space: nowrap; }
+  .e-ia { border-left-color: #a0701c !important; border-left-style: dashed !important; background: #fbf4e6 !important; } .e-ia > p:first-child > strong:first-child { color: #8a5f14 !important; }
   .e-definition { border-left-color: #8a4fb8 !important; background: #f4eef9 !important; } .e-definition > p:first-child > strong:first-child { color: #8a4fb8 !important; }
   h2 { break-after: avoid; } h3 { break-after: avoid; } tr { break-inside: avoid; }
 </style>
@@ -89,7 +91,7 @@
   {% if s.avec_corrige %}
   <div class="corrige"><h2>Corrigé</h2>
     <ol>{% for q in s.questions %}<li><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse]|maths }}</strong>
-      {% if q.explication %}<br><span class="doux">{{ q.explication|maths }}{% if q.source %} [{{ q.source }}]{% endif %}</span>{% endif %}</li>{% endfor %}</ol>
+      {% if q.explication %}<br><span class="doux">{{ q.explication|maths }}{% if q.source == 'IA' %} <span class="ajout-ia">pas dans tes cours</span>{% elif q.source %} [{{ q.source }}]{% endif %}</span>{% endif %}</li>{% endfor %}</ol>
   </div>
   {% endif %}
   {% endif %}

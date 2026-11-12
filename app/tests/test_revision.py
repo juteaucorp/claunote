@@ -231,3 +231,32 @@ def test_jours_programme_ancien_format():
     jours = revision.jours_programme({"jours": [{"date": "2026-11-02", "taches": [
         {"matiere": "Réseaux", "quoi": "Relire", "duree": 30}]}]}, [])
     assert jours[0]["taches"][0]["support"] == "" and jours[0]["minutes"] == 30 and jours[0]["titre"] == ""
+
+
+def test_prompt_complete_hors_cours_par_defaut_et_strict_sur_demande():
+    p = revision.prompt("fiche", "Lois binomiales", consigne="Insiste sur les suites")
+    assert "ne refuse JAMAIS" in p and "[IA]" in p and "Hors de tes cours" in p and "programme officiel" in p
+    assert "sans inventer" not in p and "reste strictement" not in p
+    s = revision.prompt("fiche", "Lois binomiales", consigne="Insiste sur les suites", strict=True)
+    assert "reste strictement dans ses cours" in s and "sans inventer de contenu absent des cours" in s
+    assert "ne refuse JAMAIS" not in s
+    assert "marquées [IA] dans le corrigé" in revision.prompt("examen", "Suites")
+    assert "ni notion absente des cours" in revision.prompt("examen", "Suites", strict=True)
+    assert '"source": "IA"' in revision.prompt("quiz", "Suites")
+
+
+def test_cours_sans_transcription_signale():
+    docs = DOCS + [{"id": 13, "nom": "scan.jpg", "titre": "Suites", "niveau": "BTS2", "matiere": "Maths",
+                    "type": "Cours", "transcription": None}]
+    texte, _, _ = revision.contexte(docs)
+    assert "[D3] Suites (BTS2, Maths, Cours)\n" + revision.SANS_TEXTE in texte
+    assert [d["id"] for d in revision.sans_texte(docs)] == [13]
+
+
+def test_generer_transmet_le_mode_strict(monkeypatch):
+    vu = []
+    monkeypatch.setattr(revision, "demander", lambda tache, prompt, *a, **k: (vu.append(prompt) or
+                        (("# Fiche\n" + "Une loi binomiale [IA] compte les succès. " * 3, []), "sonnet")))
+    revision.generer("fiche", "Lois binomiales", DOCS)
+    revision.generer("fiche", "Lois binomiales", DOCS, strict=True)
+    assert "ne refuse JAMAIS" in vu[0] and "ne refuse JAMAIS" not in vu[1]
