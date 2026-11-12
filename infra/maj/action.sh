@@ -18,6 +18,14 @@ if [ -n "$GITHUB_TOKEN" ]; then cat >> /tmp/.gitconfig <<'FIN'
 FIN
 fi
 git_() { HOME=/tmp GIT_TERMINAL_PROMPT=0 git "$@"; }
+# Le dépôt a déménagé de ctrljuteau/claunote vers l'organisation juteaucorp : une VM clonée depuis
+# l'ancienne adresse est repointée (même forme https ou ssh). Les forks gardent leur propre origin.
+ancien=$(git_ -C "$DEPOT" remote get-url origin 2>/dev/null)
+case "$ancien" in *github.com[:/]ctrljuteau/claunote*)
+  git_ -C "$DEPOT" remote set-url origin "$(echo "$ancien" | sed 's#ctrljuteau/claunote#juteaucorp/claunote#')"
+  chown "$PROPRIO" "$DEPOT/.git/config"
+  echo "== dépôt GitHub repointé : $(git_ -C "$DEPOT" remote get-url origin)" ;;
+esac
 rendre() {  # .git et les fichiers suivis par git (jamais .env) reviennent au propriétaire du dossier
   chown -R "$PROPRIO" "$DEPOT/.git"
   git_ ls-files -z | xargs -0 -r chown -h "$PROPRIO" 2>/dev/null
