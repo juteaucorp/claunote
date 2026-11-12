@@ -42,7 +42,7 @@ services:
   cloudflared:
     # Accès par Internet sans ouvrir de port (infra/SETUP.md, section 17) : la VM appelle Cloudflare, pas l'inverse.
     # Ne démarre que si COMPOSE_PROFILES=tunnel dans .env. Seuls les appareils approuvés passent (appareils.py).
-    image: cloudflare/cloudflared:2026.10.1
+    image: cloudflare/cloudflared:2026.10.7
     profiles: [tunnel]
     restart: unless-stopped
     command: tunnel --no-autoupdate run

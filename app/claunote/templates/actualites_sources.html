@@ -33,7 +33,7 @@
 <details class="carte ajout" {{ 'open' if saisie.nom or not sujets }}>
   <summary>{{ icone('nouveau', 18) }}<strong>Suivre un sujet</strong></summary>
   <form method="post" action="/actualites/sujets" class="champs">
-    <label>Nom <input name="nom" required maxlength="80" placeholder="ex. Cybersécurité, Apple, Lycée Chevrollier" value="{{ saisie.nom or '' }}"></label>
+    <label>Nom <input name="nom" required maxlength="80" placeholder="ex. Cybersécurité, Apple, mon lycée" value="{{ saisie.nom or '' }}"></label>
     <label>Ce qui t'intéresse <textarea name="description" rows="2" maxlength="500" placeholder="ex. Les failles critiques à corriger vite et les grosses attaques">{{ saisie.description or '' }}</textarea></label>
     <label>Mots-clés <span class="doux">(séparés par des virgules)</span>
       <input name="mots_cles" placeholder="ex. faille, CVE, rançongiciel" value="{{ saisie.mots_cles or '' }}"></label>

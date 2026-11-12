@@ -156,7 +156,7 @@ def test_revision_avec_fichiers_joints(client, monkeypatch):
     assert 'name="pieces"' in client.get("/reviser/nouvelle").text
     assert 'enctype="multipart/form-data"' in client.get("/reviser/nouvelle").text
     fichiers = [("pieces", ("Emploi du temps.jpg", b"\xff\xd8jpeg", "image/jpeg")),
-                ("pieces", ("C:\\Users\\anto\\convoc.pdf", b"%PDF-1.4", "application/pdf"))]
+                ("pieces", ("C:\\Users\\camille\\convoc.pdf", b"%PDF-1.4", "application/pdf"))]
     r = client.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux"}, files=fichiers,
                     follow_redirects=False)
     assert r.status_code == 303
@@ -397,7 +397,7 @@ class FauxPronote:
         if pin == "0000":
             from claunote.pronote import ErreurPronote
             raise ErreurPronote("Pronote a refusé la connexion : code PIN incorrect.")
-        FauxPronote.etat_ = {"connecte": True, "nom": "JUTEAU Anto", "classe": "BTS SIO 2"}
+        FauxPronote.etat_ = {"connecte": True, "nom": "MARTIN Camille", "classe": "BTS SIO 2"}
 
     def deconnexion(self):
         FauxPronote.appels.append(("deconnexion",))
@@ -449,12 +449,12 @@ def test_agenda_connexion_qr(agenda):
     assert "code PIN incorrect" in r.text and "Connecter Pronote" in r.text
     r = agenda.post("/agenda/connexion-qr", data={"qr": ' {"jeton":"j"} ', "pin": "1234"})
     assert ("qr", '{"jeton":"j"}', "1234") in FauxPronote.appels
-    assert "Connecté à Pronote : 2 évaluation(s)" in r.text and "JUTEAU Anto" in r.text
+    assert "Connecté à Pronote : 2 évaluation(s)" in r.text and "MARTIN Camille" in r.text
     assert ("etat", "pronote_demande", "oui") in agenda.appels and "scan" in agenda.appels
 
 
 def test_agenda_connecte(agenda):
-    FauxPronote.etat_ = {"connecte": True, "nom": "JUTEAU Anto", "classe": "BTS SIO 2"}
+    FauxPronote.etat_ = {"connecte": True, "nom": "MARTIN Camille", "classe": "BTS SIO 2"}
     r = agenda.get("/agenda")
     assert "Évaluations à venir" in r.text and "tes cours : Réseaux" in r.text
     assert "pas de cours classés pour cette matière" in r.text  # anglais
@@ -543,11 +543,11 @@ def test_connexion_pas_de_redirection_externe(anonyme):
 
 def test_identifiants_du_env(monkeypatch, anonyme):
     from claunote import auth
-    monkeypatch.setenv("CLAUNOTE_UTILISATEUR", "anto")
+    monkeypatch.setenv("CLAUNOTE_UTILISATEUR", "camille")
     monkeypatch.setenv("CLAUNOTE_MOT_DE_PASSE", auth.hacher("s3cret"))
     with TestClient(main.app) as c:
         assert c.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}).status_code == 401
-        r = c.post("/connexion", data={"utilisateur": "anto", "mot_de_passe": "s3cret"}, follow_redirects=False)
+        r = c.post("/connexion", data={"utilisateur": "camille", "mot_de_passe": "s3cret"}, follow_redirects=False)
         assert r.status_code == 303
         assert "Tu utilises le mot de passe par défaut" not in c.get("/").text
 

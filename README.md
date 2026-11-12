@@ -4,7 +4,7 @@
 
 # Claunote
 
-**Tous tes cours (du collège au BTS) scannés, rangés et transformés en révisions par une IA,
+**Tous tes cours (du collège aux études supérieures) scannés, rangés et transformés en révisions par une IA,
 sur ton propre serveur.**
 
 Tu scannes tes cahiers et tes TP, ou tu les déposes depuis ton téléphone. Claunote les lit, les classe par année,
@@ -22,9 +22,14 @@ propres cours. Il récupère aussi tes évaluations sur Pronote et te dit quoi r
 - [Ce que fait Claunote](#ce-que-fait-claunote)
 - [Comment ça marche](#comment-ça-marche)
 - [Captures](#captures)
+- [Ce qu'il te faut](#ce-quil-te-faut)
 - [Installation](#installation)
-- [Réglages principaux](#réglages-principaux)
+- [Le fichier .env](#le-fichier-env)
+- [Ouvrir le site : VPN ou Internet](#ouvrir-le-site--vpn-ou-internet)
+- [Mettre à jour](#mettre-à-jour)
+- [Réglages avancés](#réglages-avancés)
 - [Vie privée et coûts](#vie-privée-et-coûts)
+- [Dépannage rapide](#dépannage-rapide)
 - [Développement](#développement)
 - [Organisation du code](#organisation-du-code)
 
@@ -42,14 +47,14 @@ propres cours. Il récupère aussi tes évaluations sur Pronote et te dit quoi r
 | 🎓 **Pronote** | Évaluations, devoirs, notes et documents des profs, synchronisés toutes les 3 h. Une fiche ou un plan est préparé tout seul avant chaque contrôle. |
 | 🖥️ **Local d'abord** | Le travail interne (lecture, classement, noms de dossiers, matières, chat) est fait **sur le processeur du serveur** : OCR Tesseract et [Ollama](https://ollama.com). Quand le modèle local doute ou n'arrive pas à lire (écriture manuscrite), il demande à Claude, qui vérifie et corrige. Une analyse sûre sur 10 est contrôlée quand même, pour mesurer sa fiabilité. Si la VM sature ou si la file s'allonge, le surplus part chez Claude. Des pics à 100 %, jamais une VM à fond en permanence : au-delà de 60 % en moyenne sur 15 min, le travail de fond ralentit. |
 | ⏯️ **Tu gardes la main** | *Activité* : mise en pause, arrêt immédiat des analyses en cours, actions de masse sur la file, choix de qui fait le travail. *Ranger* : documents à vérifier, actions de masse, matières en double (« Maths » / « Mathématiques »). |
-| 📰 **Actualités** | Ta veille techno (option SISR par défaut) : les flux RSS que tu ajoutes (une adresse de site suffit) et les sujets que tu suis (cybersécurité, réseaux, systèmes et virtualisation…). Claude (Haiku) trie les nouveaux articles par lots et garde dans « Pour toi » ceux qui comptent, avec une phrase sur ce qu'il faut retenir. Les plus importants sonnent sur le téléphone, regroupés, jamais pendant le silence. Un sujet peut aussi chercher sur Google Actualités. |
+| 📰 **Actualités** | Ta veille techno (sujets de départ orientés BTS SIO option SISR, modifiables) : les flux RSS que tu ajoutes (une adresse de site suffit) et les sujets que tu suis (cybersécurité, réseaux, systèmes et virtualisation…). Claude (Haiku) trie les nouveaux articles par lots et garde dans « Pour toi » ceux qui comptent, avec une phrase sur ce qu'il faut retenir. Les plus importants sonnent sur le téléphone, regroupés, jamais pendant le silence. Un sujet peut aussi chercher sur Google Actualités. |
 | 📱 **Appli iPhone** | Une appli web installable sur l'écran d'accueil, avec notifications push, thème clair ou sombre et **connexion par Face ID** (clés d'accès). Pas d'App Store, pas de compte développeur. |
 
 ## Comment ça marche
 
 ```mermaid
 flowchart LR
-    T["📱 Téléphone / PC<br/>(VPN)"] -->|HTTPS| S
+    T["📱 Téléphone / PC<br/>(VPN ou Cloudflare Tunnel)"] -->|HTTPS| S
     subgraph VM["VM Linux · Docker Compose"]
         S["Site<br/>FastAPI + HTMX"] --- DB[("PostgreSQL + pgvector<br/>passages, recherche par le sens")]
         W["Worker<br/>tri · OCR · analyse · rangement"] --- DB
@@ -97,43 +102,145 @@ flowchart TD
 
 <sub>Données de démonstration fictives.</sub>
 
+## Ce qu'il te faut
+
+| | Obligatoire ? | Pourquoi | Où le trouver |
+| --- | --- | --- | --- |
+| 🖥️ **Une VM Linux avec Docker** | **oui** | Tout tourne dedans (site, worker, base, modèles locaux) | Debian 12 / Ubuntu 24.04, **4 vCPU · 8 Go RAM · 40 Go SSD** conseillés (2 vCPU · 4 Go avec `OLLAMA_MODELE=qwen2.5:1.5b`). Aucun GPU. |
+| 🤖 **Un abonnement Claude Pro (ou Max)** | **oui** | L'IA passe par Claude Code (`claude -p`) avec **le jeton de ton forfait**, pas par une clé API : **aucune facturation à l'usage** | [claude.ai](https://claude.ai), puis `claude setup-token` (voir l'étape 3) |
+| ☁️ **Un kDrive Infomaniak** | **oui** | Tes scans y arrivent (`Etudes/inbox`) et y sont rangés (`Etudes/archives/…`) | [Jeton API](https://manager.infomaniak.com/v3/ng/accounts/token/list) avec le scope `drive` |
+| 🔒 **Un moyen d'ouvrir le site** | **oui** | Le site n'est **jamais** exposé directement sur Internet | Ton VPN (WireGuard, OpenVPN…), ou Cloudflare Tunnel (voir [plus bas](#ouvrir-le-site--vpn-ou-internet)) |
+| 🎓 **Un compte Pronote** | non | Agenda, devoirs, notes, documents des profs | Se branche depuis le site (page *Agenda*), QR code ou identifiants |
+| 🌐 **Un domaine sur Cloudflare** | non | Seulement pour ouvrir le site **par Internet, sans VPN** | ~10 €/an, voir la [procédure Cloudflare](docs/cloudflare-tunnel.md) |
+| 🔑 **Un jeton GitHub** | si le dépôt est privé | Le bouton *Mise à jour* du site fait un `git pull` | [Jeton fine-grained](https://github.com/settings/personal-access-tokens/new), voir [Mettre à jour](#mettre-à-jour) |
+
 ## Installation
 
-Il te faut une VM Linux (4 vCPU et 8 Go de RAM conseillés pour le modèle local ; 2 vCPU et 4 Go avec
-`OLLAMA_MODELE=qwen2.5:1.5b`), Docker, un kDrive Infomaniak
-et un abonnement Claude Pro. Le guide pas à pas est dans **[infra/SETUP.md](infra/SETUP.md)** : VPN, jeton kDrive,
-Claude Code, Pronote, HTTPS pour l'iPhone, notifications.
+```mermaid
+flowchart LR
+    A["1 · VM + Docker"] --> B["2 · kDrive<br/>dossiers + jeton"]
+    B --> C["3 · Claude<br/>claude setup-token"]
+    C --> D["4 · .env"]
+    D --> E["5 · docker compose up"]
+    E --> F["6 · Ouvrir le site<br/>et déposer un scan"]
+```
+
+**1. La VM** (en tant qu'utilisateur du groupe `docker`, pas en `sudo`) :
 
 ```bash
+sudo apt install -y docker.io docker-compose-v2 git curl
 git clone https://github.com/juteaucorp/claunote && cd claunote
-cp .env.example .env          # jetons kDrive et Claude, mot de passe du site…
-docker compose up -d --build  # site, worker, base, modèles locaux, Pronote, HTTPS
-                              # (le modèle local se télécharge tout seul au premier lancement, ~2,3 Go)
+cp .env.example .env
 ```
 
-Ensuite, ouvre `http://<IP-VPN-de-la-VM>:8000`, connecte-toi, et dépose un premier scan.
+**2. kDrive** : crée un dossier `Etudes` et un dossier `inbox` dedans, puis un
+[jeton API](https://manager.infomaniak.com/v3/ng/accounts/token/list) avec le scope **`drive`**.
+Les identifiants se lisent dans l'adresse de kDrive web :
 
-**Mises à jour** : depuis le site, *Plus → Réglages → Mise à jour → Tout mettre à jour* (réservé au compte connecté).
-Le service `maj` fait le `git pull` puis reconstruit et redémarre les services ; un badge prévient quand une
-nouvelle version est sur GitHub.
+```
+…/drive/123456/files/7890
+         └─────┘       └──┘
+         KDRIVE_ID      ID du dossier ouvert (Etudes, puis inbox)
+```
 
-**Reconstruire à la main** sur une VM où tout tourne déjà : éviter `docker compose up -d --build`, qui construit
-toutes les images **en même temps** à côté d'Ollama (PyTorch + apt + modèle chargé peuvent saturer 8 Go et faire
-échouer une construction). Construire une image à la fois, puis redémarrer :
+**3. Claude** : sur la VM (ou n'importe quel PC), une seule fois :
 
 ```bash
-docker compose stop ollama lecture                     # libère ~4 Go le temps de construire
-for s in web worker pronote lecture; do docker compose build $s || break; done
-docker compose up -d
+curl -fsSL https://claude.ai/install.sh | bash   # installe Claude Code
+claude setup-token                               # connexion à ton compte claude.ai → affiche un jeton (valable 1 an)
 ```
 
-Si une construction échoue : `docker compose build web 2>&1 | tail -40`, puis `df -h /` (disque plein ?) et
-`free -h` ; *Réglages → Mise à jour → Libérer de la place* supprime les anciennes images.
+**4. Le `.env`** : remplis au minimum les lignes du [tableau ci-dessous](#le-fichier-env).
 
-## Réglages principaux
+**5. Lancer** :
 
-Tout se règle dans `.env` (voir les commentaires de [.env.example](.env.example)). Les réglages du quotidien
-se font aussi sur le site.
+```bash
+docker compose up -d --build   # site, worker, base, modèles locaux, Pronote, HTTPS, service de mise à jour
+curl localhost:8000/health     # {"ok":true,"kdrive":true}
+```
+
+Le premier lancement télécharge le modèle local (~2,3 Go) : compte 10 à 20 minutes.
+
+**6. Ouvrir** `http://<IP-VPN-de-la-VM>:8000`, se connecter (`admin` / `claunote` par défaut, **à changer
+tout de suite** sur la page *Compte*), puis déposer un premier scan dans *Ajouter* ou dans `kDrive/Etudes/inbox`.
+
+Le guide détaillé, étape par étape, avec les tests et le dépannage : **[infra/SETUP.md](infra/SETUP.md)**
+(Pronote, appli iPhone, notifications, Face ID, modèles locaux…).
+
+## Le fichier .env
+
+Il reste **sur ta VM** (il est ignoré par git) : ne le partage jamais, il contient tes jetons.
+
+| Variable | À remplir ? | Valeur |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` | **oui** | Un mot de passe au hasard (`openssl rand -hex 16`) |
+| `BIND_ADDR` | **oui** | L'IP de la VM **sur ton VPN** : le site n'écoute que là. `127.0.0.1` si tu passes uniquement par Cloudflare Tunnel |
+| `KDRIVE_TOKEN` | **oui** | Le jeton API Infomaniak (scope `drive`) |
+| `KDRIVE_ID`, `KDRIVE_ETUDES_ID`, `KDRIVE_INBOX_ID` | **oui** | Les nombres lus dans l'adresse de kDrive web (étape 2) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | **oui** | Le jeton de `claude setup-token`. Une `ANTHROPIC_API_KEY` serait **ignorée** |
+| `CLAUNOTE_UTILISATEUR`, `CLAUNOTE_MOT_DE_PASSE` | conseillé | Ton identifiant et ton mot de passe (changeable ensuite sur le site) |
+| `GITHUB_TOKEN` | si dépôt privé | Jeton fine-grained en **lecture seule**, pour le bouton *Mise à jour* (voir [plus bas](#mettre-à-jour)) |
+| `CLAUNOTE_HOTE`, `CLAUNOTE_PUSH_CONTACT` | pour l'iPhone | Adresse VPN de la VM et ton e-mail (`mailto:…`) : appli iPhone en HTTPS et notifications |
+| `COMPOSE_PROFILES=tunnel`, `CLOUDFLARE_TUNNEL_TOKEN` | pour Internet | Active Cloudflare Tunnel ([procédure](docs/cloudflare-tunnel.md)) |
+
+Pronote ne se règle pas dans le `.env` : la connexion se fait sur la page *Agenda* du site, et **ton mot de
+passe Pronote n'est jamais stocké** (seul un jeton de reconnexion l'est).
+
+## Ouvrir le site : VPN ou Internet
+
+```
+ ┌─ Par ton VPN (par défaut) ─────────────────────────────────────────────┐
+ │ Téléphone / PC ──VPN──► http://BIND_ADDR:8000   (ou https://CLAUNOTE_HOTE pour l'iPhone)
+ └────────────────────────────────────────────────────────────────────────┘
+ ┌─ Par Internet, sans VPN (facultatif) ──────────────────────────────────┐
+ │ Appareil approuvé ──► Cloudflare (https://claunote.ton-domaine.fr) ──tunnel sortant──► VM
+ │ Aucun port ouvert. Un appareil inconnu ne voit que la page « code d'appareil ».
+ └────────────────────────────────────────────────────────────────────────┘
+```
+
+- **VPN** : mets l'IP de la VM sur le VPN dans `BIND_ADDR`, c'est tout. Claunote ne fournit pas de VPN :
+  utilise le tien.
+- **Cloudflare Tunnel** : il faut un domaine géré par Cloudflare (compte gratuit). La procédure complète
+  (tunnel, route `HTTP web:8000`, règle « France seulement », approbation des appareils, dépannage) est ici :
+  **[docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)**.
+
+## Mettre à jour
+
+**Depuis le site** : *Plus → Réglages → Mise à jour → Tout mettre à jour*. Un badge prévient quand une
+nouvelle version est sur GitHub (vérifié toutes les 6 h). Le service `maj` fait le `git pull`, reconstruit
+**seulement ce qui a changé** et redémarre les services ; si la construction échoue, l'ancienne version continue
+de tourner.
+
+```
+ site ──demande──► service maj ──► git pull ──► docker compose build ──► up -d
+  ▲                    │
+  └── état + journal ──┘        (le site ne peut demander que 4 actions fixes, jamais une commande libre)
+```
+
+**À la main**, depuis le dossier de Claunote (sans `sudo`) :
+
+```bash
+git pull && docker compose up -d --build
+```
+
+**Dépôt privé → `GITHUB_TOKEN`** : sans lui, la mise à jour affiche « GitHub refuse l'accès ».
+
+1. [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
+2. **Resource owner** : le propriétaire du dépôt (ici l'organisation **`juteaucorp`**, pas ton compte perso :
+   un ancien jeton créé pour un autre propriétaire ne marche plus).
+3. **Repository access** : *Only select repositories* → `claunote`.
+4. **Permissions** : *Contents* → **Read-only** (rien d'autre).
+5. Dans `.env` : `GITHUB_TOKEN=github_pat_…`. Il est relu à chaque action, pas besoin de redémarrer.
+
+Si l'organisation demande une approbation des jetons, un propriétaire de l'organisation doit l'accepter
+(*Settings → Personal access tokens → Pending requests*).
+
+Tu as fait un fork ? Le service `maj` suit simplement le dépôt `origin` de ton clone.
+
+## Réglages avancés
+
+Tout le reste a une valeur par défaut qui marche. Chaque ligne est expliquée dans [.env.example](.env.example),
+et les réglages du quotidien se font aussi sur le site (*Activité*, *Réglages*).
 
 | Variable | Rôle | Défaut |
 | --- | --- | --- |
@@ -155,13 +262,25 @@ se font aussi sur le site.
 
 ## Vie privée et coûts
 
-- **Tes fichiers restent chez toi** : dans kDrive et sur ta VM. Le site n'écoute que sur ton VPN.
+- **Tes fichiers restent chez toi** : dans kDrive et sur ta VM. Le site n'écoute que sur ton VPN (ou derrière
+  Cloudflare Tunnel, réservé à tes appareils approuvés).
 - **Pas de facturation à l'usage.** Seul le jeton du forfait Claude Pro est utilisé, et une clé API présente
   serait ignorée. À la limite du forfait, Claunote attend, ou bien bascule sur l'analyse locale. Rien n'est
   jamais acheté.
 - **Les documents personnels** repérés par le garde-fou ne sont jamais envoyés à Claude.
 - **Le modèle local** (Tesseract, Ollama) ne fait sortir aucune donnée de la VM : avec « local d'abord », Claude
   ne voit que ce que le local n'a pas su faire seul, plus un contrôle sur dix.
+
+## Dépannage rapide
+
+| Symptôme | À vérifier |
+| --- | --- |
+| `/health` répond `"kdrive":false` | `KDRIVE_TOKEN` (scope `drive`) et `KDRIVE_ID` ; test `curl` dans [SETUP.md §2](infra/SETUP.md#2-kdrive-via-lapi-rest-infomaniak) |
+| Rien ne s'analyse | Page *État du service* : jeton Claude expiré ou limite du forfait atteinte (l'IA reprend seule à l'heure annoncée) |
+| Le site ne s'ouvre pas | `BIND_ADDR` = bonne IP VPN ? `docker compose ps` puis `docker compose logs -f web` |
+| « GitHub refuse l'accès » dans *Mise à jour* | `GITHUB_TOKEN` absent, expiré, ou créé pour le mauvais propriétaire |
+| Mot de passe du site oublié | `docker compose exec web python -m claunote.auth reinitialiser` puis `docker compose restart web` |
+| Erreur Cloudflare 1033 / 502 | Voir le dépannage de [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md) |
 
 ## Développement
 
@@ -197,7 +316,8 @@ Réglages → Mise à jour.
 | `app/claunote/pronote.py`, `pronote/` | Client Python et service Node (Pawnote) |
 | `app/claunote/db.py` | Schéma PostgreSQL (créé et mis à jour au démarrage) et requêtes |
 | `app/claunote/maj.py`, `infra/maj/` | Mise à jour depuis le site : le site dépose la demande, le service `maj` l'exécute |
-| `infra/` | Caddy (HTTPS local) et guide d'installation |
+| `app/claunote/appareils.py` | Accès par Internet : appareils approuvés par code |
+| `infra/` | Caddy (HTTPS local), service de mise à jour et guide d'installation |
 
 <details>
 <summary><strong>Historique des étapes</strong></summary>

@@ -1,6 +1,8 @@
-# Phase 0 : installation sur la VM
+# Guide d'installation détaillé
 
-Terminé quand : un PDF déposé dans `kDrive/Etudes/inbox` depuis ton téléphone
+Résumé et prérequis : [README](../README.md#ce-quil-te-faut). Ce guide reprend chaque étape en détail.
+
+Premier objectif atteint quand : un PDF déposé dans `kDrive/Etudes/inbox` depuis ton téléphone
 apparaît sur `http://<vm>:8000/inbox` (via ton VPN).
 
 ## 1. VM
@@ -611,6 +613,11 @@ modifié à la main sur la VM, la mise à jour est refusée sans rien toucher (`
 **Dépôt GitHub privé** : le service `maj` n'a pas tes identifiants GitHub (« could not read Username »).
 Crée un [jeton fine-grained](https://github.com/settings/personal-access-tokens/new) limité au dépôt
 `claunote`, permission **Contents → Read-only**, et mets-le dans `.env` : `GITHUB_TOKEN=github_pat_…`.
+⚠️ **Resource owner = le propriétaire du dépôt** : l'organisation `juteaucorp` depuis que le dépôt y a été
+déplacé (un jeton créé pour un compte perso ne voit pas le dépôt). Si l'organisation exige une approbation,
+un propriétaire l'accepte dans *Settings → Personal access tokens → Pending requests*.
+Une VM clonée depuis l'ancienne adresse (`…/ctrljuteau/claunote`) est repointée toute seule vers
+`juteaucorp/claunote` à la prochaine vérification.
 Il est relu à chaque action : pas de redémarrage. Il n'est jamais écrit ailleurs ni affiché dans le journal.
 
 **Première fois** : le service n'existe pas encore, il faut une dernière mise à jour à la main, depuis le
@@ -644,6 +651,8 @@ question du chat ────────► service lecture : FlashRank ─► 
   environ 1,5 Go de mémoire une fois tous chargés. `LECTURE_THREADS` (défaut 2) : cœurs par calcul.
 
 ## 17. Accès par Internet (Cloudflare Tunnel), seulement sur tes appareils
+
+> 📘 **Guide complet** (fonctionnement, procédure détaillée, dépannage) : [docs/cloudflare-tunnel.md](../docs/cloudflare-tunnel.md).
 
 ```
  Appareil approuvé ── 4G, wifi, n'importe où ──► Cloudflare  https://claunote.ton-domaine.fr

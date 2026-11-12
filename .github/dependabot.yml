@@ -23,6 +23,13 @@ updates:
   - package-ecosystem: docker
     directories: [/app, /lecture, /pronote]
     schedule: {interval: monthly}
+    ignore:
+      # Python : on change de version à la main (les bibliothèques de lecture locale suivent avec du retard)
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Node : on reste sur les versions LTS (paires), choisies à la main
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker-compose
     directory: /
     schedule: {interval: monthly}
