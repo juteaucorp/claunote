@@ -35,6 +35,7 @@ TACHES = {
     "question": "sonnet",    # question posée dans « Demander » (Réviser) : réponse courte appuyée sur les cours
     "matieres": "haiku",     # repérer les matières en double (liste de noms + quelques titres)
     "controle": "haiku",     # vérifier un classement fait par le modèle local (texte seul)
+    "actualites": "haiku",   # trier les articles des flux RSS selon les sujets suivis (par lots de 40)
 }
 LIBELLES = {
     "scan": "Lecture d'un scan", "texte": "Classement d'un texte (Word, PDF numérique…)", "classement": "Reclassement",
@@ -46,6 +47,7 @@ LIBELLES = {
     "question": "Question posée (Demander)",
     "matieres": "Matières en double",
     "controle": "Vérification du modèle local",
+    "actualites": "Tri des actualités",
     "sonde": "Test de Claude (bouton Réessayer)",
 }
 NOMS = {"haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus",

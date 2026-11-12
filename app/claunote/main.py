@@ -13,7 +13,7 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qs, quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 import markdown
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -23,9 +23,9 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, appareils, auth, carte_mentale, cles, db, decoupage, formules, importation, index,
-                      lecture, local, maj, matieres, modeles, notifications, pdf, progression, pronote, question,
-                      rangement, ressources, revision, schemas, sensible)
+from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, db, decoupage, formules,
+                      importation, index, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
+                      pronote, question, rangement, ressources, revision, schemas, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -175,6 +175,7 @@ templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proc
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
 templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
 templates.env.globals["nb_mises_a_jour"] = maj.disponibles
+templates.env.globals["nb_actualites"] = lambda: db.nb_actualites_nouvelles()
 templates.env.filters["note"] = pronote.libelle_note
 _matieres_cours = {"le": 0.0, "noms": []}
 
@@ -515,6 +516,7 @@ def accueil(request: Request):
         "courts": revision.COURTS,
         "evaluations": evaluations[:6], "devoirs": [d for d in db.evenements_a_venir("devoir", 7) if not d["fait"]],
         "documents": db.documents_pronote(5), "revisions": db.revisions(4),
+        "actus": db.articles("pour_toi", limite=3, non_lus_jours=3),
         "synchro": db.etat_valeur("pronote_synchro"), "nb_documents": db.nb_documents()})
 
 
@@ -1900,7 +1902,8 @@ def tester_notification():
 @app.post("/notifications/reglages")
 def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("22:00"),
                          silence_fin: str = Form("07:30"), rappel: bool = Form(False), pronote_: bool = Form(False,
-                         alias="pronote"), revisions: bool = Form(False)):
+                         alias="pronote"), revisions: bool = Form(False),
+                         actualites_: bool = Form(False, alias="actualites")):
     for h in (heure, silence_debut, silence_fin):
         try:
             dt.time.fromisoformat(h)
@@ -1908,8 +1911,197 @@ def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("
             raise HTTPException(400, "heure invalide")
     notifications.enregistrer_preferences({"heure": heure, "silence_debut": silence_debut,
                                            "silence_fin": silence_fin, "rappel": rappel,
-                                           "pronote": pronote_, "revisions": revisions})
+                                           "pronote": pronote_, "revisions": revisions,
+                                           "actualites": actualites_})
     return RedirectResponse("/notifications?message=Réglages+enregistrés", status_code=303)
+
+
+# --- Actualités (flux RSS, sujets suivis) ----------------------------------------
+
+VUES_ACTU = {"pour_toi": "Pour toi", "tout": "Tout", "favoris": "Favoris"}
+PAR_PAGE_ACTU = 30
+
+
+def _jour_actu(d: dt.datetime, aujourdhui: dt.date) -> str:
+    jour = d.astimezone(pronote.PARIS).date()
+    ecart = (aujourdhui - jour).days
+    if ecart <= 0:
+        return "Aujourd'hui"
+    if ecart == 1:
+        return "Hier"
+    mois = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+            "novembre", "décembre"]
+    jours = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+    return f"{jours[jour.weekday()]} {jour.day} {mois[jour.month - 1]}"
+
+
+@app.get("/actualites", response_class=HTMLResponse)
+def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None = None, flux: int | None = None,
+                    page: int = 1, article: int | None = None):
+    vue = vue if vue in VUES_ACTU else "pour_toi"
+    if sujet or flux:
+        vue = "tout"
+    page = max(page, 1)
+    liste, total = db.articles(vue, sujet, flux, PAR_PAGE_ACTU, (page - 1) * PAR_PAGE_ACTU)
+    aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    groupes: list[tuple[str, list]] = []
+    for a in liste:
+        jour = _jour_actu(a["publie_le"], aujourdhui)
+        if not groupes or groupes[-1][0] != jour:
+            groupes.append((jour, []))
+        groupes[-1][1].append(a)
+    sujets = db.sujets()
+    flux_l = db.flux_liste()
+
+    def lien_page(n: int) -> str:
+        return "/actualites?" + urlencode({k: v for k, v in {"vue": vue, "sujet": sujet, "flux": flux,
+                                                              "page": n}.items() if v})
+    return templates.TemplateResponse(request, "actualites.html", {
+        "vue": vue, "vues": VUES_ACTU, "sujet": sujet, "flux": flux, "groupes": groupes, "total": total,
+        "page": page, "pages": -(-total // PAR_PAGE_ACTU), "par": PAR_PAGE_ACTU, "lien_page": lien_page,
+        "sujets": sujets, "flux_liste": flux_l, "article": article, "paris": pronote.PARIS,
+        "sujet_nom": next((s["nom"] for s in sujets if s["id"] == sujet), None),
+        "flux_nom": next((f["titre"] or f["url"] for f in flux_l if f["id"] == flux), None),
+        "en_attente": sum(1 for f in flux_l if f["releve_le"] is None),
+        "reglages": actualites.reglages()})
+
+
+@app.post("/actualites/{article_id}/favori", response_class=HTMLResponse)
+def actualite_favori(article_id: int):
+    a = db.article(article_id)
+    if not a:
+        raise HTTPException(404)
+    db.article_maj(article_id, favori=not a["favori"])
+    return templates.get_template("_actualite_favori.html").render(a={**a, "favori": not a["favori"]})
+
+
+@app.post("/actualites/{article_id}/lu")
+def actualite_lue(article_id: int):
+    db.article_maj(article_id, lu=True)
+    return {"ok": True}
+
+
+@app.post("/actualites/tout-lu")
+def actualites_tout_lu(vue: str = Form("pour_toi")):
+    db.articles_tout_lu(vue)
+    return RedirectResponse(f"/actualites?vue={quote(vue)}", status_code=303)
+
+
+@app.post("/actualites/relever", response_class=HTMLResponse)
+def actualites_relever():
+    db.etat_ecrire("actualites_relever", "oui")
+    return "C'est demandé : les nouveaux articles arrivent d'ici une minute."
+
+
+def _page_sources(request: Request, message: str = "", erreur: str = "", saisie: dict | None = None):
+    return templates.TemplateResponse(request, "actualites_sources.html", {
+        "sujets": db.sujets(), "flux_liste": db.flux_liste(), "message": message, "erreur": erreur,
+        "saisie": saisie or {}, "reglages": actualites.reglages(), "paris": pronote.PARIS,
+        "notifs": notifications.preferences().get("actualites", True)})
+
+
+@app.get("/actualites/sources", response_class=HTMLResponse)
+def page_actualites_page_sources(request: Request, message: str = ""):
+    return _page_sources(request, message)
+
+
+@app.post("/actualites/flux", response_class=HTMLResponse)
+def ajouter_flux(request: Request, url: str = Form(...), notifier: bool = Form(False)):
+    try:
+        adresse, infos, items = actualites.decouvrir(url)
+    except actualites.FluxIllisible as e:
+        return _page_sources(request, erreur=f"Flux non ajouté : {e}.", saisie={"url": url})
+    flux_id = db.flux_ajouter(adresse, infos["titre"], infos["site"] or urlsplit(adresse).hostname or "", notifier=notifier)
+    sujets = db.sujets()
+    for i in items:  # déjà en ligne : rangés sans notification, triés par l'IA au prochain passage
+        i["cle"] = actualites.cle_article(i["lien"], i["titre"], flux_id)
+        i["sujets"] = actualites.par_mots_cles(sujets, i)
+        if not sujets:
+            i["tri"] = "mots_cles"
+    n = db.articles_ajouter(flux_id, items, annonce=True)
+    db.flux_maj(flux_id, releve_le=dt.datetime.now(dt.timezone.utc), erreur=None, echecs=0)
+    return RedirectResponse("/actualites/sources?" + urlencode(
+        {"message": f"« {infos['titre'] or adresse} » ajouté : {n} article{'s' if n > 1 else ''}."}), status_code=303)
+
+
+@app.post("/actualites/flux/{flux_id}/notifier")
+def flux_notifier(flux_id: int, notifier: bool = Form(False)):
+    db.flux_maj(flux_id, notifier=notifier)
+    return RedirectResponse("/actualites/sources#flux", status_code=303)
+
+
+@app.post("/actualites/flux/{flux_id}/supprimer")
+def supprimer_flux(flux_id: int):
+    db.flux_supprimer(flux_id)
+    return RedirectResponse("/actualites/sources?message=Flux+retiré#flux", status_code=303)
+
+
+def _mots(texte: str) -> list[str]:
+    vus, mots = set(), []
+    for m in re.split(r"[,;\n]", texte or ""):
+        m = m.strip()
+        if m and m.lower() not in vus:
+            vus.add(m.lower())
+            mots.append(m[:60])
+    return mots
+
+
+def _recherche_sujet(sujet_id: int, recherche: bool):
+    """Case « chercher aussi sur Google Actualités » : un flux de recherche lié au sujet."""
+    sujet = next((s for s in db.sujets() if s["id"] == sujet_id), None)
+    if not sujet:
+        return
+    if recherche and not sujet["recherche_id"]:
+        db.flux_ajouter(actualites.recherche_google(sujet), f"Google Actualités : {sujet['nom']}",
+                        "news.google.com", sujet_id=sujet_id)
+    elif not recherche and sujet["recherche_id"]:
+        db.flux_supprimer(sujet["recherche_id"])
+    db.etat_ecrire("actualites_relever", "oui")
+
+
+@app.post("/actualites/sujets", response_class=HTMLResponse)
+def ajouter_sujet(request: Request, nom: str = Form(...), description: str = Form(""), mots_cles: str = Form(""),
+                  notifier: bool = Form(False), recherche: bool = Form(False)):
+    nom = nom.strip()[:80]
+    if not nom:
+        return _page_sources(request, erreur="Donne un nom au sujet.")
+    sujet_id = db.sujet_ajouter(nom, description.strip()[:500], _mots(mots_cles), notifier)
+    if sujet_id is None:
+        return _page_sources(request, erreur=f"Le sujet « {nom} » existe déjà.",
+                        saisie={"nom": nom, "description": description, "mots_cles": mots_cles})
+    _recherche_sujet(sujet_id, recherche)
+    db.articles_retrier()   # les articles de la semaine sont relus avec ce nouveau sujet (sans renotifier)
+    return RedirectResponse("/actualites/sources?" + urlencode(
+        {"message": f"Sujet « {nom} » ajouté : les articles de la semaine sont relus avec lui."}), status_code=303)
+
+
+@app.post("/actualites/sujets/{sujet_id}")
+def modifier_sujet(sujet_id: int, nom: str = Form(...), description: str = Form(""), mots_cles: str = Form(""),
+                   notifier: bool = Form(False), recherche: bool = Form(False)):
+    avant = next((s for s in db.sujets() if s["id"] == sujet_id), None)
+    if not avant:
+        raise HTTPException(404)
+    champs = {"nom": nom.strip()[:80] or avant["nom"], "description": description.strip()[:500],
+              "mots_cles": _mots(mots_cles), "notifier": notifier}
+    db.sujet_maj(sujet_id, **champs)
+    _recherche_sujet(sujet_id, recherche)
+    if (champs["description"], champs["mots_cles"], champs["nom"]) != (avant["description"], avant["mots_cles"],
+                                                                     avant["nom"]):
+        db.articles_retrier()
+    return RedirectResponse("/actualites/sources?message=Sujet+enregistré#sujets", status_code=303)
+
+
+@app.post("/actualites/sujets/{sujet_id}/supprimer")
+def supprimer_sujet(sujet_id: int):
+    db.sujet_supprimer(sujet_id)
+    return RedirectResponse("/actualites/sources?message=Sujet+retiré#sujets", status_code=303)
+
+
+@app.post("/actualites/reglages")
+def regler_actualites(ia: bool = Form(False), notifs: bool = Form(False)):
+    actualites.enregistrer_reglages({"ia": ia})
+    notifications.enregistrer_preferences({**notifications.preferences(), "actualites": notifs})
+    return RedirectResponse("/actualites/sources?message=Réglages+enregistrés#reglages", status_code=303)
 
 
 # --- Agenda (Pronote) -------------------------------------------------------

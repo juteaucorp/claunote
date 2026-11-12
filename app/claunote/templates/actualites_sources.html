@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Sources et sujets{% endblock %}
+{% block contenu %}
+<p class="retour-actu"><a href="/actualites">{{ icone('retour', 18) }}Actualités</a></p>
+<h1>Sources et sujets</h1>
+{% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
+{% if erreur %}<p class="carte alerte">{{ erreur }}</p>{% endif %}
+
+<h2 id="sujets">Sujets suivis</h2>
+<p class="doux">L'IA lit chaque nouvel article et garde dans « Pour toi » ceux qui touchent vraiment un de ces sujets.
+  Les plus importants te sont notifiés (regroupés, jamais pendant le silence).</p>
+{% for s in sujets %}
+<details class="carte sujet">
+  <summary><span class="nom"><strong>{{ s.nom }}</strong>
+    <span class="doux">{{ s.n }} article{{ 's' if s.n > 1 }}{% if s.notifier %} · {{ icone('cloche', 14) }} notifié{% endif %}{% if s.recherche_id %} · + Google Actualités{% endif %}</span></span></summary>
+  <form method="post" action="/actualites/sujets/{{ s.id }}" class="champs">
+    <label>Nom <input name="nom" value="{{ s.nom }}" required maxlength="80"></label>
+    <label>Ce qui t'intéresse <textarea name="description" rows="2" maxlength="500" placeholder="Une phrase pour l'IA">{{ s.description }}</textarea></label>
+    <label>Mots-clés <span class="doux">(séparés par des virgules, servent aussi sans IA)</span>
+      <input name="mots_cles" value="{{ s.mots_cles|join(', ') }}"></label>
+    {% if s.recherche_erreur %}<p class="alerte">Google Actualités : {{ s.recherche_erreur }}</p>{% endif %}
+    <label class="interrupteur"><span><strong>Me notifier</strong><br><span class="doux">Les articles jugés importants.</span></span>
+      <input type="checkbox" name="notifier" value="true" {{ 'checked' if s.notifier }}></label>
+    <label class="interrupteur"><span><strong>Chercher aussi sur Google Actualités</strong><br><span class="doux">Des articles de tous les sites, avec tes mots-clés.</span></span>
+      <input type="checkbox" name="recherche" value="true" {{ 'checked' if s.recherche_id }}></label>
+    <div class="actions"><button class="principal">Enregistrer</button>
+      <button formaction="/actualites/sujets/{{ s.id }}/supprimer" formnovalidate class="danger"
+        data-q="Retirer le sujet « {{ s.nom }} » ?" onclick="return confirm(this.dataset.q)">{{ icone('corbeille', 18) }}Retirer</button></div>
+  </form>
+</details>
+{% endfor %}
+<details class="carte ajout" {{ 'open' if saisie.nom or not sujets }}>
+  <summary>{{ icone('nouveau', 18) }}<strong>Suivre un sujet</strong></summary>
+  <form method="post" action="/actualites/sujets" class="champs">
+    <label>Nom <input name="nom" required maxlength="80" placeholder="ex. Cybersécurité, Apple, Lycée Chevrollier" value="{{ saisie.nom or '' }}"></label>
+    <label>Ce qui t'intéresse <textarea name="description" rows="2" maxlength="500" placeholder="ex. Les failles critiques à corriger vite et les grosses attaques">{{ saisie.description or '' }}</textarea></label>
+    <label>Mots-clés <span class="doux">(séparés par des virgules)</span>
+      <input name="mots_cles" placeholder="ex. faille, CVE, rançongiciel" value="{{ saisie.mots_cles or '' }}"></label>
+    <label class="interrupteur"><span><strong>Me notifier</strong><br><span class="doux">Les articles jugés importants.</span></span>
+      <input type="checkbox" name="notifier" value="true" checked></label>
+    <label class="interrupteur"><span><strong>Chercher aussi sur Google Actualités</strong><br><span class="doux">Utile pour un sujet précis qu'aucun de tes flux ne couvre.</span></span>
+      <input type="checkbox" name="recherche" value="true"></label>
+    <div class="actions"><button class="principal">Ajouter le sujet</button></div>
+  </form>
+</details>
+
+<h2 id="flux">Flux RSS</h2>
+<form method="post" action="/actualites/flux" class="carte ajout-flux">
+  <label>Adresse d'un site ou de son flux RSS
+    <input name="url" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" required
+      placeholder="ex. www.it-connect.fr ou https://site.fr/feed" value="{{ saisie.url or '' }}"></label>
+  <label class="case"><input type="checkbox" name="notifier" value="true"> Me notifier de chaque nouveauté de ce flux, même hors de mes sujets</label>
+  <div class="actions"><button class="principal">{{ icone('nouveau', 18) }}Ajouter</button></div>
+</form>
+{% if flux_liste %}
+<ul class="carte lignes flux">
+  {% for f in flux_liste %}
+  <li>
+    <div class="corps"><a href="/actualites?flux={{ f.id }}"><strong>{{ f.titre or f.url }}</strong></a>
+      <div class="doux">{% if f.sujet %}recherche du sujet « {{ f.sujet }} » · {% endif %}{{ f.n }} article{{ 's' if f.n > 1 }}{% if f.dernier %} · dernier le {{ f.dernier.astimezone(paris).strftime('%d/%m') }}{% endif %}
+        {% if f.releve_le %} · relevé {{ f.releve_le.astimezone(paris).strftime('%d/%m %H:%M') }}{% else %} · premier relevé en attente{% endif %}</div>
+      {% if f.erreur %}<div class="alerte">{{ f.erreur }}{% if f.echecs > 1 %} ({{ f.echecs }} fois de suite){% endif %}</div>{% endif %}
+    </div>
+    {% if not f.sujet %}
+    <div class="fin outils-flux">
+      <form method="post" action="/actualites/flux/{{ f.id }}/notifier" class="reglages" title="Me notifier de chaque nouveauté de ce flux">
+        <input type="checkbox" name="notifier" value="true" {{ 'checked' if f.notifier }} onchange="this.form.submit()" aria-label="Notifier chaque nouveauté de {{ f.titre or f.url }}">
+        <noscript><button class="petit">OK</button></noscript></form>
+      <form method="post" action="/actualites/flux/{{ f.id }}/supprimer" onsubmit="return confirm('Retirer ce flux et tous ses articles ?')">
+        <button class="bouton-icone" title="Retirer ce flux" aria-label="Retirer {{ f.titre or f.url }}">{{ icone('corbeille', 18) }}</button></form>
+    </div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+<p class="doux">Interrupteur : {{ icone('cloche', 14) }} chaque nouveauté de ce flux sonne, même hors de tes sujets (ex. les alertes CERT-FR).</p>
+{% endif %}
+
+<h2 id="reglages">Réglages</h2>
+<form method="post" action="/actualites/reglages" class="carte reglages">
+  <label class="interrupteur"><span><strong>Tri par l'IA</strong><br>
+    <span class="doux">Claude (Haiku, le plus léger) lit les titres par lots de 40. Sans lui : mots-clés seulement.</span></span>
+    <input type="checkbox" name="ia" value="true" {{ 'checked' if reglages.ia }}></label>
+  <label class="interrupteur"><span><strong>Notifications des actualités</strong><br>
+    <span class="doux">Heures de silence et appareils : page <a href="/notifications">Notifications</a>.</span></span>
+    <input type="checkbox" name="notifs" value="true" {{ 'checked' if notifs }}></label>
+  <button class="principal">Enregistrer</button>
+</form>
+
+<style>
+  .retour-actu { margin: 0 0 4px; }
+  .retour-actu a { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+  .sujet summary, .ajout summary { cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .sujet summary .nom { display: flex; flex-direction: column; }
+  .sujet summary .doux svg { vertical-align: -2px; }
+  .champs { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+  .champs > label:not(.interrupteur), .ajout-flux > label:not(.case) { display: flex; flex-direction: column; gap: 4px; font-weight: 500; }
+  .champs textarea, .champs input:not([type=checkbox]), .ajout-flux input[name=url] { width: 100%; box-sizing: border-box; }
+  .ajout-flux { display: flex; flex-direction: column; gap: 12px; }
+  .case { display: flex; gap: 8px; align-items: flex-start; font-size: .92rem; }
+  .case input { margin-top: 3px; }
+  .interrupteur { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 8px 0; border-top: 1px solid var(--bord); }
+  .reglages .interrupteur:first-child { border-top: 0; }
+  .reglages > button { margin-top: 8px; }
+  .champs input[type=checkbox], .reglages input[type=checkbox] { appearance: none; -webkit-appearance: none; flex: none; width: 51px; height: 31px; border-radius: 999px; background: var(--bord);
+    position: relative; cursor: pointer; transition: background .2s; border: 0; padding: 0; min-height: 0; margin: 0; }
+  .champs input[type=checkbox]::after, .reglages input[type=checkbox]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .2); transition: transform .2s; }
+  .champs input[type=checkbox]:checked, .reglages input[type=checkbox]:checked { background: #34c759; }
+  .champs input[type=checkbox]:checked::after, .reglages input[type=checkbox]:checked::after { transform: translateX(20px); }
+  .outils-flux { display: flex; align-items: center; gap: 10px; }
+  .outils-flux form { margin: 0; }
+  .flux .corps a { text-decoration: none; color: var(--texte); }
+  button.danger { color: var(--alerte); display: inline-flex; align-items: center; gap: 6px; }
+  .actions button { display: inline-flex; align-items: center; gap: 6px; }
+</style>
+{% endblock %}

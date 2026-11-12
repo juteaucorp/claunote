@@ -229,10 +229,10 @@ CREATE TABLE IF NOT EXISTS passages (
 );
 CREATE INDEX IF NOT EXISTS passages_document ON passages (document_id, rang);
 CREATE INDEX IF NOT EXISTS passages_recherche ON passages USING GIN (recherche);
-CREATE INDEX IF NOT EXISTS passages_sans_vecteur ON passages (id) WHERE vecteur IS NULL;
 DO $$ BEGIN
     CREATE EXTENSION IF NOT EXISTS vector;
     ALTER TABLE passages ADD COLUMN IF NOT EXISTS vecteur vector(768);
+    CREATE INDEX IF NOT EXISTS passages_sans_vecteur ON passages (id) WHERE vecteur IS NULL;
     CREATE INDEX IF NOT EXISTS passages_vecteur ON passages USING hnsw (vecteur vector_cosine_ops);
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'pgvector indisponible : recherche par les mots seulement (%)', SQLERRM;
@@ -345,6 +345,51 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS detail TEXT;  -- qui a répondu : 
 -- Réponse interrompue par un redémarrage du site (elle prend 5 min au plus)
 UPDATE messages SET statut = 'erreur', erreur = 'Réponse interrompue (redémarrage du site) : renvoie la question.'
  WHERE statut = 'en_attente' AND cree_le < now() - interval '10 minutes';
+"""
+
+# Actualités : flux RSS, sujets suivis, articles triés par l'IA (actualites.py)
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS sujets (
+    id           SERIAL PRIMARY KEY,
+    nom          TEXT UNIQUE NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',             -- ce qui t'intéresse, en une phrase (lu par l'IA)
+    mots_cles    TEXT[] NOT NULL DEFAULT '{}',          -- repérage sans IA (et quand Claude ne répond pas)
+    notifier     BOOLEAN NOT NULL DEFAULT true,
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS flux (
+    id           SERIAL PRIMARY KEY,
+    url          TEXT UNIQUE NOT NULL,
+    titre        TEXT NOT NULL DEFAULT '',
+    site         TEXT NOT NULL DEFAULT '',
+    sujet_id     INT REFERENCES sujets(id) ON DELETE CASCADE,  -- recherche Google Actualités d'un sujet
+    notifier     BOOLEAN NOT NULL DEFAULT false,       -- chaque nouveauté de ce flux, même hors sujets
+    etag         TEXT,
+    modifie      TEXT,
+    releve_le    TIMESTAMPTZ,
+    erreur       TEXT,
+    echecs       INT NOT NULL DEFAULT 0,
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS articles (
+    id           SERIAL PRIMARY KEY,
+    flux_id      INT NOT NULL REFERENCES flux(id) ON DELETE CASCADE,
+    cle          TEXT UNIQUE NOT NULL,                 -- lien nettoyé : le même article dans deux flux = un seul
+    lien         TEXT NOT NULL DEFAULT '',
+    titre        TEXT NOT NULL,
+    extrait      TEXT NOT NULL DEFAULT '',
+    publie_le    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    tri          TEXT NOT NULL DEFAULT 'attente',      -- attente (IA à passer), ia, mots_cles (sans IA)
+    sujets       INT[] NOT NULL DEFAULT '{}',
+    score        REAL,                                 -- importance pour toi selon l'IA (0 à 1)
+    pourquoi     TEXT,
+    annonce      BOOLEAN NOT NULL DEFAULT false,       -- notification déjà décidée (envoyée ou non)
+    lu           BOOLEAN NOT NULL DEFAULT false,
+    favori       BOOLEAN NOT NULL DEFAULT false,
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS articles_publie ON articles (publie_le DESC);
+CREATE INDEX IF NOT EXISTS articles_attente ON articles (id) WHERE tri = 'attente' OR NOT annonce;
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -1876,3 +1921,190 @@ def chercher_passages(requete: str, vecteur: list | None = None, niveau: str | N
             {"q": requete or "", "ids": meilleurs}).fetchall()
     par_id = {l["id"]: l for l in lignes}
     return [par_id[i] for i in meilleurs if i in par_id]
+
+
+# --- Actualités (actualites.py) ------------------------------------------------
+
+# Ce qui va dans « Pour toi » : un sujet suivi (jugé assez important par l'IA quand elle a trié), ou un flux
+# marqué « tout m'intéresse »
+PERTINENT = ("((cardinality(a.sujets) > 0 AND (a.tri <> 'ia' OR a.score >= %(seuil)s)) OR f.notifier)")
+SEUIL_POUR_TOI = 0.5
+
+
+def sujets():
+    with connect() as c:
+        return c.execute(
+            """SELECT s.*, f.id AS recherche_id, f.erreur AS recherche_erreur,
+                      (SELECT count(*) FROM articles a WHERE s.id = ANY(a.sujets)
+                        AND (a.tri <> 'ia' OR a.score >= %s)) AS n
+               FROM sujets s LEFT JOIN flux f ON f.sujet_id = s.id ORDER BY s.nom""", (SEUIL_POUR_TOI,)).fetchall()
+
+
+def sujet_ajouter(nom: str, description: str, mots_cles: list[str], notifier: bool = True) -> int | None:
+    with connect() as c:
+        r = c.execute("INSERT INTO sujets (nom, description, mots_cles, notifier) VALUES (%s, %s, %s, %s) "
+                      "ON CONFLICT (nom) DO NOTHING RETURNING id", (nom, description, mots_cles, notifier)).fetchone()
+        return r["id"] if r else None
+
+
+def sujet_maj(sujet_id: int, **champs):
+    champs = {k: v for k, v in champs.items() if k in {"nom", "description", "mots_cles", "notifier"}}
+    if champs:
+        with connect() as c:
+            c.execute(f"UPDATE sujets SET {', '.join(f'{k} = %s' for k in champs)} WHERE id = %s",
+                      (*champs.values(), sujet_id))
+
+
+def sujet_supprimer(sujet_id: int):
+    with connect() as c:
+        c.execute("UPDATE articles SET sujets = array_remove(sujets, %s) WHERE %s = ANY(sujets)", (sujet_id, sujet_id))
+        c.execute("DELETE FROM sujets WHERE id = %s", (sujet_id,))
+
+
+def flux_liste():
+    with connect() as c:
+        return c.execute(
+            """SELECT f.*, s.nom AS sujet, (SELECT count(*) FROM articles a WHERE a.flux_id = f.id) AS n,
+                      (SELECT max(publie_le) FROM articles a WHERE a.flux_id = f.id) AS dernier
+               FROM flux f LEFT JOIN sujets s ON s.id = f.sujet_id
+               ORDER BY f.sujet_id IS NOT NULL, lower(coalesce(nullif(f.titre, ''), f.url))""").fetchall()
+
+
+def flux_ajouter(url: str, titre: str = "", site: str = "", sujet_id: int | None = None,
+                 notifier: bool = False) -> int:
+    with connect() as c:
+        return c.execute(
+            """INSERT INTO flux (url, titre, site, sujet_id, notifier) VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT (url) DO UPDATE SET titre = coalesce(nullif(EXCLUDED.titre, ''), flux.titre)
+               RETURNING id""", (url, titre, site, sujet_id, notifier)).fetchone()["id"]
+
+
+def flux_maj(flux_id: int, **champs):
+    champs = {k: v for k, v in champs.items()
+              if k in {"titre", "site", "notifier", "etag", "modifie", "releve_le", "erreur", "echecs", "url"}}
+    if champs:
+        with connect() as c:
+            c.execute(f"UPDATE flux SET {', '.join(f'{k} = %s' for k in champs)} WHERE id = %s",
+                      (*champs.values(), flux_id))
+
+
+def flux_supprimer(flux_id: int):
+    with connect() as c:
+        c.execute("DELETE FROM flux WHERE id = %s", (flux_id,))
+
+
+def flux_un(flux_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM flux WHERE id = %s", (flux_id,)).fetchone()
+
+
+def articles_ajouter(flux_id: int, items: list[dict], annonce: bool) -> int:
+    """Ajoute les nouveaux articles d'un flux (ceux déjà vus, même dans un autre flux, sont ignorés)."""
+    n = 0
+    with connect() as c:
+        for i in items:
+            r = c.execute(
+                """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, sujets, tri, annonce)
+                   VALUES (%(flux)s, %(cle)s, %(lien)s, %(titre)s, %(extrait)s, %(publie_le)s, %(sujets)s,
+                           %(tri)s, %(annonce)s)
+                   ON CONFLICT (cle) DO NOTHING RETURNING id""",
+                {"flux": flux_id, "annonce": annonce, "tri": "attente", "sujets": [], **i}).fetchone()
+            n += r is not None
+    return n
+
+
+def articles_a_trier(limite: int = 200):
+    with connect() as c:
+        return c.execute(
+            """SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source FROM articles a JOIN flux f ON f.id = a.flux_id
+               WHERE a.tri = 'attente' ORDER BY a.publie_le DESC LIMIT %s""", (limite,)).fetchall()
+
+
+def articles_trier(resultats: list[dict]):
+    """resultats : {id, tri, sujets, score, pourquoi} pour chaque article trié."""
+    with connect() as c:
+        for r in resultats:
+            c.execute("UPDATE articles SET tri = %(tri)s, sujets = %(sujets)s, score = %(score)s, "
+                      "pourquoi = %(pourquoi)s WHERE id = %(id)s", r)
+
+
+def articles_a_annoncer():
+    with connect() as c:
+        return c.execute(
+            """SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, f.notifier AS flux_notifier
+               FROM articles a JOIN flux f ON f.id = a.flux_id
+               WHERE NOT a.annonce AND a.tri <> 'attente' ORDER BY a.publie_le""").fetchall()
+
+
+def articles_annonces(ids: list[int]):
+    if ids:
+        with connect() as c:
+            c.execute("UPDATE articles SET annonce = true WHERE id = ANY(%s)", (ids,))
+
+
+def articles_retrier(jours: int = 7) -> int:
+    """Sujets changés : les articles récents repassent au tri (sans renotifier les anciens)."""
+    with connect() as c:
+        return c.execute("UPDATE articles SET tri = 'attente' WHERE publie_le > now() - make_interval(days => %s) "
+                         "AND tri <> 'attente' RETURNING id", (jours,)).rowcount
+
+
+def articles_nettoyer(jours: int = 120):
+    with connect() as c:
+        c.execute("DELETE FROM articles WHERE NOT favori AND publie_le < now() - make_interval(days => %s)", (jours,))
+
+
+def articles(vue: str = "pour_toi", sujet_id: int | None = None, flux_id: int | None = None,
+             limite: int = 30, decalage: int = 0, non_lus_jours: int | None = None) -> tuple[list, int]:
+    """Articles de la page Actualités, les plus récents d'abord : (page, total)."""
+    where, p = ["true"], {"seuil": SEUIL_POUR_TOI, "limite": limite, "decalage": decalage}
+    if vue == "favoris":
+        where.append("a.favori")
+    elif vue == "pour_toi":
+        where.append(PERTINENT)
+    if sujet_id:
+        where.append("%(sujet)s = ANY(a.sujets) AND (a.tri <> 'ia' OR a.score >= %(seuil)s)")
+        p["sujet"] = sujet_id
+    if non_lus_jours:
+        where.append("NOT a.lu AND a.publie_le > now() - make_interval(days => %(jours)s)")
+        p["jours"] = non_lus_jours
+    if flux_id:
+        where.append("a.flux_id = %(flux)s")
+        p["flux"] = flux_id
+    with connect() as c:
+        lignes = c.execute(
+            f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, f.notifier AS flux_notifier,
+                       count(*) OVER () AS total,
+                       ARRAY(SELECT s.nom FROM sujets s WHERE s.id = ANY(a.sujets) ORDER BY s.nom) AS noms_sujets
+                FROM articles a JOIN flux f ON f.id = a.flux_id
+                WHERE {' AND '.join(where)} ORDER BY a.publie_le DESC, a.id DESC
+                LIMIT %(limite)s OFFSET %(decalage)s""", p).fetchall()
+    return lignes, (lignes[0]["total"] if lignes else 0)
+
+
+def article(article_id: int):
+    with connect() as c:
+        return c.execute("SELECT * FROM articles WHERE id = %s", (article_id,)).fetchone()
+
+
+def article_maj(article_id: int, **champs):
+    champs = {k: bool(v) for k, v in champs.items() if k in {"lu", "favori"}}
+    if champs:
+        with connect() as c:
+            c.execute(f"UPDATE articles SET {', '.join(f'{k} = %s' for k in champs)} WHERE id = %s",
+                      (*champs.values(), article_id))
+
+
+def articles_tout_lu(vue: str = "pour_toi"):
+    with connect() as c:
+        c.execute(f"UPDATE articles a SET lu = true FROM flux f WHERE f.id = a.flux_id AND NOT a.lu"
+                  f"{' AND ' + PERTINENT if vue == 'pour_toi' else ''}", {"seuil": SEUIL_POUR_TOI})
+
+
+def nb_actualites_nouvelles() -> int:
+    """Pastille du menu : articles « Pour toi » pas encore lus des 3 derniers jours."""
+    with connect() as c:
+        return c.execute(
+            f"""SELECT count(*) AS n FROM articles a JOIN flux f ON f.id = a.flux_id
+                WHERE NOT a.lu AND a.publie_le > now() - interval '3 days' AND {PERTINENT}""",
+            {"seuil": SEUIL_POUR_TOI}).fetchone()["n"]

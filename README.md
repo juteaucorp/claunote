@@ -42,6 +42,7 @@ propres cours. Il récupère aussi tes évaluations sur Pronote et te dit quoi r
 | 🎓 **Pronote** | Évaluations, devoirs, notes et documents des profs, synchronisés toutes les 3 h. Une fiche ou un plan est préparé tout seul avant chaque contrôle. |
 | 🖥️ **Local d'abord** | Le travail interne (lecture, classement, noms de dossiers, matières, chat) est fait **sur le processeur du serveur** : OCR Tesseract et [Ollama](https://ollama.com). Quand le modèle local doute ou n'arrive pas à lire (écriture manuscrite), il demande à Claude, qui vérifie et corrige. Une analyse sûre sur 10 est contrôlée quand même, pour mesurer sa fiabilité. Si la VM sature ou si la file s'allonge, le surplus part chez Claude. Des pics à 100 %, jamais une VM à fond en permanence : au-delà de 60 % en moyenne sur 15 min, le travail de fond ralentit. |
 | ⏯️ **Tu gardes la main** | *Activité* : mise en pause, arrêt immédiat des analyses en cours, actions de masse sur la file, choix de qui fait le travail. *Ranger* : documents à vérifier, actions de masse, matières en double (« Maths » / « Mathématiques »). |
+| 📰 **Actualités** | Ta veille techno : les flux RSS que tu ajoutes (une adresse de site suffit) et les sujets que tu suis (cybersécurité, réseaux…). Claude (Haiku) trie les nouveaux articles par lots et garde dans « Pour toi » ceux qui comptent, avec une phrase sur ce qu'il faut retenir. Les plus importants sonnent sur le téléphone, regroupés, jamais pendant le silence. Un sujet peut aussi chercher sur Google Actualités. |
 | 📱 **Appli iPhone** | Une appli web installable sur l'écran d'accueil, avec notifications push, thème clair ou sombre et **connexion par Face ID** (clés d'accès). Pas d'App Store, pas de compte développeur. |
 
 ## Comment ça marche
@@ -178,6 +179,7 @@ Réglages → Mise à jour.
 | `app/claunote/progression.py`, `carte_mentale.py`, `formules.py` | Page Progression, cartes mentales (markmap), formules LaTeX (KaTeX, texte des PDF) |
 | `app/claunote/lecture.py`, `lecture/` | Docling (Word, PowerPoint, Excel, PDF), service local pix2tex et FlashRank |
 | `app/claunote/cles.py` | Connexion par Face ID / Touch ID (clés d'accès WebAuthn) |
+| `app/claunote/actualites.py` | Flux RSS (relevé, dédup), tri par sujets (IA ou mots-clés), notifications regroupées |
 | `app/claunote/matieres.py`, `rangement.py` | Matières en double, chemins et noms dans kDrive |
 | `app/claunote/pronote.py`, `pronote/` | Client Python et service Node (Pawnote) |
 | `app/claunote/db.py` | Schéma PostgreSQL (créé et mis à jour au démarrage) et requêtes |
@@ -198,6 +200,7 @@ Réglages → Mise à jour.
 - [x] Imports de dossiers entiers, garde-fou des documents personnels, découpage des très gros scans
 - [x] Campagnes multi-matières, épreuves blanches, PDF à partager, fichiers joints au contexte
 - [x] « Une question » : chat avec l'IA ou sans IA
+- [x] Actualités : flux RSS, sujets suivis triés par l'IA, notifications
 - [x] Matières en double : détection, fusion, prévention
 - [x] Analyse sans Claude sur CPU (Tesseract + Ollama), pause et arrêt des analyses, file d'analyse
 - [x] Local d'abord : Claude n'aide que si besoin et vérifie ; saturation surveillée ; index par passages et par le sens ;
