@@ -85,7 +85,7 @@ def test_tri_par_l_ia(monkeypatch):
 
 
 def test_tri_sans_claude_attend_puis_mots_cles(monkeypatch):
-    recent = article(1, "Faille dans Exchange")
+    recent = article(1, "Faille dans Exchange", cree_le=dt.datetime.now(dt.timezone.utc))
     ancien = article(2, "Python 4 et faille", cree_le=dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=4))
     b = Base(SUJETS, [recent, ancien])
     b.brancher(monkeypatch)
