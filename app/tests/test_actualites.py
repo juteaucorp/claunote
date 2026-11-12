@@ -55,6 +55,7 @@ class Base:
         monkeypatch.setattr(db, "abonnements", lambda: [{"endpoint": "x"}] if self.abonnes else [])
         monkeypatch.setattr(db, "notifier", lambda *a, **k: self.notifs.append(a) or True)
         monkeypatch.setattr(db, "etat_valeur", lambda k: None)
+        monkeypatch.setattr(db, "alertes_recentes", lambda jours=7: ["fuite-france-travail"])
         monkeypatch.setattr(ac.local, "reglages", lambda: {"mode": "local_d_abord"})
 
 
@@ -75,13 +76,17 @@ def test_tri_par_l_ia(monkeypatch):
 
     def demander(tache, prompt, cwd, entree=None, timeout=0, lire=None, **k):
         vus.update(tache=tache, prompt=prompt, ids=[json.loads(l)["id"] for l in entree.splitlines()])
-        return lire('Voilà : [{"id": 1, "sujets": ["S1", "S9"], "score": 0.9, "pourquoi": "À corriger"},'
-                    ' {"id": 2, "sujets": [], "score": 0.05}, {"id": 99, "sujets": ["S1"], "score": 1}]'), "haiku"
+        return lire('Voilà : [{"id": 1, "sujets": ["S1", "S9"], "score": 0.9, "resume": "Faille exploitée : patcher",'
+                    ' "alerte": true, "evenement": "Exchange CVE-2026-1"},'
+                    ' {"id": 2, "sujets": [], "score": 0.05, "alerte": true}, {"id": 99, "sujets": ["S1"], "score": 1}]'), "haiku"
     monkeypatch.setattr(agent, "demander", demander)
     assert ac.trier(lambda: True) == 2
     assert vus["tache"] == "actualites" and vus["ids"] == [1, 2] and "S1 — Cybersécurité : Failles" in vus["prompt"]
-    assert b.tries == [{"id": 1, "tri": "ia", "sujets": [7], "score": 0.9, "pourquoi": "À corriger"},
-                       {"id": 2, "tri": "ia", "sujets": [], "score": 0.05, "pourquoi": None}]
+    assert "fuite-france-travail" in vus["prompt"]   # l'IA réutilise l'étiquette d'un événement déjà vu
+    assert b.tries == [{"id": 1, "tri": "ia", "sujets": [7], "score": 0.9, "pourquoi": "Faille exploitée : patcher",
+                        "alerte": True, "evenement": "exchange-cve-2026-1"},
+                       {"id": 2, "tri": "ia", "sujets": [], "score": 0.05, "pourquoi": None,   # hors sujet : jamais d'alerte
+                        "alerte": False, "evenement": None}]
 
 
 def test_tri_sans_claude_attend_puis_mots_cles(monkeypatch):
@@ -92,7 +97,8 @@ def test_tri_sans_claude_attend_puis_mots_cles(monkeypatch):
     monkeypatch.setattr(agent, "demander", lambda *a, **k: pytest.fail("Claude en pause : pas d'appel"))
     ac.trier(lambda: False)
     # le récent attend le retour de Claude ; celui qui attend depuis 4 h passe aux mots-clés
-    assert b.tries == [{"id": 2, "tri": "mots_cles", "sujets": [7, 9], "score": None, "pourquoi": None}]
+    assert b.tries == [{"id": 2, "tri": "mots_cles", "sujets": [7, 9], "score": None, "pourquoi": None,
+                        "alerte": False, "evenement": None}]
 
 
 def test_tri_reponse_illisible_repli_mots_cles(monkeypatch):
@@ -115,34 +121,30 @@ def test_limite_claude_laisse_en_attente(monkeypatch):
     assert b.tries == []
 
 
-def test_annonces_regroupees_et_sans_spam(monkeypatch):
+def test_seules_les_alertes_sonnent_une_fois_par_evenement(monkeypatch):
     b = Base(SUJETS, [
-        article(1, "Faille A", tri="ia", sujets=[7], score=0.9, pourquoi="Patch urgent"),
-        article(2, "Faille B", tri="ia", sujets=[7], score=0.8),
-        article(3, "Faille mineure", tri="ia", sujets=[7], score=0.4),            # pas assez important
-        article(4, "Python 4", tri="ia", sujets=[9], score=0.95),                  # sujet non notifié
-        article(5, "Vieille faille", tri="mots_cles", sujets=[7],
-                publie_le=MAINTENANT - dt.timedelta(days=5)),                        # trop vieux
-        article(6, "Alerte CERT", tri="ia", sujets=[], score=0.5, source="CERT-FR", flux_notifier=True),
+        article(1, "Fuite chez France Travail", tri="ia", sujets=[7], score=0.95, alerte=True,
+                evenement="fuite-france-travail", pourquoi="43 millions de comptes exposés"),
+        article(2, "France Travail piraté", tri="ia", sujets=[7], score=0.9, alerte=True,
+                evenement="fuite-france-travail", source="Numerama"),               # même événement, autre site
+        article(3, "Faille Exchange", tri="ia", sujets=[7], score=0.85),             # important mais pas une alerte
+        article(4, "Python 4", tri="ia", sujets=[9], score=0.95, alerte=True, evenement="python-4"),  # sujet muet
+        article(5, "Faille mots-clés", tri="mots_cles", sujets=[7]),                 # sans IA : ne sonne pas
+        article(6, "Vieille alerte", tri="ia", sujets=[7], alerte=True, evenement="vieux",
+                publie_le=MAINTENANT - dt.timedelta(days=5)),                         # trop vieux
+        article(7, "Alerte CERT", tri="ia", sujets=[], score=0.5, source="CERT-FR", flux_notifier=True),
     ])
     b.brancher(monkeypatch)
     assert ac.annoncer(MAINTENANT) == 2
-    titres = sorted(n[1] for n in b.notifs)
-    assert titres == ["2 actualités : Cybersécurité", "Alerte CERT"]
-    groupe = next(n for n in b.notifs if n[1].startswith("2"))
-    assert groupe[2] == "Faille A · Faille B" and groupe[3] == "/actualites"
-    assert sorted(b.annonces) == [1, 2, 3, 4, 5, 6]   # tout est décidé une fois pour toutes
-
-
-def test_une_seule_annonce_avec_raison(monkeypatch):
-    b = Base(SUJETS, [article(1, "Faille A", tri="ia", sujets=[7], score=0.9, pourquoi="Patch urgent")])
-    b.brancher(monkeypatch)
-    ac.annoncer(MAINTENANT)
-    assert b.notifs == [("actu:ex.fr/1", "Faille A", "Cybersécurité · Ex : Patch urgent", "/actualites?article=1#a1")]
+    assert b.notifs == [
+        ("actu-alerte:fuite-france-travail", "🚨 Fuite chez France Travail", "43 millions de comptes exposés (Ex)",
+         "/actualites?article=1#a1"),
+        ("actu:ex.fr/7", "Alerte CERT", "CERT-FR", "/actualites?article=7#a7")]
+    assert sorted(b.annonces) == [1, 2, 3, 4, 5, 6, 7]   # tout est décidé une fois pour toutes
 
 
 def test_sans_appareil_rien_ne_sonne_mais_tout_est_note(monkeypatch):
-    b = Base(SUJETS, [article(1, "Faille A", tri="ia", sujets=[7], score=0.9)], abonnes=False)
+    b = Base(SUJETS, [article(1, "Faille A", tri="ia", sujets=[7], score=0.9, alerte=True)], abonnes=False)
     b.brancher(monkeypatch)
     assert ac.annoncer(MAINTENANT) == 0 and b.notifs == [] and b.annonces == [1]
 
@@ -240,7 +242,10 @@ def test_passage_en_sisr_garde_les_sujets_modifies(monkeypatch):
     monkeypatch.setattr(db, "sujet_supprimer", retires.append)
     monkeypatch.setattr(db, "sujet_ajouter", lambda nom, d, m: ajoutes.append(nom))
     monkeypatch.setattr(db, "articles_retrier", lambda: 0)
+    flux = []
+    monkeypatch.setattr(db, "flux_ajouter", lambda url, titre, site: flux.append(titre))
     ac.initialiser()
+    assert flux == ["Numerama", "01net"]   # nouveaux flux proposés une fois aux installations existantes
     assert retires == [2]   # « Réseaux et systèmes » a été modifié : gardé
     assert ajoutes == ["Cybersécurité", "Réseaux", "Systèmes et virtualisation"]
     ac.initialiser()        # une seule fois

@@ -8,8 +8,9 @@
 {% if erreur %}<p class="carte alerte">{{ erreur }}</p>{% endif %}
 
 <h2 id="sujets">Sujets suivis</h2>
-<p class="doux">L'IA lit chaque nouvel article et garde dans « Pour toi » ceux qui touchent vraiment un de ces sujets.
-  Les plus importants te sont notifiés (regroupés, jamais pendant le silence).</p>
+<p class="doux">L'IA lit chaque nouvel article, le résume en une phrase et garde dans « Pour toi » ceux qui touchent
+  vraiment un de ces sujets. Elle ne te notifie que les <strong>alertes</strong> : le rare et le grave (grosse fuite de
+  données, faille critique exploitée chez Fortinet ou Cisco…), une seule fois par événement, jamais pendant le silence.</p>
 {% for s in sujets %}
 <details class="carte sujet">
   <summary><span class="nom"><strong>{{ s.nom }}</strong>
@@ -20,7 +21,7 @@
     <label>Mots-clés <span class="doux">(séparés par des virgules, servent aussi sans IA)</span>
       <input name="mots_cles" value="{{ s.mots_cles|join(', ') }}"></label>
     {% if s.recherche_erreur %}<p class="alerte">Google Actualités : {{ s.recherche_erreur }}</p>{% endif %}
-    <label class="interrupteur"><span><strong>Me notifier</strong><br><span class="doux">Les articles jugés importants.</span></span>
+    <label class="interrupteur"><span><strong>Me notifier</strong><br><span class="doux">Seulement les alertes rares et graves.</span></span>
       <input type="checkbox" name="notifier" value="true" {{ 'checked' if s.notifier }}></label>
     <label class="interrupteur"><span><strong>Chercher aussi sur Google Actualités</strong><br><span class="doux">Des articles de tous les sites, avec tes mots-clés.</span></span>
       <input type="checkbox" name="recherche" value="true" {{ 'checked' if s.recherche_id }}></label>
@@ -37,7 +38,7 @@
     <label>Ce qui t'intéresse <textarea name="description" rows="2" maxlength="500" placeholder="ex. Les failles critiques à corriger vite et les grosses attaques">{{ saisie.description or '' }}</textarea></label>
     <label>Mots-clés <span class="doux">(séparés par des virgules)</span>
       <input name="mots_cles" placeholder="ex. faille, CVE, rançongiciel" value="{{ saisie.mots_cles or '' }}"></label>
-    <label class="interrupteur"><span><strong>Me notifier</strong><br><span class="doux">Les articles jugés importants.</span></span>
+    <label class="interrupteur"><span><strong>Me notifier</strong><br><span class="doux">Seulement les alertes rares et graves.</span></span>
       <input type="checkbox" name="notifier" value="true" checked></label>
     <label class="interrupteur"><span><strong>Chercher aussi sur Google Actualités</strong><br><span class="doux">Utile pour un sujet précis qu'aucun de tes flux ne couvre.</span></span>
       <input type="checkbox" name="recherche" value="true"></label>

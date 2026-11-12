@@ -33,7 +33,7 @@
     <span class="doux">Ta fiche, ton quiz ou tes flashcards sont générés.</span></span>
     <input type="checkbox" name="revisions" value="true" {{ 'checked' if p.revisions }}></label>
   <label class="interrupteur"><span><strong>Actualités</strong><br>
-    <span class="doux">Les articles importants de tes sujets suivis (regroupés). <a href="/actualites/sources">Choisir les sujets</a></span></span>
+    <span class="doux">Seulement les alertes rares et graves de tes sujets suivis (une fois par événement). <a href="/actualites/sources">Choisir les sujets</a></span></span>
     <input type="checkbox" name="actualites" value="true" {{ 'checked' if p.actualites }}></label>
   <p class="heure">Silence de <input type="time" name="silence_debut" value="{{ p.silence_debut }}" required>
     à <input type="time" name="silence_fin" value="{{ p.silence_fin }}" required></p>
