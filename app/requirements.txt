@@ -8,7 +8,7 @@ python-multipart==0.0.33
 tzdata==2026.6
 genanki==0.13.1
 pywebpush==2.5.0
-feedparser==6.0.11
+feedparser==6.0.14
 psycopg-pool==3.3.3
 weasyprint==70.0
 pypdf==7.0.0
