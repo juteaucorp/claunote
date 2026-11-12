@@ -645,6 +645,8 @@ question du chat ────────► service lecture : FlashRank ─► 
 
 ## 17. Accès par Internet (Cloudflare Tunnel), seulement sur tes appareils
 
+> 📘 **Guide complet** (fonctionnement, procédure détaillée, dépannage) : [docs/cloudflare-tunnel.md](../docs/cloudflare-tunnel.md).
+
 ```
  Appareil approuvé ── 4G, wifi, n'importe où ──► Cloudflare  https://claunote.ton-domaine.fr
  (iPhone, PC)                                     │  règle pare-feu : France seulement
