@@ -22,4 +22,5 @@ COPY requirements.txt .
 # retélécharger toutes les autres
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 COPY claunote ./claunote
-CMD ["uvicorn", "claunote.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Pas d'en-tête « server: uvicorn » : rien qui renseigne un curieux sur ce qui tourne
+CMD ["uvicorn", "claunote.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]

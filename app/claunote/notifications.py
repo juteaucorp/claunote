@@ -33,7 +33,7 @@ DUREE_VIE = 12 * 3600   # Apple/Google gardent le message 12 h si le téléphone
 INTERVALLE = 30         # secondes entre deux tours de la boucle
 MAX_PAR_TOUR = 3        # au-delà, les notifications du tour partent en un seul résumé
 DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
-          "rappel": True, "pronote": True, "revisions": True, "actualites": True}
+          "rappel": True, "pronote": True, "revisions": True, "actualites": True, "securite": True}
 PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
          "examen": "Épreuve blanche prête"}
 JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]

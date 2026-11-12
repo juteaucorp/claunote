@@ -25,7 +25,7 @@ from starlette.background import BackgroundTask
 
 from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, db, decoupage, formules,
                       importation, index, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
-                      pronote, question, rangement, ressources, revision, schemas, sensible)
+                      pronote, question, rangement, ressources, revision, schemas, securite, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -37,13 +37,18 @@ ETUDES_ID = int(os.environ.get("KDRIVE_ETUDES_ID", "0"))
 @asynccontextmanager
 async def lifespan(app):
     db.init()
-    secret = os.environ.get("CLAUNOTE_SECRET") or db.secret_session()
-    app.state.compte = auth.Compte.from_env(secret.encode(), db.etat_valeur("mot_de_passe"))
+    app.state.secret = os.environ.get("CLAUNOTE_SECRET") or db.secret_session()
+    # « Déconnecter partout » change la génération : toutes les signatures de session changent
+    app.state.compte = auth.Compte.from_env(_cle_sessions(app), db.etat_valeur("mot_de_passe"))
     agent.journal = _noter_appel  # les appels faits par le site (Demander, matières) vont sur la page État
     if app.state.compte.par_defaut:
         print("ATTENTION : mot de passe par défaut (admin / claunote), "
               "change-le sur la page Compte du site", flush=True)
     yield
+
+
+def _cle_sessions(app) -> bytes:
+    return (app.state.secret + (db.etat_valeur("session_generation") or "")).encode()
 
 
 def _noter_appel(**appel):
@@ -53,7 +58,8 @@ def _noter_appel(**appel):
         print(f"appel à Claude non noté : {e}", flush=True)
 
 
-app = FastAPI(title="Claunote", lifespan=lifespan)
+# Pas de documentation automatique de l'API (/docs, /openapi.json) : rien à montrer à un curieux
+app = FastAPI(title="Claunote", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 PUBLIC = ("/appareil", "/connexion", "/cles/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
 
 
@@ -78,12 +84,100 @@ async def appareil_approuve(request: Request, call_next):
     if (not appareils.par_tunnel(request.headers) or not appareils.actif() or chemin == "/appareil"
             or chemin.startswith("/static/") or appareils.reconnu(request.cookies.get(appareils.COOKIE))):
         return await call_next(request)
+    securite.appareil_inconnu(request)
+    if securite.bannie(appareils.ip_client(request)):
+        return Response("accès refusé", status_code=403)
     if request.headers.get("HX-Request"):
         return Response(status_code=403, headers={"HX-Redirect": "/appareil"})
     if request.method != "GET":
         return Response("appareil non approuvé", status_code=403)
     suite = chemin + (f"?{request.url.query}" if request.url.query else "")
     return RedirectResponse(f"/appareil?{urlencode({'suite': suite})}", status_code=303)
+
+
+# Avant les appareils : par Internet, un pays non autorisé ou une adresse bannie ne voit rien du tout
+@app.middleware("http")
+async def garde_internet(request: Request, call_next):
+    if appareils.par_tunnel(request.headers):
+        if request.headers.get("cf-connecting-ip") and not appareils.source_cloudflare(request):
+            _entete_falsifie(request)
+        raison = securite.refus_internet(request)
+        if raison:
+            return Response(f"accès refusé ({raison})", status_code=403)
+    return await call_next(request)
+
+
+_falsifies: dict[str, float] = {}
+
+
+def _entete_falsifie(request: Request):
+    """Quelqu'un du réseau local (ou du VPN) se fait passer pour Cloudflare : noté une fois par heure."""
+    ip = request.client.host if request.client else "?"
+    if time.time() - _falsifies.get(ip, 0) < 3600:
+        return
+    _falsifies[ip] = time.time()
+    securite.noter("entete_falsifie", request, f"cf-connecting-ip={request.headers.get('cf-connecting-ip')!r} "
+                   "envoyé par une machine qui n'est pas cloudflared (ou CLAUNOTE_CLOUDFLARED à régler)", ip=ip,
+                   alerte=f"La machine {ip} (réseau local ou VPN) envoie de faux en-têtes Cloudflare.")
+
+
+METHODES_SURES = {"GET", "HEAD", "OPTIONS"}
+
+
+def _meme_origine(request: Request) -> bool:
+    """Un formulaire ou un script d'un autre site (même un autre sous-domaine) ne peut rien changer ici."""
+    site = request.headers.get("sec-fetch-site")
+    if site in ("cross-site", "same-site"):
+        return False
+    origine = request.headers.get("origin")
+    if origine == "null":
+        return site == "same-origin"
+    if origine:
+        host = request.headers.get("host", "")
+        return urlsplit(origine).netloc.lower() == host.lower()
+    return True   # ni Origin ni Sec-Fetch-Site : pas un navigateur (curl…), donc pas une attaque CSRF
+
+
+@app.middleware("http")
+async def anti_csrf(request: Request, call_next):
+    if request.method not in METHODES_SURES and not _meme_origine(request):
+        securite.noter("csrf", request, f"{request.method} {request.url.path} depuis "
+                       f"{request.headers.get('origin') or request.headers.get('sec-fetch-site')}",
+                       alerte=f"Une page d'un autre site a essayé d'agir sur Claunote ({request.url.path}) : refusé.")
+        return Response("requête refusée : elle ne vient pas de ce site", status_code=403)
+    return await call_next(request)
+
+
+# Pas de script ni d'image venus d'ailleurs, pas d'envoi de données ailleurs, pas d'affichage dans un autre site
+CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob:; "
+       "frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; "
+       "form-action 'self'; frame-ancestors 'self'")
+EN_TETES = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN",
+            "Referrer-Policy": "same-origin", "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "Permissions-Policy": "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), "
+                                  "interest-cohort=()"}
+
+
+# Déclaré en dernier, donc exécuté en premier : en-têtes sur toutes les réponses, même les refus
+@app.middleware("http")
+async def en_tetes_securite(request: Request, call_next):
+    try:
+        r = await call_next(request)
+    except Exception as e:
+        securite.erreur_serveur(request, f"{type(e).__name__}: {e}"[:300])
+        r = Response("Erreur du serveur : réessaie dans un instant.", status_code=500)
+    else:
+        if r.status_code == 500:
+            securite.erreur_serveur(request, f"réponse 500 sur {request.url.path}")
+    for nom, valeur in EN_TETES.items():
+        r.headers.setdefault(nom, valeur)
+    if appareils.par_tunnel(request.headers):   # nom de domaine Cloudflare : HTTPS obligatoire pendant 1 an
+        r.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    return r
+
+
 @app.exception_handler(KDriveIndisponible)
 def kdrive_indisponible(request: Request, e: KDriveIndisponible):
     """kDrive en panne pendant une page qui en a besoin (ouvrir un scan, déposer) : explication claire."""
@@ -176,6 +270,7 @@ templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
 templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
 templates.env.globals["nb_mises_a_jour"] = maj.disponibles
 templates.env.globals["nb_actualites"] = lambda: db.nb_actualites_nouvelles()
+templates.env.globals["nb_alertes_securite"] = securite.nb_nouvelles_alertes
 templates.env.filters["note"] = pronote.libelle_note
 _matieres_cours = {"le": 0.0, "noms": []}
 
@@ -236,7 +331,23 @@ def rendu_markdown(texte: str | None) -> str:
     # Le HTML brut éventuel de la transcription est neutralisé avant le rendu
     texte = texte.replace("&", "&amp;").replace("<", "&lt;")
     rendu = formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths)
-    return schemas.restaurer(rendu, figures)
+    return schemas.restaurer(liens_surs(rendu), figures)
+
+
+SCHEMA_URL = re.compile(r"^\s*([a-z][a-z0-9+.\-]*)\s*:", re.I)
+ATTRIBUT_URL = re.compile(r'\b(href|src)="([^"]*)"', re.I)
+
+
+def liens_surs(rendu: str) -> str:
+    """Liens du Markdown (écrit par l'IA à partir des scans) : http(s), mailto ou relatifs, jamais javascript:."""
+    def sur(m):
+        brut = html.unescape(m.group(2))
+        brut = "".join(c for c in brut if ord(c) > 32)   # « java\tscript: » est lu « javascript: » par le navigateur
+        schema = SCHEMA_URL.match(brut)
+        if schema and schema.group(1).lower() not in ("http", "https", "mailto"):
+            return f'{m.group(1)}="#"'
+        return m.group(0)
+    return ATTRIBUT_URL.sub(sur, rendu)
 
 
 # Texte simple (questions de quiz, flashcards) avec des formules $…$
@@ -262,7 +373,9 @@ def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Ma
 
 def _suite_sure(suite: str) -> str:
     # Uniquement un chemin du site : pas de redirection vers un autre domaine
-    return suite if suite.startswith("/") and not suite.startswith("//") and "\\" not in suite else "/"
+    # (ni caractère de contrôle : le navigateur retire tabulations et retours, « /\t/x.fr » deviendrait « //x.fr »)
+    return suite if (suite.startswith("/") and not suite.startswith("//") and "\\" not in suite
+                     and not any(ord(c) < 32 or ord(c) == 127 for c in suite)) else "/"
 
 
 def _face_id(request: Request) -> bool:
@@ -283,17 +396,43 @@ def page_connexion(request: Request, suite: str = "/"):
 def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str = Form(...), suite: str = Form("/")):
     compte = request.app.state.compte
     ip = appareils.ip_client(request)
-    attente = compte.bloque(ip)
+    attente = compte.bloque(ip) or _verrou_internet(request)
+    refus = _refus_internet(request)
+    if refus:
+        return _page_connexion(request, suite, refus, 403)
     if attente or not compte.verifier(ip, utilisateur.strip(), mot_de_passe):
+        if not attente:
+            securite.echec("connexion_echec", request, f"identifiant « {utilisateur.strip()[:40]} »")
         attente = attente or compte.bloque(ip)
         erreur = (f"Trop d'essais : réessaie dans {attente // 60 + 1} min." if attente
                   else "Identifiant ou mot de passe incorrect.")
-        return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "erreur": erreur,
-                                                                       "sans_nav": True, "face_id": _face_id(request)},
-                                          status_code=401)
+        return _page_connexion(request, suite, erreur, 401)
+    securite.reussite(request, "mot de passe")
     r = RedirectResponse(_suite_sure(suite), status_code=303)
     _cookie_session(request, r, compte)
     return r
+
+
+def _page_connexion(request: Request, suite: str, erreur: str, statut: int) -> HTMLResponse:
+    return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "erreur": erreur,
+                                                                   "sans_nav": True, "face_id": _face_id(request)},
+                                      status_code=statut)
+
+
+def _verrou_internet(request: Request) -> int:
+    """Secondes de fermeture des connexions par Internet (trop d'échecs) ; jamais par le VPN."""
+    return securite.verrouille() if appareils.par_tunnel(request.headers) else 0
+
+
+def _refus_internet(request: Request) -> str | None:
+    """Par Internet, le mot de passe par défaut ne suffit pas : n'importe qui le connaît."""
+    if appareils.par_tunnel(request.headers) and request.app.state.compte.par_defaut:
+        securite.noter("mot_de_passe_defaut", request, "connexion refusée", alerte=(
+            "Connexion par Internet refusée : le mot de passe est encore admin / claunote. "
+            "Change-le par le VPN (Réglages → Compte)."))
+        return ("Par Internet, le mot de passe par défaut est refusé. Change-le d'abord par le VPN "
+                "(Réglages → Compte).")
+    return None
 
 
 def _cookie_session(request: Request, reponse: Response, compte: auth.Compte):
@@ -330,16 +469,21 @@ def page_appareil(request: Request, suite: str = "/"):
 def approuver_appareil(request: Request, code: str = Form(...), nom: str = Form("Appareil"), suite: str = Form("/")):
     compte = request.app.state.compte
     ip = appareils.ip_client(request)
-    attente = compte.bloque(ip)
+    attente = compte.bloque(ip) or _verrou_internet(request)
     valeur = None if attente else appareils.utiliser_code(code, nom)
     if not valeur:
         if not attente:
             compte._echecs.setdefault(ip, []).append(time.time())
+            securite.echec("code_echec", request, f"nom donné « {nom.strip()[:60]} »")
         attente = attente or compte.bloque(ip)
         erreur = (f"Trop d'essais : réessaie dans {attente // 60 + 1} min." if attente
                   else "Code inconnu ou expiré : crée-en un nouveau (Réglages → Compte).")
         return templates.TemplateResponse(request, "appareil.html", {"suite": _suite_sure(suite), "sans_nav": True,
                                                                      "erreur": erreur, "nom": nom}, status_code=403)
+    nom_appareil = (nom or "Appareil").strip()[:60] or "Appareil"
+    securite.noter("appareil_ajoute", request, f"« {nom_appareil} »", alerte=(
+        f"« {nom_appareil} » peut maintenant ouvrir le site par Internet. Si ce n'est pas toi : "
+        "Réglages → Compte → Retirer, puis Sécurité → Déconnecter partout."))
     r = RedirectResponse(_suite_sure(suite), status_code=303)
     r.set_cookie(appareils.COOKIE, valeur, max_age=appareils.DUREE, httponly=True, samesite="lax", secure=True)
     return r
@@ -347,13 +491,16 @@ def approuver_appareil(request: Request, code: str = Form(...), nom: str = Form(
 
 @app.post("/appareils/code", response_class=HTMLResponse)
 def creer_code_appareil(request: Request):
+    securite.noter("code_cree", request, "code valable 15 min")
     return templates.TemplateResponse(request, "compte.html",
                                       _contexte_compte(request, code_appareil=appareils.nouveau_code()))
 
 
 @app.post("/appareils/{ident}/retirer")
-def retirer_appareil(ident: str):
+def retirer_appareil(request: Request, ident: str):
+    nom = next((a["nom"] for a in appareils.liste() if a["id"] == ident), ident)
     appareils.retirer(ident)
+    securite.noter("appareil_retire", request, f"« {nom} »")
     return RedirectResponse("/compte#appareils", status_code=303)
 
 
@@ -390,13 +537,18 @@ async def cles_inscription(request: Request):
                                         request.headers.get("host", ""), _origine(request))
     except cles.CleRefusee as e:
         return JSONResponse({"erreur": str(e)}, status_code=400)
-    db.ajouter_cle(cle, (corps.get("nom") or "Appareil").strip()[:60])
+    nom = (corps.get("nom") or "Appareil").strip()[:60]
+    db.ajouter_cle(cle, nom)
+    securite.noter("cle_ajoutee", request, f"« {nom} »", alerte=(
+        f"Clé Face ID « {nom} » ajoutée : elle permet de se connecter sans mot de passe. "
+        "Si ce n'est pas toi : Réglages → Compte → Supprimer."))
     return {"ok": True}
 
 
 @app.post("/cles/{cle_id}/supprimer")
-def cles_supprimer(cle_id: str):
+def cles_supprimer(request: Request, cle_id: str):
     db.supprimer_cle(cle_id)
+    securite.noter("cle_supprimee", request, f"clé {cle_id[:12]}…")
     return RedirectResponse("/compte#cles", status_code=303)
 
 
@@ -412,7 +564,7 @@ def cles_connexion_options(request: Request):
 async def cles_connexion(request: Request):
     compte = request.app.state.compte
     ip = appareils.ip_client(request)
-    if compte.bloque(ip):
+    if compte.bloque(ip) or _verrou_internet(request):
         return JSONResponse({"erreur": "Trop d'essais : réessaie dans quelques minutes."}, status_code=429)
     corps = cles.lire(await request.body())
     reponse = corps.get("cle") or {}
@@ -424,8 +576,10 @@ async def cles_connexion(request: Request):
                                            request.headers.get("host", ""), _origine(request))
     except cles.CleRefusee as e:
         compte._echecs.setdefault(ip, []).append(time.time())
+        securite.echec("faceid_echec", request, str(e)[:200])
         return JSONResponse({"erreur": str(e)}, status_code=400)
     db.cle_utilisee(cle["id"], compteur)
+    securite.reussite(request, f"Face ID « {cle.get('nom') or 'clé'} »")
     r = JSONResponse({"suite": _suite_sure(str(corps.get("suite") or "/"))})
     _cookie_session(request, r, compte)
     r.delete_cookie(COOKIE_DEFI)
@@ -440,6 +594,7 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
     erreur = None
     if compte.bloque(ip) or not compte.verifier(ip, compte.utilisateur, actuel):
         erreur = "Mot de passe actuel incorrect."
+        securite.echec("connexion_echec", request, "mot de passe actuel faux (page Compte)")
     elif len(nouveau) < 8:
         erreur = "Le nouveau mot de passe doit faire au moins 8 caractères."
     elif nouveau != confirmation:
@@ -453,6 +608,9 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
     db.etat_ecrire("mot_de_passe", hache)
     # Nouveau compte = nouvelles signatures : les autres appareils sont déconnectés, pas celui-ci
     request.app.state.compte = auth.Compte(compte.utilisateur, hache, compte.secret)
+    securite.noter("mot_de_passe", request, "changé sur la page Compte", alerte=(
+        "Le mot de passe du site vient d'être changé. Si ce n'est pas toi : sur la VM, "
+        "docker compose exec web python -m claunote.auth reinitialiser"))
     r = templates.TemplateResponse(request, "compte.html", _contexte_compte(
         request, message="Mot de passe changé. Les autres appareils devront se reconnecter."))
     _cookie_session(request, r, request.app.state.compte)
@@ -487,6 +645,7 @@ def demander_mise_a_jour(request: Request, action: str):
     else:
         try:
             maj.demander(action)
+            securite.noter("mise_a_jour", request, action)
         except RuntimeError as e:
             erreur = str(e)
     return templates.TemplateResponse(request, "_mise_a_jour.html", _contexte_maj(request, erreur=erreur))
@@ -496,6 +655,68 @@ def demander_mise_a_jour(request: Request, action: str):
 def deconnexion():
     r = RedirectResponse("/connexion", status_code=303)
     r.delete_cookie(auth.COOKIE)
+    return r
+
+
+# --- Sécurité : journal, blocages, déconnecter partout (voir securite.py) ---------
+
+GRAVITES = {"alerte": "Alertes", "attention": "À surveiller", "info": "Informations"}
+PAR_PAGE_SECURITE = 50
+
+
+@app.get("/securite", response_class=HTMLResponse)
+def page_securite(request: Request, gravite: str = "", page: int = 1, message: str = ""):
+    gravite = gravite if gravite in GRAVITES else ""
+    page = max(page, 1)
+    lignes, total = db.securite_journal(gravite or None, PAR_PAGE_SECURITE, (page - 1) * PAR_PAGE_SECURITE)
+    securite.marquer_vu()
+    return templates.TemplateResponse(request, "securite.html", {
+        "lignes": lignes, "total": total, "page": page, "pages": max(1, -(-total // PAR_PAGE_SECURITE)),
+        "gravite": gravite, "gravites": GRAVITES, "libelles": {k: v[1] for k, v in securite.TYPES.items()},
+        "bilan": db.securite_bilan(), "e": securite.etat(), "message": message,
+        "alertes_actives": notifications.preferences().get("securite", True), "abonnes": len(db.abonnements()),
+        "appareils": appareils.liste(), "par_tunnel": appareils.par_tunnel(request.headers),
+        "lien_page": lambda n: "/securite?" + urlencode({k: v for k, v in (("gravite", gravite), ("page", n)) if v})})
+
+
+@app.post("/securite/debloquer")
+def securite_debloquer(request: Request):
+    securite.debloquer(request)
+    return RedirectResponse("/securite?" + urlencode({"message": "Bans et blocages levés."}), status_code=303)
+
+
+@app.post("/securite/alertes")
+def securite_alertes(actives: str = Form("")):
+    notifications.enregistrer_preferences({**notifications.preferences(), "securite": actives == "1"})
+    return RedirectResponse("/securite", status_code=303)
+
+
+@app.post("/securite/tester")
+def securite_tester(request: Request):
+    securite.alerter("test", "Test d'alerte", "Les alertes de sécurité arrivent bien sur cet appareil.")
+    return RedirectResponse("/securite?" + urlencode({"message": "Alerte de test envoyée."}), status_code=303)
+
+
+@app.post("/securite/deconnecter-partout")
+def deconnecter_partout(request: Request, appareils_aussi: str = Form("")):
+    """Nouvelle clé de signature : toutes les sessions tombent, sauf celle de cet appareil (recréée)."""
+    ancien = request.app.state.compte
+    db.etat_ecrire("session_generation", base64.urlsafe_b64encode(os.urandom(12)).decode())
+    compte = auth.Compte(ancien.utilisateur, ancien.hash, _cle_sessions(request.app))
+    compte.par_defaut = ancien.par_defaut
+    request.app.state.compte = compte
+    retires = 0
+    if appareils_aussi == "1":
+        ici = appareils.reconnu(request.cookies.get(appareils.COOKIE))
+        for a in appareils.liste():
+            if not ici or a["id"] != ici["id"]:
+                appareils.retirer(a["id"])
+                retires += 1
+    detail = "toutes les sessions coupées" + (f", {retires} appareil(s) Internet retiré(s)" if retires else "")
+    securite.noter("deconnexion_partout", request, detail, alerte=detail.capitalize() + ".")
+    r = RedirectResponse("/securite?" + urlencode({"message": detail.capitalize() + " (sauf cet appareil)."}),
+                         status_code=303)
+    _cookie_session(request, r, compte)
     return r
 
 
@@ -1013,7 +1234,9 @@ def voir_piece(piece_id: int):
         raise HTTPException(404)
     nom = piece["nom"]
     media = mimetypes.guess_type(nom)[0] or "application/octet-stream"
-    lisible = media == "application/pdf" or (media.startswith("image/") and not nom.lower().endswith((".heic", ".heif")))
+    # Un SVG ouvert dans le navigateur peut contenir du JavaScript : téléchargé, jamais affiché
+    lisible = media == "application/pdf" or (media.startswith("image/") and media != "image/svg+xml"
+                                             and not nom.lower().endswith((".heic", ".heif")))
     return Response(bytes(piece["contenu"]), media_type=media, headers={
         "Content-Disposition": f"{'inline' if lisible else 'attachment'}; filename*=UTF-8''{quote(nom)}",
         "Cache-Control": "private, max-age=3600"})
@@ -1909,7 +2132,7 @@ def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("
             dt.time.fromisoformat(h)
         except ValueError:
             raise HTTPException(400, "heure invalide")
-    notifications.enregistrer_preferences({"heure": heure, "silence_debut": silence_debut,
+    notifications.enregistrer_preferences({**notifications.preferences(), "heure": heure, "silence_debut": silence_debut,
                                            "silence_fin": silence_fin, "rappel": rappel,
                                            "pronote": pronote_, "revisions": revisions,
                                            "actualites": actualites_})

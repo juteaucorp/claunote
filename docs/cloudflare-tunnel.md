@@ -183,6 +183,25 @@ la page de connexion ou le site, arrête-toi et relis l'étape 4.
 Depuis n'importe quel appareil déjà approuvé (même par Internet) : **Réglages → Compte → Appareils par Internet →
 Ajouter un appareil**, puis tape le code sur le nouvel appareil.
 
+### Étape 9. Durcir Cloudflare *(dashboard Cloudflare, 10 minutes)*
+
+Le site se défend déjà seul (appareil approuvé, blocages, pays, alertes : voir **Réglages → Sécurité**).
+Ces réglages arrêtent les attaques **avant** qu'elles n'arrivent chez toi :
+
+| # | Où | Réglage |
+|---|---|---|
+| 1 | **Sécurité → Bots** | **Bot Fight Mode : activé** (robots connus bloqués ; si l'appli iPhone se met à afficher des erreurs, désactive-le) |
+| 2 | **Sécurité → Règles WAF → Règles de limitation de débit** | `(http.host eq "claunote.ton-domaine.fr" and http.request.method eq "POST" and http.request.uri.path in {"/connexion" "/appareil" "/cles/connexion"})` → **5 requêtes / 10 s par IP** → **Bloquer** (offre gratuite : 1 règle, période et durée de 10 s ; le site bloque ensuite plus longtemps lui-même) |
+| 3 | **Sécurité → Règles WAF → Règles gérées** | **Cloudflare Free Managed Ruleset : activé** |
+| 4 | **Sécurité → Paramètres** | **Niveau de sécurité : Moyen** (ou Élevé), **Browser Integrity Check : activé** |
+| 5 | **SSL/TLS → Certificats Edge** | **Toujours utiliser HTTPS**, **TLS minimum 1.2**, **TLS 1.3 activé** |
+| 6 | **SSL/TLS → Certificats Edge** | **HSTS : activé** (max-age 6 mois, sans « preload ») |
+| 7 | **Notifications** (compte Cloudflare) | crée une alerte **« Security Events Alert »** (e-mail quand le pare-feu bloque en masse ; offres payantes seulement, sinon les alertes du site suffisent) |
+| 8 | **Mon profil → Authentification** | **2FA activée sur ton compte Cloudflare** : c'est la clé de tout le reste |
+| 9 | **Zero Trust → Réseaux → Tunnels** | ne partage jamais le jeton du tunnel ; s'il fuit : **Actualiser le jeton**, puis mets le nouveau dans `.env` |
+
+> ❗ **Pas de « Cloudflare Access » ni de WARP** devant le site : l'appli iPhone ne s'en sort pas (voir plus haut).
+
 ---
 
 ## 4. Au quotidien
@@ -191,6 +210,8 @@ Ajouter un appareil**, puis tape le code sur le nouvel appareil.
 |---|---|
 | Voir mes appareils | **Réglages → Compte → Appareils par Internet** (nom, date d'ajout, dernière visite) |
 | Couper un appareil perdu ou volé | **Retirer** sur cette page (effet immédiat), puis change le mot de passe sur la page Compte |
+| Voir qui a essayé d'entrer | **Réglages → Sécurité** : journal, alertes, adresses bannies |
+| Tout couper d'un coup (téléphone volé…) | **Réglages → Sécurité → Déconnecter partout** (+ case « retirer les appareils ») |
 | Couper tout l'accès par Internet | mets `#COMPOSE_PROFILES=tunnel` en commentaire dans `.env`, puis `docker compose stop cloudflared` |
 | Le supprimer pour de bon | supprime aussi le tunnel dans le dashboard Zero Trust |
 
@@ -208,6 +229,9 @@ protège déjà l'adresse.
 | Erreur **1020** (accès refusé) | règle « France seulement » | désactive-la à l'étranger |
 | Le code est redemandé à chaque ouverture | cookies bloqués (navigation privée) ou appareil retiré | navigation normale ; nouveau code |
 | « Trop d'essais » | 5 codes faux en 5 min depuis la même adresse | attends 5 minutes |
+| « accès refusé (adresse bloquée) » | 20 échecs en 24 h ou 100 requêtes en 10 min sans appareil approuvé | par le VPN : **Réglages → Sécurité → Lever les blocages** |
+| « accès refusé (pays non autorisé) » | pays hors de `CLAUNOTE_PAYS` | à l'étranger : `CLAUNOTE_PAYS=FR,XX` dans `.env`, puis `docker compose up -d web` |
+| Alerte « faux en-têtes Cloudflare » | cloudflared lancé hors de ce docker-compose | `CLAUNOTE_CLOUDFLARED=<son adresse>` dans `.env` ; sinon, une machine du réseau triche |
 | `cloudflared` ne démarre pas | `COMPOSE_PROFILES=tunnel` absent du `.env` | ajoute la ligne, puis `docker compose up -d` |
 
 ---
