@@ -226,3 +226,22 @@ def test_preferences_notifications_gardent_les_actualites(client):
                                                  "rappel": "true"}, follow_redirects=False)
     assert json.loads(client.etat["notifications"])["actualites"] is False
     assert notifications.DEFAUT["actualites"] is True
+
+
+def test_passage_en_sisr_garde_les_sujets_modifies(monkeypatch):
+    etat = {"actualites_init": "1"}
+    sujets = [{"id": 1, "nom": "Cybersécurité", "description": ac.SUJETS_DEFAUT[0][1]},
+              {"id": 2, "nom": "Développement", "description": ac.ANCIENS_DEFAUT["Développement"]},
+              {"id": 3, "nom": "Réseaux et systèmes", "description": "Ma version à moi"}]
+    retires, ajoutes = [], []
+    monkeypatch.setattr(db, "etat_valeur", etat.get)
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
+    monkeypatch.setattr(db, "sujets", lambda: sujets)
+    monkeypatch.setattr(db, "sujet_supprimer", retires.append)
+    monkeypatch.setattr(db, "sujet_ajouter", lambda nom, d, m: ajoutes.append(nom))
+    monkeypatch.setattr(db, "articles_retrier", lambda: 0)
+    ac.initialiser()
+    assert retires == [2]   # « Réseaux et systèmes » a été modifié : gardé
+    assert ajoutes == ["Cybersécurité", "Réseaux", "Systèmes et virtualisation"]
+    ac.initialiser()        # une seule fois
+    assert retires == [2]
