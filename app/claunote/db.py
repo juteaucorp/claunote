@@ -102,6 +102,8 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS matiere TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS fait_le TIMESTAMPTZ;   -- « déjà fait » dans l'historique
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS score JSONB;           -- dernier quiz : {"bonnes": 7, "total": 10}
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS sources_web JSONB NOT NULL DEFAULT '[]';  -- [{"repere": "W1", "titre", "url"}]
+-- Rester dans les cours ; sinon (par défaut) l'IA complète ce qu'ils ne couvrent pas, marqué [IA]
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS strict BOOLEAN NOT NULL DEFAULT false;
 -- Révisions d'avant l'historique : matière du premier cours utilisé
 UPDATE revisions r SET niveau = d.niveau, matiere = d.matiere FROM documents d
  WHERE r.matiere IS NULL AND d.id = r.doc_ids[1] AND d.matiere IS NOT NULL;
@@ -797,14 +799,14 @@ def niveaux_matieres():
 
 
 def creer_revision(genre: str, sujet: str, doc_ids: list[int], date_eval=None, consigne: str = "",
-                   campagne_id: int | None = None) -> int:
+                   campagne_id: int | None = None, strict: bool = False) -> int:
     """La matière de la révision est celle de son premier cours (filtre de l'historique)."""
     with connect() as c:
         return c.execute(
-            """INSERT INTO revisions (genre, sujet, doc_ids, date_eval, consigne, campagne_id, niveau, matiere)
-               SELECT %s, %s, %s, %s, %s, %s, d.niveau, d.matiere
+            """INSERT INTO revisions (genre, sujet, doc_ids, date_eval, consigne, campagne_id, strict, niveau, matiere)
+               SELECT %s, %s, %s, %s, %s, %s, %s, d.niveau, d.matiere
                FROM (SELECT 1) AS x LEFT JOIN documents d ON d.id = %s RETURNING id""",
-            (genre, sujet, doc_ids, date_eval, consigne, campagne_id, doc_ids[0] if doc_ids else None)
+            (genre, sujet, doc_ids, date_eval, consigne, campagne_id, strict, doc_ids[0] if doc_ids else None)
         ).fetchone()["id"]
 
 

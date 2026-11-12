@@ -248,7 +248,8 @@ ENCADRES = {"retenir": r"à retenir|a retenir|l'essentiel|essentiel|à savoir|pa
             "attention": r"attention|piège|pièges|erreur fréquente|erreurs fréquentes|à ne pas confondre",
             "exemple": r"exemple|exemples|application|cas concret",
             "methode": r"méthode|astuce|conseil|moyen mnémotechnique|mnémo",
-            "definition": r"définition|définitions|vocabulaire"}
+            "definition": r"définition|définitions|vocabulaire",
+            "ia": r"hors de tes cours|pas dans tes cours|hors cours"}
 RE_ENCADRE = re.compile(r"<blockquote>\s*<p>\s*<strong>\s*(?P<mot>" + "|".join(f"(?P<{k}>{v})" for k, v in ENCADRES.items())
                         + r")\b", re.I)
 

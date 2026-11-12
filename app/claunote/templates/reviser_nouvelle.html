@@ -57,8 +57,16 @@
       {% with exemple="Un énoncé du prof, le sujet de l'an dernier, ton emploi du temps…" %}{% include "_joindre.html" %}{% endwith %}</div>
   </section>
 
+  <section>
+    <h2><span class="num">5</span> Et si tes cours ne couvrent pas tout ?</h2>
+    <div class="carte">
+      <p>Par défaut, <strong>l'IA complète avec le programme officiel</strong> ce qui manque dans tes cours (pas encore vu, cours pas scanné…), et marque chaque ajout <span class="ajout-ia">pas dans tes cours</span>.</p>
+      <label class="option-strict"><input type="checkbox" name="strict" value="1"> Rester strictement dans mes cours <span class="doux">(rien d'ajouté)</span></label>
+    </div>
+  </section>
+
   <button class="principal grand">Générer</button>
-  <p class="doux">L'agent part de tes cours, <strong>tous ceux de la matière si tu n'en coches aucun</strong> (au-delà d'une trentaine, il les condense d'abord par groupes). Compte 1 à 3 minutes, plus avec beaucoup de cours ; tu peux quitter la page, une notification te préviendra.</p>
+  <p class="doux">L'agent part de tes cours, <strong>tous ceux de la matière si tu n'en coches aucun</strong> (au-delà d'une trentaine, il les condense d'abord par groupes), et complète ce qu'ils ne couvrent pas. Compte 1 à 3 minutes, plus avec beaucoup de cours ; tu peux quitter la page, une notification te préviendra.</p>
 </form>
 {% endif %}
 <style>
@@ -73,6 +81,7 @@
   .genre:has(input:focus-visible) { outline: 2px solid var(--g); outline-offset: 2px; }
   button.grand { width: 100%; max-width: 360px; padding: 12px 18px; font-size: 1.05rem; margin-top: 24px; }
   .choix-cours summary { margin-bottom: 8px; }
+  .option-strict { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .liste-cours { display: grid; gap: 4px; max-height: 340px; overflow-y: auto; padding-right: 4px; }
   .liste-cours label { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
   .liste-cours label:hover, .liste-cours label:has(input:checked) { background: var(--fond-doux); }

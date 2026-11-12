@@ -48,9 +48,7 @@ OUTILS_WEB = ["WebSearch", "WebFetch"]
 COMMUN = """Tu aides un élève (du collège au BTS SIO) à réviser à partir de SES cours, fournis
 ci-dessous. Chaque document commence par un repère [D1], [D2]… et indique son niveau, sa matière et son type.
 Règles :
-- Ses cours d'abord : ils sont la base de tout, cite la source de chaque point important avec
-  son repère, par exemple [D2]. N'invente rien.
-- Pertinence avant tout. Avant d'écrire, repère dans les cours : le niveau réel (collège, lycée, BTS),
+{regle_cours}- Pertinence avant tout. Avant d'écrire, repère dans les cours : le niveau réel (collège, lycée, BTS),
   le vocabulaire et les notations du professeur (garde-les), et ce sur quoi il insiste (répété, encadré,
   donné en exercice, en TP ou en contrôle) : c'est la priorité. Laisse l'anecdotique et le hors-sujet.
   Couvre tous les cours fournis qui touchent au sujet, pas seulement les premiers.
@@ -64,6 +62,27 @@ Règles :
 - Écris en français, simplement. Formules de maths, de physique ou de chimie en LaTeX entre
   $…$ (ex. $u_n = u_0 \\times q^n$, $\\ce{{H2O}}$) : le site les affiche proprement.
 {consigne}"""
+
+# Ce que dit le prompt sur les cours, selon le mode choisi dans le formulaire
+REGLE_STRICTE = """- Ses cours d'abord : ils sont la base de tout, cite la source de chaque point important avec
+  son repère, par exemple [D2]. N'invente rien : reste strictement dans ses cours.
+"""
+REGLE_COMPLEMENT = """- Ses cours d'abord : ils sont la base de tout, cite la source de chaque point important avec
+  son repère, par exemple [D2]. Ne déforme jamais ce qu'ils disent.
+- Si ses cours ne couvrent pas tout le sujet demandé (ou pas du tout, ou si certains sont vides ou
+  illisibles), ne refuse JAMAIS : complète avec tes propres connaissances, au niveau de l'élève et
+  conforme au programme officiel (référentiel du diplôme, ex. BTS SIO). Ce que tu ajoutes ainsi
+  doit être reconnaissable au premier coup d'œil :
+  - une section entière hors de ses cours : son titre finit par « [IA] » et elle commence par
+    l'encadré « > **Hors de tes cours** : … » qui dit en une phrase ce qui manque dans ses cours ;
+  - un point isolé : le repère [IA] à la place d'un [Dn] (dans un quiz ou des flashcards, "source": "IA").
+  Ne mets jamais [IA] sur ce qui vient de ses cours, ni un [Dn] sur ce que tu as ajouté.
+  Rien de ses cours ne touche au sujet : fais tout le support quand même, en commençant par l'encadré
+  « > **Hors de tes cours** : … » qui le dit clairement.
+"""
+NOTIONS_STRICTES = "ni notion absente des cours"
+NOTIONS_COMPLEMENT = "et les notions du sujet absentes des cours sont marquées [IA] dans le corrigé"
+
 
 # Ce que l'IA peut dessiner (rendu par schemas.py, sur le site comme dans le PDF)
 VISUEL = """
@@ -83,7 +102,8 @@ et dans le PDF ; sers-t'en chaque fois qu'un dessin explique mieux qu'une phrase
 - Tableau Markdown pour comparer (2 à 5 colonnes, cellules courtes).
 - Encadrés : une citation qui commence par un mot-clé en gras, « > **À retenir** … », « > **Attention** … »,
   « > **Exemple** … », « > **Méthode** … », « > **Définition** … ».
-Un schéma doit être juste, tiré des cours (cite son repère [Dn] dans la phrase qui l'introduit) et utile :
+Un schéma doit être juste, tiré des cours (cite son repère [Dn] dans la phrase qui l'introduit, ou [IA]
+s'il vient d'un complément hors de ses cours) et utile :
 jamais décoratif. Dans un schéma : texte simple, ni LaTeX ni Markdown. Hors des blocs ```svg, pas de HTML.
 """
 
@@ -154,12 +174,13 @@ données, extrait de configuration ou de code, schéma réseau ou MCD dessiné e
 - Environ 30 % de restitution, 50 % d'application, 20 % d'analyse ou de justification, avec les verbes
   de consigne d'un vrai sujet (Définir, Calculer, Justifier, Proposer, Comparer…).
 - Reprends les types d'exercices des cours avec des données nouvelles : ni copie d'un exercice déjà
-  corrigé, ni notion absente des cours.
+  corrigé, {notions_examen}.
 - Le total des barèmes fait exactement 20 : vérifie la somme. Le tout tient dans la durée.
 - Dans le sujet : aucun indice, aucune réponse, aucun repère [Dn].
 Puis une section qui commence exactement par la ligne « """ + CORRIGE + """ » : pour chaque question, la
 réponse rédigée attendue (le schéma corrigé si un schéma était demandé), les points accordés à chaque
-élément de réponse, les erreurs qui coûtent des points, et le repère [Dn] du cours à revoir. Termine le
+élément de réponse, les erreurs qui coûtent des points, et le repère [Dn] du cours à revoir ([IA] si la
+notion n'est pas dans ses cours). Termine le
 corrigé par un tableau « Question ratée | Notion à revoir | Cours [Dn] ».
 Réponds uniquement avec le sujet puis le corrigé{web_md}.
 """,
@@ -186,11 +207,19 @@ def blocs_cours(docs: list[dict]) -> tuple[list[str], dict[str, int]]:
         repere = f"D{i}"
         reperes[repere] = d["id"]
         entete = f"[{repere}] {d.get('titre') or d['nom']} ({d.get('niveau')}, {d.get('matiere')}, {d.get('type')})"
-        blocs.append(f"{entete}\n{d.get('transcription') or ''}")
+        texte = (d.get("transcription") or "").strip() or SANS_TEXTE
+        blocs.append(f"{entete}\n{texte}")
     return blocs, reperes
 
 
 SEPARATEUR = "\n\n---\n\n"
+# Document classé à la main sans avoir été lu (analyse en erreur) : le dire plutôt qu'un bloc vide
+SANS_TEXTE = "(pas de transcription : ce document n'a pas encore été lu par l'IA)"
+
+
+def sans_texte(docs: list[dict]) -> list[dict]:
+    """Cours sans transcription : l'IA ne peut pas s'en servir (à relancer depuis la page du document)."""
+    return [d for d in docs if not (d.get("transcription") or "").strip()]
 
 
 def grouper(blocs: list[str], taille: int | None = None) -> list[str]:
@@ -334,14 +363,16 @@ def date_fr(d: dt.date) -> str:
     return f"{JOURS[d.weekday()]} {d.strftime('%d/%m/%Y')}"
 
 
-def bloc_consigne(consigne: str) -> str:
+def bloc_consigne(consigne: str, strict: bool = True) -> str:
     consigne = (consigne or "").strip()
-    return ("- Consigne de l'élève, à respecter en priorité (sans inventer de contenu absent des cours) :\n"
+    reserve = " (sans inventer de contenu absent des cours)" if strict else ""
+    return (f"- Consigne de l'élève, à respecter en priorité{reserve} :\n"
             + "\n".join(f"  > {ligne}" for ligne in consigne.splitlines()) + "\n") if consigne else ""
 
 
 def prompt(genre: str, sujet: str, date_eval: dt.date | None = None, aujourdhui: dt.date | None = None,
-           consigne: str = "", fichiers: list[str] | None = None) -> str:
+           consigne: str = "", fichiers: list[str] | None = None, strict: bool = False) -> str:
+    """`strict` : rien hors des cours. Sinon (par défaut), l'IA complète ce qui manque et le marque [IA]."""
     if genre not in PROMPTS:
         raise ValueError(f"genre inconnu : {genre}")
     if genre == "plan" and date_eval is None:
@@ -349,7 +380,9 @@ def prompt(genre: str, sujet: str, date_eval: dt.date | None = None, aujourdhui:
     aujourdhui = aujourdhui or dt.date.today()
     return PROMPTS[genre].format(sujet=sujet, nb=10, nb_cartes=20, aujourdhui=date_fr(aujourdhui),
                                  date_eval=date_fr(date_eval) if date_eval else "", duree="2 heures",
-                                 consigne=bloc_consigne(consigne) + consigne_pieces(fichiers or []),
+                                 consigne=bloc_consigne(consigne, strict) + consigne_pieces(fichiers or []),
+                                 regle_cours=REGLE_STRICTE if strict else REGLE_COMPLEMENT,
+                                 notions_examen=NOTIONS_STRICTES if strict else NOTIONS_COMPLEMENT,
                                  web_md=WEB_MD, web_json=WEB_JSON, note_web=NOTE_WEB_JSON)
 
 
@@ -449,10 +482,11 @@ def parse_cartes(texte: str) -> list[dict]:
 
 def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None = None,
             consigne: str = "", pieces: list[dict] | None = None, memoire=None,
-            progres=lambda texte: None) -> tuple[str, dict, list[dict]]:
+            progres=lambda texte: None, strict: bool = False) -> tuple[str, dict, list[dict]]:
     """Renvoie (contenu, repères des cours, sources web). Contenu : Markdown, ou JSON pour un quiz et des flashcards.
 
-    L'agent peut chercher sur le web s'il le juge utile ; les cours restent la base.
+    L'agent peut chercher sur le web s'il le juge utile ; les cours restent la base. Sauf `strict`, ce que
+    les cours ne couvrent pas est complété par l'IA et marqué [IA] (pas de refus faute de cours).
     Beaucoup de cours : condensés d'abord par groupes (voir contexte). `pieces` : [{"nom", "contenu"}].
     """
     if not docs:
@@ -473,7 +507,8 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
     with tempfile.TemporaryDirectory() as dossier:  # les cours sont dans l'entrée, les pièces jointes ici
         a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
         progres("rédaction")
-        (contenu, web), _ = demander(genre, prompt(genre, sujet, date_eval, consigne=consigne, fichiers=a_lire),
+        (contenu, web), _ = demander(genre, prompt(genre, sujet, date_eval, consigne=consigne, fichiers=a_lire,
+                                                    strict=strict),
                                      Path(dossier), lire=lire, outils=OUTILS_WEB + (["Read"] if a_lire else []),
                                      entree=entree_avec_pieces(texte_cours, texte_pieces), timeout=1200)
     return contenu, reperes, web

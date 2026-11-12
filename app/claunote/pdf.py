@@ -28,6 +28,7 @@ def md(texte: str | None) -> Markup:
     texte = texte.replace("&", "&amp;").replace("<", "&lt;")
     rendu = formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths,
                                texte=True)
+    rendu = rendu.replace("[IA]", '<span class="ajout-ia">pas dans tes cours</span>')
     return Markup(schemas.restaurer(rendu, figures))
 
 

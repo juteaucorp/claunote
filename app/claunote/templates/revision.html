@@ -16,7 +16,14 @@
   {% if rev.score %}<span class="etat ok">Dernier score : {{ rev.score.bonnes }}/{{ rev.score.total }}</span>
   {% elif rev.fait_le %}<span class="etat ok">Fait le {{ (rev.fait_le|paris)[:10] }}</span>{% endif %}
   {% if web %}<a class="etat" href="#sources" title="Tes cours restent la base ; le web a servi à compléter ou vérifier">🌐 Complété avec le web · {{ web|length }}</a>{% endif %}
+  {% if ajout_ia %}<span class="etat" title="Tes cours ne couvraient pas tout : l'IA a complété, chaque ajout est marqué">✚ Complété hors de tes cours</span>{% endif %}
+  {% if rev.strict %}<span class="etat" title="Demandé sans rien ajouter hors de tes cours">Strictement tes cours</span>{% endif %}
 </p>
+{% if ajout_ia %}<p class="doux">Les passages marqués {{ HORS_COURS }} ou dans un encadré « Hors de tes cours » ne viennent pas de tes cours : l'IA les a ajoutés d'après le programme officiel. À vérifier avec ton prof en cas de doute.</p>{% endif %}
+{% if sans_texte %}<details class="carte"><summary>⚠️ {{ sans_texte|length }} cours pas encore lu{{ 's' if sans_texte|length > 1 }} par l'IA : ignoré{{ 's' if sans_texte|length > 1 }} ici</summary>
+  <p class="doux">Classé{{ 's' if sans_texte|length > 1 }} sans transcription (analyse en erreur ou classement à la main). Ouvre-le{{ 's' if sans_texte|length > 1 }} et relance l'analyse pour qu'il{{ 's' if sans_texte|length > 1 }} serve{{ 'nt' if sans_texte|length > 1 }} aux prochaines révisions.</p>
+  <ul>{% for d in sans_texte %}<li><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a></li>{% endfor %}</ul>
+</details>{% endif %}
 
 {% if rev.statut == 'pret' %}
 {% set nom_pdf = (genres[rev.genre] ~ ' ' ~ rev.sujet)|replace('/', '-') ~ '.pdf' %}
@@ -67,7 +74,8 @@
       <p><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse]|maths }}</strong></p>
       <p>{{ q.explication|maths }}
       {% if q.source in reperes %}<a href="/doc/{{ reperes[q.source] }}">[{{ q.source }}]</a>
-      {% elif q.source in web %}<a class="web" href="{{ web[q.source].url }}" target="_blank" rel="noopener noreferrer">[{{ q.source }}]</a>{% endif %}</p>
+      {% elif q.source in web %}<a class="web" href="{{ web[q.source].url }}" target="_blank" rel="noopener noreferrer">[{{ q.source }}]</a>
+      {% elif q.source == 'IA' %}{{ HORS_COURS }}{% endif %}</p>
     </details>
   </fieldset>
   {% endfor %}
@@ -115,7 +123,8 @@
   <summary>{{ k.recto|maths }}</summary>
   <p>{{ k.verso|maths }}
   {% if k.source in reperes %}<a href="/doc/{{ reperes[k.source] }}">[{{ k.source }}]</a>
-  {% elif k.source in web %}<a class="web" href="{{ web[k.source].url }}" target="_blank" rel="noopener noreferrer">[{{ k.source }}]</a>{% endif %}</p>
+  {% elif k.source in web %}<a class="web" href="{{ web[k.source].url }}" target="_blank" rel="noopener noreferrer">[{{ k.source }}]</a>
+  {% elif k.source == 'IA' %}{{ HORS_COURS }}{% endif %}</p>
 </details>
 {% endfor %}
 {% else %}
@@ -163,7 +172,7 @@
   <ul class="lignes">{% for repere, d in cours[12:] %}{{ ligne_source(repere, d) }}{% endfor %}</ul>
 </details>
 {% endif %}
-{% if web %}<p class="doux">[D…] = tes cours, la base de ce support. [W…] = pages web consultées par l'agent pour compléter ou vérifier.</p>{% endif %}
+{% if web or ajout_ia %}<p class="doux">[D…] = tes cours, la base de ce support.{% if web %} [W…] = pages web consultées par l'agent pour compléter ou vérifier.{% endif %}{% if ajout_ia %} « pas dans tes cours » = ajouté par l'IA.{% endif %}</p>{% endif %}
 {% endif %}
 <style>
   .tete-revision { margin-bottom: 4px; }

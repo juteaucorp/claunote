@@ -211,6 +211,10 @@
   blockquote.encadre > :first-child { margin-top: 0; } blockquote.encadre > :last-child { margin-bottom: 0; }
   blockquote.encadre > p:first-child > strong:first-child { color: var(--e); }
   .e-attention { --e: #c0392b !important; } .e-exemple { --e: #3b6fb6 !important; } .e-methode { --e: #3f8a57 !important; } .e-definition { --e: #8a4fb8 !important; }
+  /* Ajouts de l'IA hors des cours de l'élève (Réviser, mode par défaut) : pointillés ambrés */
+  .e-ia { --e: #a0701c !important; border-left-style: dashed; }
+  .ajout-ia { display: inline-block; font: 600 .72rem system-ui, sans-serif; padding: 0 7px; border: 1px dashed #a0701c; border-radius: 999px; color: #8a5f14; background: color-mix(in srgb, #a0701c 8%, transparent); white-space: nowrap; vertical-align: .1em; }
+  @media (prefers-color-scheme: dark) { .e-ia { --e: #e0b55c !important; } .ajout-ia { color: #e0b55c; border-color: #e0b55c; } }
   @media (prefers-color-scheme: dark) { .e-attention { --e: #f08a7c !important; } .e-exemple { --e: #8db4ec !important; } .e-methode { --e: #86cf9c !important; } .e-definition { --e: #c9a0ec !important; } }
   iframe { width: 100%; height: 72vh; border: 1px solid var(--bord); border-radius: 12px; background: #fff; }
   b { background: var(--accent-pale); color: inherit; border-radius: 3px; padding: 0 2px; }
