@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Sécurité{% endblock %}
+{% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('reglages', 'securite') }}
+<h1>Sécurité</h1>
+{% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
+
+<div class="tuiles">
+  <div class="carte tuile {{ 'rouge' if bilan.alertes_24h }}"><strong>{{ bilan.alertes_24h }}</strong><span>alerte{{ 's' if bilan.alertes_24h > 1 }} en 24 h</span></div>
+  <div class="carte tuile"><strong>{{ bilan.echecs_7j }}</strong><span>échec{{ 's' if bilan.echecs_7j > 1 }} de connexion en 7 j</span></div>
+  <div class="carte tuile"><strong>{{ bilan.ips_internet_7j }}</strong><span>adresse{{ 's' if bilan.ips_internet_7j > 1 }} par Internet en 7 j</span></div>
+  <div class="carte tuile"><strong>{{ appareils|length }}</strong><span>appareil{{ 's' if appareils|length > 1 }} approuvé{{ 's' if appareils|length > 1 }}</span></div>
+</div>
+
+<div class="carte">
+  <strong>Protections actives</strong>
+  <ul class="protections">
+    <li>{{ icone('check', 18) }}<span>Par Internet : <strong>appareil approuvé</strong> obligatoire, puis mot de passe ou Face ID.</span></li>
+    <li>{{ icone('check', 18) }}<span>Pays acceptés par Internet : <strong>{{ e.pays|join(', ') if e.pays else 'tous (CLAUNOTE_PAYS=*)' }}</strong>, même si la règle Cloudflare saute.</span></li>
+    <li>{{ icone('check', 18) }}<span>5 échecs en 5 min : adresse en pause 5 min · 20 en 24 h : <strong>bannie 24 h</strong> · 30 par Internet en 15 min : connexions par Internet fermées 30 min (le VPN marche toujours).</span></li>
+    <li>{{ icone('check', 18) }}<span>Mot de passe par défaut <strong>refusé par Internet</strong>.</span></li>
+    <li>{{ icone('check', 18) }}<span>Requêtes venues d'un autre site refusées (CSRF), pas de script ni d'image venus d'ailleurs (CSP).</span></li>
+  </ul>
+  {% if e.verrou or e.bannis %}
+  <p class="alerte">{% if e.verrou %}Connexions par Internet fermées encore {{ e.verrou // 60 + 1 }} min. {% endif %}
+    {% if e.bannis %}Adresses bannies : {% for ip, reste in e.bannis %}<code>{{ ip }}</code> ({{ reste // 3600 }} h {{ (reste % 3600) // 60 }} min){{ ', ' if not loop.last }}{% endfor %}.{% endif %}</p>
+  <form method="post" action="/securite/debloquer" class="actions" style="margin: 0"><button>Lever les blocages</button></form>
+  {% endif %}
+</div>
+
+<div class="carte">
+  <strong>Alertes sur le téléphone</strong>
+  <p class="doux">Tout de suite, même pendant les heures de silence : nouvel appareil, connexion par Internet, échecs répétés,
+    pays non autorisé, cookie refusé, requête d'un autre site, erreurs du serveur en rafale…
+    {% if not abonnes %}<br><strong>Aucun appareil abonné aux notifications</strong> : active-les sur la page <a href="/notifications">Notifications</a>.{% endif %}</p>
+  <div class="actions" style="margin: 0">
+    <form method="post" action="/securite/alertes" style="margin: 0">
+      <input type="hidden" name="actives" value="{{ '0' if alertes_actives else '1' }}">
+      <button class="{{ '' if alertes_actives else 'principal' }}">{{ 'Couper les alertes' if alertes_actives else 'Activer les alertes' }}</button>
+    </form>
+    {% if alertes_actives and abonnes %}<form method="post" action="/securite/tester" style="margin: 0"><button>Envoyer une alerte de test</button></form>{% endif %}
+  </div>
+</div>
+
+<form method="post" action="/securite/deconnecter-partout" class="carte"
+      onsubmit="return confirm('Déconnecter tous les autres appareils ? Ils devront retaper le mot de passe (ou Face ID).')">
+  <strong>Quelque chose de louche ?</strong>
+  <p class="doux">Coupe toutes les sessions ouvertes, sauf celle-ci. Change ensuite le mot de passe sur la page <a href="/compte">Compte</a>.</p>
+  <label class="interrupteur"><span>Retirer aussi les appareils approuvés pour Internet{% if par_tunnel %} (sauf celui-ci){% endif %}</span>
+    <input type="checkbox" name="appareils_aussi" value="1"></label>
+  <button class="principal">Déconnecter partout</button>
+</form>
+
+<h2 id="journal">Journal</h2>
+<nav class="onglets-page" aria-label="Filtrer">
+  <a href="/securite#journal" class="{{ 'actif' if not gravite }}">Tout</a>
+  {% for cle, libelle in gravites.items() %}<a href="/securite?gravite={{ cle }}#journal" class="{{ 'actif' if gravite == cle }}">{{ libelle }}</a>{% endfor %}
+</nav>
+{% if lignes %}
+<div class="carte journal">
+  {% for l in lignes %}
+  <div class="evenement {{ l.gravite }}">
+    <span class="pastille" title="{{ gravites[l.gravite] }}"></span>
+    <div class="corps">
+      <strong>{{ libelles.get(l.type, l.type) }}</strong>{% if l.alerte %} <span class="etiquette">alerte envoyée</span>{% endif %}
+      {% if l.detail %}<div>{{ l.detail }}</div>{% endif %}
+      <div class="doux">{{ l.le|paris }} · {{ 'Internet' if l.internet else 'VPN / local' }}{% if l.ip %} · <code>{{ l.ip }}</code>{% endif %}{% if l.pays %} · {{ l.pays }}{% endif %}{% if l.chemin %} · {{ l.chemin }}{% endif %}</div>
+      {% if l.navigateur %}<div class="doux navigateur">{{ l.navigateur }}</div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<nav class="pagination" aria-label="Pages">
+  {% if page > 1 %}<a class="bouton" href="{{ lien_page(page - 1) }}#journal">‹ Plus récents</a>{% else %}<span></span>{% endif %}
+  <span class="doux">page {{ page }} / {{ pages }} · {{ total }} événement{{ 's' if total > 1 }}</span>
+  {% if page < pages %}<a class="bouton" href="{{ lien_page(page + 1) }}#journal">Plus anciens ›</a>{% else %}<span></span>{% endif %}
+</nav>
+{% else %}
+<p class="carte doux">Rien pour l'instant.</p>
+{% endif %}
+<p class="doux">Gardé 180 jours. Réglages Cloudflare conseillés : <code>docs/cloudflare-tunnel.md</code>, section « Durcir ».</p>
+
+<style>
+  .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .tuile { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+  .tuile strong { font-size: 1.6rem; }
+  .tuile span { color: var(--doux); font-size: .9rem; }
+  .tuile.rouge strong { color: var(--alerte); }
+  .protections { list-style: none; padding: 0; margin: 8px 0 0; }
+  .protections li { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; }
+  .protections svg { flex: none; color: var(--ok); margin-top: 2px; }
+  .journal { padding: 0; }
+  .evenement { display: flex; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--bord); }
+  .evenement:last-child { border-bottom: 0; }
+  .evenement .corps { min-width: 0; overflow-wrap: anywhere; }
+  .pastille { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--bord); }
+  .evenement.attention .pastille { background: #d9a400; }
+  .evenement.alerte .pastille { background: var(--alerte); }
+  .navigateur { font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .interrupteur { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 8px 0 12px; }
+  .etiquette { display: inline-flex; padding: 1px 8px; border-radius: 999px; font-size: .75rem; font-weight: 600;
+    color: var(--accent-fonce); background: var(--accent-pale); }
+  .pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
+</style>
+{% endblock %}

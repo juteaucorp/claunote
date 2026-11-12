@@ -18,6 +18,7 @@ import hmac
 import json
 import os
 import secrets
+import socket
 import time
 
 from claunote import db
@@ -29,6 +30,7 @@ CODE_ESSAIS_MAX = 20             # au-delà, le code en cours est annulé (en pl
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # sans 0/O, 1/I/L
 VU_TOUTES = 600                  # « vu le » mis à jour au plus toutes les 10 min
 CLE, CLE_CODE = "appareils", "appareil_code"
+_cloudflared = {"le": float("-inf"), "ips": set()}
 
 
 def actif() -> bool:
@@ -39,9 +41,33 @@ def par_tunnel(headers) -> bool:
     return "cf-connecting-ip" in headers or "cf-ray" in headers
 
 
+def ips_cloudflared(age_max: float = 60) -> set[str]:
+    """Adresses du conteneur cloudflared sur le réseau Docker (relues toutes les minutes).
+
+    CLAUNOTE_CLOUDFLARED : son nom ou son adresse s'il ne tourne pas dans ce docker-compose."""
+    if time.monotonic() - _cloudflared["le"] > age_max:
+        try:
+            ips = {a[4][0] for a in socket.getaddrinfo(os.environ.get("CLAUNOTE_CLOUDFLARED") or "cloudflared", None)}
+        except OSError:
+            ips = set()
+        _cloudflared.update(le=time.monotonic(), ips=ips)
+    return _cloudflared["ips"]
+
+
+def source_cloudflare(request) -> bool:
+    """La requête vient-elle vraiment de cloudflared ? Sinon un en-tête cf-connecting-ip est inventé."""
+    if not request.client:
+        return False
+    # cloudflared redémarré avec une nouvelle adresse : relue tout de suite plutôt qu'une fausse alerte
+    return request.client.host in ips_cloudflared() or request.client.host in ips_cloudflared(age_max=5)
+
+
 def ip_client(request) -> str:
-    """Adresse du visiteur : par le tunnel, toutes les requêtes viennent du conteneur cloudflared."""
-    if par_tunnel(request.headers) and request.headers.get("cf-connecting-ip"):
+    """Adresse du visiteur : par le tunnel, toutes les requêtes viennent du conteneur cloudflared.
+
+    cf-connecting-ip n'est cru que s'il vient de cloudflared : écrit à la main depuis le réseau local,
+    il permettrait de changer d'adresse à chaque essai et d'échapper au blocage."""
+    if par_tunnel(request.headers) and request.headers.get("cf-connecting-ip") and source_cloudflare(request):
         return request.headers["cf-connecting-ip"]
     return request.client.host if request.client else "?"
 

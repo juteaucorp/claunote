@@ -9,7 +9,8 @@
 {% elif groupe == 'activite' %}
   {% set liste = [('analyses', '/analyses', 'Analyses', 0), ('etat', '/etat', 'État du service', 0)] %}
 {% else %}
-  {% set liste = [('compte', '/compte', 'Compte', 0), ('notifications', '/notifications', 'Notifications', 0),
+  {% set liste = [('compte', '/compte', 'Compte', 0), ('securite', '/securite', 'Sécurité', nb_alertes_securite()),
+                  ('notifications', '/notifications', 'Notifications', 0),
                   ('mise_a_jour', '/mise-a-jour', 'Mise à jour', nb_mises_a_jour())] %}
 {% endif %}
 <nav class="onglets-page" aria-label="Pages de la rubrique">

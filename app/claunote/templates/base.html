@@ -292,7 +292,8 @@
       <a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
       <a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>
       <a href="/analyses">{{ icone('etat') }}<span>Activité<small>analyses, état du service</small></span>{% if en_pause %}<span class="badge">pause</span>{% endif %}</a>
-      <a href="/compte">{{ icone('compte') }}<span>Réglages<small>compte, notifications, mise à jour</small></span>{% if nb_mises_a_jour() %}<span class="badge">{{ nb_mises_a_jour() }}</span>{% endif %}</a>
+      {% set alertes_secu = nb_alertes_securite() %}
+      <a href="{{ '/securite' if alertes_secu else '/compte' }}">{{ icone('compte') }}<span>Réglages<small>compte, sécurité, notifications, mise à jour</small></span>{% if alertes_secu %}<span class="badge" title="Alertes de sécurité">{{ alertes_secu }}</span>{% elif nb_mises_a_jour() %}<span class="badge">{{ nb_mises_a_jour() }}</span>{% endif %}</a>
 {% endmacro %}
 <header>
   <div class="barre">

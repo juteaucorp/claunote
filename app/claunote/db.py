@@ -390,6 +390,22 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 CREATE INDEX IF NOT EXISTS articles_publie ON articles (publie_le DESC);
 CREATE INDEX IF NOT EXISTS articles_attente ON articles (id) WHERE tri = 'attente' OR NOT annonce;
+-- Journal de sécurité (securite.py) : connexions, appareils, refus, alertes ; gardé 180 jours
+CREATE TABLE IF NOT EXISTS securite (
+    id           SERIAL PRIMARY KEY,
+    le           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    type         TEXT NOT NULL,
+    gravite      TEXT NOT NULL DEFAULT 'info',         -- info, attention, alerte
+    ip           TEXT,
+    pays         TEXT,
+    internet     BOOLEAN NOT NULL DEFAULT false,       -- arrivé par Cloudflare Tunnel
+    chemin       TEXT,
+    navigateur   TEXT,
+    detail       TEXT,
+    alerte       BOOLEAN NOT NULL DEFAULT false        -- une notification est partie
+);
+CREATE INDEX IF NOT EXISTS securite_le ON securite (le DESC);
+DELETE FROM securite WHERE le < now() - interval '180 days';
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -1291,6 +1307,14 @@ def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str 
             {"cle": cle, "titre": titre, "corps": corps, "url": url, "statut": statut}).fetchone() is not None
 
 
+def notification_directe(cle: str, titre: str, corps: str, url: str) -> int | None:
+    """Notification envoyée tout de suite par le site (alerte de sécurité), sans passer par la file du worker."""
+    with connect() as c:
+        r = c.execute("INSERT INTO notifications (cle, titre, corps, url, statut) VALUES (%s, %s, %s, %s, 'envoi') "
+                      "ON CONFLICT (cle) DO NOTHING RETURNING id", (cle, titre, corps, url)).fetchone()
+        return r["id"] if r else None
+
+
 def notification_connue(cle: str) -> bool:
     with connect() as c:
         return c.execute("SELECT 1 FROM notifications WHERE cle = %s", (cle,)).fetchone() is not None
@@ -2108,3 +2132,56 @@ def nb_actualites_nouvelles() -> int:
             f"""SELECT count(*) AS n FROM articles a JOIN flux f ON f.id = a.flux_id
                 WHERE NOT a.lu AND a.publie_le > now() - interval '3 days' AND {PERTINENT}""",
             {"seuil": SEUIL_POUR_TOI}).fetchone()["n"]
+
+
+# --- Journal de sécurité (securite.py) ------------------------------------------
+
+def securite_noter(type: str, gravite: str, ip: str | None, pays: str | None, internet: bool, chemin: str | None,
+                   navigateur: str | None, detail: str, alerte: bool) -> int:
+    with connect() as c:
+        return c.execute(
+            "INSERT INTO securite (type, gravite, ip, pays, internet, chemin, navigateur, detail, alerte) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (type, gravite, ip, pays, internet, chemin, navigateur, detail, alerte)).fetchone()["id"]
+
+
+def securite_alerte_envoyee(evenement_id: int):
+    with connect() as c:
+        c.execute("UPDATE securite SET alerte = true WHERE id = %s", (evenement_id,))
+
+
+def securite_journal(gravite: str | None = None, limite: int = 100, decalage: int = 0) -> tuple[list[dict], int]:
+    filtre, params = ("WHERE gravite = %s", [gravite]) if gravite else ("", [])
+    with connect() as c:
+        total = c.execute(f"SELECT count(*) AS n FROM securite {filtre}", params).fetchone()["n"]
+        lignes = c.execute(f"SELECT * FROM securite {filtre} ORDER BY le DESC, id DESC LIMIT %s OFFSET %s",
+                           params + [limite, decalage]).fetchall()
+    return lignes, total
+
+
+def securite_bilan() -> dict:
+    """Comptes des dernières 24 h et 7 jours, par gravité, et dernière alerte."""
+    with connect() as c:
+        r = c.execute("""SELECT
+              count(*) FILTER (WHERE le > now() - interval '24 hours' AND gravite = 'alerte') AS alertes_24h,
+              count(*) FILTER (WHERE le > now() - interval '24 hours' AND gravite = 'attention') AS attention_24h,
+              count(*) FILTER (WHERE le > now() - interval '7 days' AND gravite = 'alerte') AS alertes_7j,
+              count(*) FILTER (WHERE le > now() - interval '7 days' AND type IN ('connexion_echec', 'code_echec',
+                                                                               'faceid_echec')) AS echecs_7j,
+              count(DISTINCT ip) FILTER (WHERE le > now() - interval '7 days' AND internet) AS ips_internet_7j,
+              max(le) FILTER (WHERE gravite = 'alerte') AS derniere_alerte
+            FROM securite""").fetchone()
+    return dict(r)
+
+
+def securite_nb_alertes_depuis(depuis: str | None) -> int:
+    with connect() as c:
+        return c.execute("SELECT count(*) AS n FROM securite WHERE gravite = 'alerte' AND le > COALESCE(%s::timestamptz, "
+                         "now() - interval '7 days')", (depuis,)).fetchone()["n"]
+
+
+def securite_ip_connue(ip: str) -> bool:
+    """Cette adresse s'est-elle déjà connectée avec succès (90 derniers jours) ?"""
+    with connect() as c:
+        return c.execute("SELECT 1 FROM securite WHERE type = 'connexion_ok' AND ip = %s "
+                         "AND le > now() - interval '90 days' LIMIT 1", (ip,)).fetchone() is not None

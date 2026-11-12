@@ -4,7 +4,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
-from claunote import db, main
+from claunote import appareils, db, main, securite
 
 DOC = {"id": 1, "kdrive_id": 77, "nom": "2025-03-12_vlan.pdf", "statut": "classe", "titre": "Les VLAN",
        "niveau": "BTS1", "matiere": "Réseaux", "type": "TP", "chapitre": "Commutation",
@@ -64,6 +64,19 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "matieres_par_annee", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
     monkeypatch.setattr(db, "matieres_distinctes", lambda: {})
     monkeypatch.setattr(db, "cles_acces", lambda: [])
+    # Sécurité : journal en mémoire, alertes notées au lieu d'être envoyées ; cloudflared = le client de test
+    journal, alertes = [], []
+    securite.reinitialiser()
+    main._falsifies.clear()
+    monkeypatch.setattr(appareils, "ips_cloudflared", lambda age_max=60: {"testclient"})
+    monkeypatch.setattr(db, "securite_noter", lambda *a: journal.append(dict(zip(
+        ("type", "gravite", "ip", "pays", "internet", "chemin", "navigateur", "detail", "alerte"), a))) or len(journal))
+    monkeypatch.setattr(db, "securite_ip_connue", lambda ip: any(j["type"] == "connexion_ok" and j["ip"] == ip
+                                                                 for j in journal[:-1]))
+    monkeypatch.setattr(db, "securite_alerte_envoyee", lambda i: None)
+    monkeypatch.setattr(db, "securite_nb_alertes_depuis", lambda depuis: 0)
+    monkeypatch.setattr(db, "notification_directe", lambda cle, titre, corps, url: alertes.append((titre, corps)) or None)
+    monkeypatch.setattr(db, "abonnements", lambda: [])
     monkeypatch.setattr(db, "nb_actualites_nouvelles", lambda: 0)
     monkeypatch.setattr(db, "articles", lambda *a, **k: ([], 0))
     monkeypatch.setattr(main.lecture, "etat", lambda: {})                 # service lecture absent
@@ -74,6 +87,7 @@ def anonyme(monkeypatch):
     with TestClient(main.app) as c:
         c.appels = appels
         c.etat = etat
+        c.journal, c.alertes = journal, alertes
         yield c
 
 

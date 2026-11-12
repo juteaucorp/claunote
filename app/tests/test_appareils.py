@@ -5,7 +5,7 @@ import time
 from claunote import appareils
 from tests.test_site import anonyme, client  # noqa: F401 (fixtures)
 
-CF = {"cf-connecting-ip": "203.0.113.7", "cf-ray": "abc-CDG"}
+CF = {"cf-connecting-ip": "203.0.113.7", "cf-ray": "abc-CDG", "cf-ipcountry": "FR"}
 
 
 import pytest

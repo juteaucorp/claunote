@@ -17,7 +17,7 @@
 </div>
 
 <form class="carte saisie" hx-post="/demander" hx-target="#fil" hx-swap="beforeend" hx-disabled-elt="find button"
-      hx-on::after-request="if (event.detail.successful) { this.reset(); }">
+      id="saisie-question">
   {% if conv %}<input type="hidden" name="conversation" value="{{ conv.id }}">{% endif %}
   <textarea name="question" rows="2" required placeholder="{{ 'Une autre question ?' if conv else 'ex. C\'est quoi la différence entre un switch et un routeur ?' }}"
             enterkeyhint="send" aria-label="Ta question"></textarea>
@@ -53,6 +53,10 @@
   <p class="doux" id="etat-formule" role="status"></p>
 </div>
 <script>
+  // Question envoyée : le champ se vide (sans hx-on, que la politique de sécurité du site n'autorise pas)
+  document.getElementById("saisie-question").addEventListener("htmx:afterRequest", function (event) {
+    if (event.detail.successful && event.detail.elt === this) { this.reset(); }
+  });
   // Photo d'une formule → recadrage → pix2tex (service lecture) → LaTeX glissé dans la question
   (() => {
     const champ = document.getElementById("photo-formule"), panneau = document.getElementById("recadrage");
