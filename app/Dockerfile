@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.15-slim
 # Pango + polices : WeasyPrint, pour les PDF des révisions ; catdoc : texte des vieux .doc/.xls/.ppt ;
 # poppler + Tesseract : lecture locale (sans IA) des scans, pour le garde-fou et le découpage des gros scans
 # Graphviz : schémas des fiches et épreuves (blocs ```dot), dessinés en SVG pour le site et le PDF
