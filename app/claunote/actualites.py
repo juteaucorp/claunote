@@ -46,21 +46,31 @@ FLUX_DEFAUT = [
     ("https://korben.info/feed", "Korben"),
     ("https://www.lemondeinformatique.fr/flux-rss/thematique/toutes-les-actualites/rss.xml", "Le Monde Informatique"),
 ]
-SUJETS_DEFAUT = [
+SUJETS_DEFAUT = [   # option SISR du BTS SIO : infrastructure, réseau, sécurité
     ("Cybersécurité", "Failles critiques à corriger, cyberattaques marquantes, rançongiciels, fuites de données, "
      "recommandations de l'ANSSI.",
      ["faille", "vulnérabilité", "CVE", "rançongiciel", "ransomware", "cyberattaque", "phishing", "hameçonnage",
       "ANSSI", "CERT-FR", "fuite de données", "zero-day", "correctif"]),
-    ("Réseaux et systèmes", "Administration Windows Server, Linux, Active Directory, réseau (Cisco, VLAN, Wi-Fi), "
-     "virtualisation et cloud : nouveautés utiles à un étudiant de BTS SIO.",
-     ["Windows Server", "Linux", "Active Directory", "Cisco", "VLAN", "VMware", "Proxmox", "Docker",
-      "Kubernetes", "Azure", "Microsoft 365", "pare-feu"]),
-    ("Développement", "Langages, frameworks et outils de développement (Python, PHP, Java, JavaScript, SQL, Git), "
-     "IA pour développer.",
-     ["Python", "PHP", "Java", "JavaScript", "SQL", "GitHub", "framework", "développeur"]),
+    ("Réseaux", "Équipements et protocoles réseau (Cisco, Fortinet, pfSense, routage, VLAN, Wi-Fi, IPv6, VPN, "
+     "pare-feu) : nouveautés et failles utiles à un étudiant en BTS SIO option SISR.",
+     ["Cisco", "Fortinet", "FortiGate", "pfSense", "VLAN", "routeur", "commutateur", "switch", "Wi-Fi", "IPv6",
+      "VPN", "pare-feu", "firewall", "BGP", "DNS", "DHCP"]),
+    ("Systèmes et virtualisation", "Administration Windows Server, Linux, Active Directory, virtualisation "
+     "(Proxmox, VMware, Hyper-V), conteneurs, sauvegarde, supervision et cloud : ce qui sert à un admin système "
+     "débutant (BTS SIO option SISR).",
+     ["Windows Server", "Linux", "Debian", "Ubuntu", "Active Directory", "Proxmox", "VMware", "Hyper-V", "Docker",
+      "Kubernetes", "Veeam", "sauvegarde", "Zabbix", "GLPI", "Ansible", "Azure", "Microsoft 365"]),
 ]
+# Sujets de départ d'avant (PR #52) : remplacés par ceux de l'option SISR s'ils n'ont pas été modifiés
+ANCIENS_DEFAUT = {
+    "Réseaux et systèmes": "Administration Windows Server, Linux, Active Directory, réseau (Cisco, VLAN, Wi-Fi), "
+                           "virtualisation et cloud : nouveautés utiles à un étudiant de BTS SIO.",
+    "Développement": "Langages, frameworks et outils de développement (Python, PHP, Java, JavaScript, SQL, Git), "
+                     "IA pour développer.",
+}
 
-PROMPT = """Tu fais la veille d'actualités d'un étudiant en BTS SIO (informatique, Lycée en France).
+PROMPT = """Tu fais la veille d'actualités d'un étudiant en BTS SIO option SISR (infrastructures, réseaux,
+systèmes et cybersécurité ; lycée en France).
 Ses sujets suivis :
 {sujets}
 
@@ -89,10 +99,28 @@ def enregistrer_reglages(r: dict):
     db.etat_ecrire("actualites", json.dumps({k: r[k] for k in DEFAUT if k in r}))
 
 
+def passer_en_sisr():
+    """Une seule fois : les anciens sujets de départ, s'ils sont intacts, laissent place à ceux de l'option SISR."""
+    if db.etat_valeur("actualites_sisr"):
+        return
+    db.etat_ecrire("actualites_sisr", "1")
+    remplaces = [s for s in db.sujets() if ANCIENS_DEFAUT.get(s["nom"]) == s["description"]]
+    if not remplaces:
+        return
+    for s in remplaces:
+        db.sujet_supprimer(s["id"])
+    for nom, description, mots in SUJETS_DEFAUT:
+        db.sujet_ajouter(nom, description, mots)   # ignoré s'il existe déjà
+    db.articles_retrier()
+    log(f"sujets de départ passés en option SISR ({', '.join(s['nom'] for s in remplaces)} remplacés)")
+
+
 def initialiser():
     """Au tout premier démarrage : une sélection de départ (modifiable sur la page Sources)."""
     if db.etat_valeur("actualites_init"):
+        passer_en_sisr()
         return
+    db.etat_ecrire("actualites_sisr", "1")
     db.etat_ecrire("actualites_init", "1")
     for nom, description, mots in SUJETS_DEFAUT:
         db.sujet_ajouter(nom, description, mots)
