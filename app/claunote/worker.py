@@ -30,8 +30,8 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (agent, db, decoupage, importation, index, lecture, local, modeles, notifications, ocr, pdf,
-                      pronote, rangement, ressources, revision, sensible)
+from claunote import (actualites, agent, db, decoupage, importation, index, lecture, local, modeles, notifications,
+                      ocr, pdf, pronote, rangement, ressources, revision, sensible)
 from claunote.agent import NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte, analyser
 from claunote.kdrive import KDrive, KDriveIndisponible
 from claunote.matieres import harmoniser
@@ -1305,6 +1305,17 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     return dernier_nettoyage
 
 
+def actualites_boucle():
+    """Flux RSS relevés toutes les 30 min et triés par l'IA, à côté du worker (ne retarde pas les analyses)."""
+    try:
+        actualites.initialiser()
+    except Exception as e:
+        log(f"actualités : sélection de départ impossible : {e}")
+    while not ARRET.is_set():
+        etape("actualités", actualites.tour, CLAUDE.disponible)
+        ARRET.wait(30)
+
+
 def arreter(signum, _frame):
     if not ARRET.is_set():
         log("arrêt demandé : je termine le travail en cours, puis je m'arrête")
@@ -1334,6 +1345,7 @@ def main():
     if os.environ.get("CLAUDE_MODEL"):
         log("CLAUDE_MODEL n'est plus utilisé : chaque tâche a son modèle (voir CLAUDE_MODELES dans .env.example)")
     threading.Thread(target=notifications.boucle, daemon=True, name="notifications").start()
+    threading.Thread(target=actualites_boucle, daemon=True, name="actualites").start()
     threading.Thread(target=battement, daemon=True, name="battement").start()
     threading.Thread(target=surveiller, daemon=True, name="surveillance").start()
     prochaine_synchro, dernier_nettoyage = 0.0, float("-inf")
