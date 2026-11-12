@@ -105,7 +105,7 @@ et un abonnement Claude Pro. Le guide pas à pas est dans **[infra/SETUP.md](inf
 Claude Code, Pronote, HTTPS pour l'iPhone, notifications.
 
 ```bash
-git clone https://github.com/ctrljuteau/claunote && cd claunote
+git clone https://github.com/juteaucorp/claunote && cd claunote
 cp .env.example .env          # jetons kDrive et Claude, mot de passe du site…
 docker compose up -d --build  # site, worker, base, modèles locaux, Pronote, HTTPS
                               # (le modèle local se télécharge tout seul au premier lancement, ~2,3 Go)
@@ -116,6 +116,19 @@ Ensuite, ouvre `http://<IP-VPN-de-la-VM>:8000`, connecte-toi, et dépose un prem
 **Mises à jour** : depuis le site, *Plus → Réglages → Mise à jour → Tout mettre à jour* (réservé au compte connecté).
 Le service `maj` fait le `git pull` puis reconstruit et redémarre les services ; un badge prévient quand une
 nouvelle version est sur GitHub.
+
+**Reconstruire à la main** sur une VM où tout tourne déjà : éviter `docker compose up -d --build`, qui construit
+toutes les images **en même temps** à côté d'Ollama (PyTorch + apt + modèle chargé peuvent saturer 8 Go et faire
+échouer une construction). Construire une image à la fois, puis redémarrer :
+
+```bash
+docker compose stop ollama lecture                     # libère ~4 Go le temps de construire
+for s in web worker pronote lecture; do docker compose build $s || break; done
+docker compose up -d
+```
+
+Si une construction échoue : `docker compose build web 2>&1 | tail -40`, puis `df -h /` (disque plein ?) et
+`free -h` ; *Réglages → Mise à jour → Libérer de la place* supprime les anciennes images.
 
 ## Réglages principaux
 
