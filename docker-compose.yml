@@ -39,6 +39,18 @@ services:
       - caddy:/data      # autorité de certification locale : à garder
     depends_on: [web]
 
+  cloudflared:
+    # Accès par Internet sans ouvrir de port (infra/SETUP.md, section 17) : la VM appelle Cloudflare, pas l'inverse.
+    # Ne démarre que si COMPOSE_PROFILES=tunnel dans .env. Seuls les appareils approuvés passent (appareils.py).
+    image: cloudflare/cloudflared:2026.10.1
+    profiles: [tunnel]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}   # jeton du tunnel, dans .env
+    depends_on: [web]
+    # pas de port publié : il joint web:8000 sur le réseau Docker
+
   worker:
     build: ./app
     restart: unless-stopped
