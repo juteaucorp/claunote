@@ -1,8 +1,13 @@
 # Service lecture : Docling (PDF), pix2tex (formules), FlashRank (tri des passages), sur processeur seul.
 FROM python:3.12-slim
 # OpenCV (pix2tex) a besoin de ces bibliothèques système
-RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+       > /etc/apt/apt.conf.d/80-reseau \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgl1 libglib2.0-0
 # PyTorch sans CUDA : ~200 Mo au lieu de plusieurs Go
 # Cache de téléchargement gardé entre deux constructions : PyTorch n'est téléchargé qu'une fois
 RUN --mount=type=cache,target=/root/.cache/pip \

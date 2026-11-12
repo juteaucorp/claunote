@@ -220,8 +220,15 @@ de tourner.
 **À la main**, depuis le dossier de Claunote (sans `sudo`) :
 
 ```bash
-git pull && docker compose up -d --build
+git pull
+docker compose stop ollama lecture                      # libère ~4 Go le temps de construire
+for s in web worker pronote lecture; do docker compose build $s || break; done
+docker compose up -d
 ```
+
+Une image à la fois, comme le fait le service `maj` : `docker compose up -d --build` construit **toutes les
+images en même temps**, à côté d'Ollama ; PyTorch + apt + modèle chargé peuvent saturer 8 Go et faire échouer
+une construction.
 
 **Dépôt privé → `GITHUB_TOKEN`** : sans lui, la mise à jour affiche « GitHub refuse l'accès ».
 
@@ -280,6 +287,7 @@ et les réglages du quotidien se font aussi sur le site (*Activité*, *Réglages
 | Le site ne s'ouvre pas | `BIND_ADDR` = bonne IP VPN ? `docker compose ps` puis `docker compose logs -f web` |
 | « GitHub refuse l'accès » dans *Mise à jour* | `GITHUB_TOKEN` absent, expiré, ou créé pour le mauvais propriétaire |
 | Mot de passe du site oublié | `docker compose exec web python -m claunote.auth reinitialiser` puis `docker compose restart web` |
+| Une construction échoue (`docker compose build`) | `docker compose build web 2>&1 \| tail -40`, `df -h /` (disque plein ?), `free -h` ; construire une image à la fois (voir *Mettre à jour*) ; *Réglages → Mise à jour → Libérer de la place* |
 | Erreur Cloudflare 1033 / 502 | Voir le dépannage de [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md) |
 
 ## Développement
