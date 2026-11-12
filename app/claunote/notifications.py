@@ -10,7 +10,8 @@ en plus, même titre + même texte en moins de 20 h = pas renvoyé, et plus de 3
 - une fois par jour à l'heure choisie, le rappel le plus utile : évaluation proche sans fiche,
   flashcards à revoir, fiche à relire, ou nouveaux cours sans révision ;
 - le matin d'une évaluation, un dernier rappel ;
-- tout de suite : révision prête, nouveau contrôle annoncé sur Pronote, documents des profs.
+- tout de suite : révision prête, nouveau contrôle annoncé sur Pronote, documents des profs,
+  actualités importantes des sujets suivis (actualites.py).
 Rien ne part pendant les heures de silence : la file attend le matin.
 """
 import datetime as dt
@@ -32,7 +33,7 @@ DUREE_VIE = 12 * 3600   # Apple/Google gardent le message 12 h si le téléphone
 INTERVALLE = 30         # secondes entre deux tours de la boucle
 MAX_PAR_TOUR = 3        # au-delà, les notifications du tour partent en un seul résumé
 DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
-          "rappel": True, "pronote": True, "revisions": True}
+          "rappel": True, "pronote": True, "revisions": True, "actualites": True}
 PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
          "examen": "Épreuve blanche prête"}
 JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]

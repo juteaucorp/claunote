@@ -1,0 +1,3 @@
+{% from "_icones.html" import icone %}
+<button class="favori {{ 'actif' if a.favori }}" hx-post="/actualites/{{ a.id }}/favori" hx-swap="outerHTML"
+  title="{{ 'Retirer des favoris' if a.favori else 'Garder en favori' }}" aria-label="{{ 'Retirer des favoris' if a.favori else 'Garder en favori' }}" aria-pressed="{{ 'true' if a.favori else 'false' }}">{{ icone('etoile', 20) }}</button>

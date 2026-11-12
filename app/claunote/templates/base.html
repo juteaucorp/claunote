@@ -287,6 +287,8 @@
 {% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
 {% set en_pause = analyses_en_pause() %}
 {% macro liens_plus() %}
+      {% set actus = nb_actualites() %}
+      <a href="/actualites">{{ icone('actualites') }}<span>Actualités<small>veille, flux RSS, sujets suivis</small></span>{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>
       <a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
       <a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>
       <a href="/analyses">{{ icone('etat') }}<span>Activité<small>analyses, état du service</small></span>{% if en_pause %}<span class="badge">pause</span>{% endif %}</a>

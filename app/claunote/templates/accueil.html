@@ -106,6 +106,20 @@
 <p class="doux"><a href="/agenda">Tout l'agenda Pronote</a></p>
 {% endif %}
 
+{% set actus_liste, actus_total = actus %}
+{% if actus_liste %}
+<h2>Actualités pour toi</h2>
+<ul class="carte lignes">
+  {% for a in actus_liste %}
+  <li>{{ icone('actualites', 20) }}
+    <div class="corps"><a href="/actualites?article={{ a.id }}#a{{ a.id }}">{{ a.titre }}</a>
+      <div class="doux">{{ a.source }}{% if a.pourquoi %} · {{ a.pourquoi }}{% endif %}</div></div>
+  </li>
+  {% endfor %}
+</ul>
+{% if actus_total > actus_liste|length %}<p class="doux"><a href="/actualites">{{ actus_total }} nouveautés à lire</a></p>{% endif %}
+{% endif %}
+
 {% if revisions %}
 <h2>Tes dernières révisions</h2>
 <ul class="carte lignes">
