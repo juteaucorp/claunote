@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block titre %}Appareil à approuver{% endblock %}
+{% block contenu %}
+<div class="connexion">
+  <img src="/static/logo.svg" alt="">
+  <h1>Claunote</h1>
+  <form method="post" action="/appareil" class="carte">
+    <input type="hidden" name="suite" value="{{ suite }}">
+    <p>Par Internet, Claunote ne s'ouvre que sur <strong>tes appareils approuvés</strong>.</p>
+    {% if erreur %}<p class="alerte">{{ erreur }}</p>{% endif %}
+    <p><label>Code d'appareil<br><input name="code" placeholder="ABCD-EFGH" autocomplete="one-time-code"
+       autocapitalize="characters" spellcheck="false" maxlength="12" required autofocus></label></p>
+    <p><label>Nom de cet appareil<br><input name="nom" maxlength="60" value="{{ nom or '' }}" required></label></p>
+    <button class="principal">Approuver cet appareil</button>
+    <p class="doux">Le code se crée dans <em>Réglages → Compte → Appareils par Internet</em>, depuis un appareil
+      déjà approuvé ou par ton VPN. Il vaut 15 minutes, une seule fois.</p>
+  </form>
+</div>
+<script>
+  (() => {
+    const nom = document.querySelector("input[name=nom]");
+    if (nom.value) return;
+    const ua = navigator.userAgent, appli = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+    nom.value = (/iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Téléphone Android"
+      : /Mac/.test(ua) ? "Mac" : "Ordinateur") + (appli ? " (appli)" : "");
+  })();
+</script>
+{% endblock %}

@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 
-from claunote import (agent, anki, auth, carte_mentale, cles, db, decoupage, formules, importation, index,
+from claunote import (agent, anki, appareils, auth, carte_mentale, cles, db, decoupage, formules, importation, index,
                       lecture, local, maj, matieres, modeles, notifications, pdf, progression, pronote, question,
                       rangement, ressources, revision, schemas, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
@@ -54,7 +54,7 @@ def _noter_appel(**appel):
 
 
 app = FastAPI(title="Claunote", lifespan=lifespan)
-PUBLIC = ("/connexion", "/cles/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
+PUBLIC = ("/appareil", "/connexion", "/cles/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
 
 
 @app.middleware("http")
@@ -68,6 +68,22 @@ async def exiger_connexion(request: Request, call_next):
         return Response("connexion requise", status_code=401)
     suite = chemin + (f"?{request.url.query}" if request.url.query else "")
     return RedirectResponse(f"/connexion?{urlencode({'suite': suite})}", status_code=303)
+
+
+# Déclaré après exiger_connexion, donc exécuté avant : par Internet, l'appareil passe avant le mot de passe
+@app.middleware("http")
+async def appareil_approuve(request: Request, call_next):
+    """Par Cloudflare Tunnel, seuls les appareils approuvés atteignent le site (voir appareils.py)."""
+    chemin = request.url.path
+    if (not appareils.par_tunnel(request.headers) or not appareils.actif() or chemin == "/appareil"
+            or chemin.startswith("/static/") or appareils.reconnu(request.cookies.get(appareils.COOKIE))):
+        return await call_next(request)
+    if request.headers.get("HX-Request"):
+        return Response(status_code=403, headers={"HX-Redirect": "/appareil"})
+    if request.method != "GET":
+        return Response("appareil non approuvé", status_code=403)
+    suite = chemin + (f"?{request.url.query}" if request.url.query else "")
+    return RedirectResponse(f"/appareil?{urlencode({'suite': suite})}", status_code=303)
 @app.exception_handler(KDriveIndisponible)
 def kdrive_indisponible(request: Request, e: KDriveIndisponible):
     """kDrive en panne pendant une page qui en a besoin (ouvrir un scan, déposer) : explication claire."""
@@ -265,7 +281,7 @@ def page_connexion(request: Request, suite: str = "/"):
 @app.post("/connexion", response_class=HTMLResponse)
 def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str = Form(...), suite: str = Form("/")):
     compte = request.app.state.compte
-    ip = request.client.host if request.client else "?"
+    ip = appareils.ip_client(request)
     attente = compte.bloque(ip)
     if attente or not compte.verifier(ip, utilisateur.strip(), mot_de_passe):
         attente = attente or compte.bloque(ip)
@@ -285,7 +301,8 @@ def _cookie_session(request: Request, reponse: Response, compte: auth.Compte):
 
 
 def _https(request: Request) -> bool:
-    return request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
+    return (request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"
+            or appareils.par_tunnel(request.headers))   # Cloudflare sert toujours le site en HTTPS
 
 
 def _origine(request: Request) -> str:
@@ -296,7 +313,47 @@ def _contexte_compte(request: Request, **plus) -> dict:
     host = request.headers.get("host", "")
     return {"utilisateur": request.app.state.compte.utilisateur, "cles": db.cles_acces(),
             "cles_impossible": cles.possible(host, _https(request)), "nom_sslip": cles.nom_sslip(host),
-            "hote": cles.hote(host), **plus}
+            "hote": cles.hote(host), "appareils": appareils.liste(), "code_expire": appareils.code_en_cours(),
+            "par_tunnel": appareils.par_tunnel(request.headers),
+            "appareil_ici": appareils.reconnu(request.cookies.get(appareils.COOKIE)), **plus}
+
+
+# --- Appareils approuvés pour l'accès par Internet (Cloudflare Tunnel) -------
+
+@app.get("/appareil", response_class=HTMLResponse)
+def page_appareil(request: Request, suite: str = "/"):
+    return templates.TemplateResponse(request, "appareil.html", {"suite": _suite_sure(suite), "sans_nav": True})
+
+
+@app.post("/appareil", response_class=HTMLResponse)
+def approuver_appareil(request: Request, code: str = Form(...), nom: str = Form("Appareil"), suite: str = Form("/")):
+    compte = request.app.state.compte
+    ip = appareils.ip_client(request)
+    attente = compte.bloque(ip)
+    valeur = None if attente else appareils.utiliser_code(code, nom)
+    if not valeur:
+        if not attente:
+            compte._echecs.setdefault(ip, []).append(time.time())
+        attente = attente or compte.bloque(ip)
+        erreur = (f"Trop d'essais : réessaie dans {attente // 60 + 1} min." if attente
+                  else "Code inconnu ou expiré : crée-en un nouveau (Réglages → Compte).")
+        return templates.TemplateResponse(request, "appareil.html", {"suite": _suite_sure(suite), "sans_nav": True,
+                                                                     "erreur": erreur, "nom": nom}, status_code=403)
+    r = RedirectResponse(_suite_sure(suite), status_code=303)
+    r.set_cookie(appareils.COOKIE, valeur, max_age=appareils.DUREE, httponly=True, samesite="lax", secure=True)
+    return r
+
+
+@app.post("/appareils/code", response_class=HTMLResponse)
+def creer_code_appareil(request: Request):
+    return templates.TemplateResponse(request, "compte.html",
+                                      _contexte_compte(request, code_appareil=appareils.nouveau_code()))
+
+
+@app.post("/appareils/{ident}/retirer")
+def retirer_appareil(ident: str):
+    appareils.retirer(ident)
+    return RedirectResponse("/compte#appareils", status_code=303)
 
 
 @app.get("/compte", response_class=HTMLResponse)
@@ -353,7 +410,7 @@ def cles_connexion_options(request: Request):
 @app.post("/cles/connexion")
 async def cles_connexion(request: Request):
     compte = request.app.state.compte
-    ip = request.client.host if request.client else "?"
+    ip = appareils.ip_client(request)
     if compte.bloque(ip):
         return JSONResponse({"erreur": "Trop d'essais : réessaie dans quelques minutes."}, status_code=429)
     corps = cles.lire(await request.body())
@@ -378,7 +435,7 @@ async def cles_connexion(request: Request):
 def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str = Form(...),
                          confirmation: str = Form(...)):
     compte = request.app.state.compte
-    ip = request.client.host if request.client else "?"
+    ip = appareils.ip_client(request)
     erreur = None
     if compte.bloque(ip) or not compte.verifier(ip, compte.utilisateur, actuel):
         erreur = "Mot de passe actuel incorrect."

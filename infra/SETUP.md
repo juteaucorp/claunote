@@ -76,6 +76,8 @@ docker compose up -d   # après avoir changé BIND_ADDR
 
 Puis `http://<ip-vpn-de-la-vm>:8000` depuis ton PC ou téléphone connecté au VPN.
 
+Sans VPN, depuis tes appareils seulement : Cloudflare Tunnel, voir la section 17.
+
 ## 5. Claude Code (l'agent IA, avec ton forfait Pro)
 
 L'agent utilise **Claude Code en mode non interactif** (`claude -p`), connecté à **ton forfait
@@ -640,3 +642,105 @@ question du chat ────────► service lecture : FlashRank ─► 
 - **Service `lecture`** : facultatif. Sans lui (`docker compose stop lecture`), tout marche comme avant.
   Ses modèles se téléchargent au premier usage (HuggingFace, GitHub) dans le volume `lecture`, et prennent
   environ 1,5 Go de mémoire une fois tous chargés. `LECTURE_THREADS` (défaut 2) : cœurs par calcul.
+
+## 17. Accès par Internet (Cloudflare Tunnel), seulement sur tes appareils
+
+```
+ Appareil approuvé ── 4G, wifi, n'importe où ──► Cloudflare  https://claunote.ton-domaine.fr
+ (iPhone, PC)                                     │  règle pare-feu : France seulement
+                                                  ▼
+                              tunnel SORTANT (aucun port ouvert sur ta box ni sur la VM)
+                                                  ▼
+                                VM : cloudflared ─► web:8000
+                                                  │
+                         ① appareil approuvé ?  non ─► page « Code d'appareil » (rien d'autre visible)
+                         ② connecté ?           non ─► mot de passe ou Face ID, comme avant
+
+ Par le VPN : rien ne change (pas de code d'appareil, mêmes adresses qu'avant).
+ Notifications : elles ne passent pas par le tunnel (VM ─► Apple), elles marchent comme avant.
+```
+
+**À retenir** : un appareil inconnu ne voit **que la page du code**, même avec le bon mot de passe.
+Chaque appareil a son propre accès, que tu **retires en un clic** (*Réglages → Compte → Appareils par Internet*).
+
+### Pourquoi un code d'appareil plutôt qu'une option Cloudflare
+
+| Méthode | Appli iPhone (écran d'accueil) + notifications | Verdict |
+|---|---|---|
+| **Code d'appareil dans Claunote** | **oui** | **choisi** : gratuit, un accès par appareil, retirable |
+| Certificat client (mTLS) Cloudflare | peu fiable : l'appli d'écran d'accueil ne présente pas toujours le certificat | possible en plus pour un PC, pas pour l'iPhone |
+| WARP + posture d'appareil | l'iPhone n'accepte **qu'un VPN à la fois** : WARP couperait ton VPN | non |
+| Cloudflare Access (code par e-mail) | connexion qui sort de l'appli, pas lié à un appareil | facultatif, en plus |
+
+### Ce qu'il te faut
+
+- Un compte Cloudflare (gratuit) et **un nom de domaine géré par Cloudflare** (un domaine que tu as déjà,
+  ou ~10 €/an chez Cloudflare Registrar). Le tunnel a besoin d'un nom à toi : les adresses `trycloudflare.com`
+  sont aléatoires et ne se restreignent pas.
+
+### Étapes côté Cloudflare (à faire toi-même, une fois)
+
+Les noms de menus bougent parfois ; le principe reste le même.
+
+1. **Domaine** : [dash.cloudflare.com](https://dash.cloudflare.com) → *Ajouter un domaine* → plan **Free** →
+   remplace les serveurs de noms chez ton registraire par ceux que Cloudflare affiche → attends l'état **Actif**.
+   (Domaine acheté chez Cloudflare : rien à faire.)
+2. **Tunnel** : [one.dash.cloudflare.com](https://one.dash.cloudflare.com) (Zero Trust, plan gratuit) →
+   *Réseaux → Tunnels* → **Créer un tunnel** → type **Cloudflared** → nom `claunote`.
+   Cloudflare affiche une commande d'installation : **ne l'exécute pas**, copie seulement le jeton
+   (la longue suite qui commence par `eyJ…`, après `--token`).
+3. **Sur la VM**, dans `.env` :
+   ```
+   COMPOSE_PROFILES=tunnel
+   CLOUDFLARE_TUNNEL_TOKEN=eyJ…
+   ```
+   puis `git pull && docker compose up -d --build`. Dans le tableau de bord, le tunnel passe à **Sain (Healthy)**.
+4. **Adresse publique** (dans le tunnel → *Nom d'hôte public* / *Published application routes*) → *Ajouter* :
+   sous-domaine `claunote`, ton domaine, **Type `HTTP`**, **URL `web:8000`**.
+   ⚠️ Bien `HTTP` et `web:8000` (pas `https`, pas `caddy`) : Cloudflare fait déjà le HTTPS.
+5. **Pare-feu (recommandé)** : ton domaine → *Sécurité → Règles WAF → Règles personnalisées* → *Créer une règle* :
+   nom `Claunote France seulement`, *Modifier l'expression* :
+   ```
+   (http.host eq "claunote.ton-domaine.fr" and ip.src.country ne "FR")
+   ```
+   Action **Bloquer**. En voyage à l'étranger : désactive la règle le temps du séjour.
+   Dans *SSL/TLS → Certificats Edge*, active **Toujours utiliser HTTPS**.
+
+### Approuver tes appareils
+
+1. **Premier code**, au choix :
+   - par le VPN : `http://<BIND_ADDR>:8000/compte` → **Ajouter un appareil** ;
+   - sur la VM : `docker compose exec web python -m claunote.appareils`.
+
+   Le code (ex. `K7QM-3XPA`) vaut **15 minutes, une seule fois**.
+2. **iPhone** : Safari → `https://claunote.ton-domaine.fr` → tape le code → connexion →
+   **Partager → Sur l'écran d'accueil**. Ouvre l'appli : si elle redemande un code (l'iPhone sépare l'appli
+   de Safari), crée un nouveau code et tape-le **dans l'appli**. Puis *Plus → Réglages → Notifications →
+   Activer* et *Compte → Ajouter cet appareil* pour Face ID.
+3. **Les appareils suivants** : *Réglages → Compte → Ajouter un appareil* depuis un appareil déjà approuvé
+   (même par Internet), puis le code sur le nouvel appareil.
+
+> **Une seule appli suffit** : celle installée depuis l'adresse Cloudflare marche aussi à la maison
+> (elle passe par Internet). Celle du VPN reste possible, mais c'est une **autre appli** pour l'iPhone
+> (notifications et Face ID à activer dans chacune).
+
+### Appareil perdu ou volé
+
+*Réglages → Compte → Appareils par Internet* → **Retirer** : coupé tout de suite. Change aussi ton mot de passe
+(page Compte), ce qui déconnecte toutes les sessions.
+
+### Couper l'accès par Internet
+
+Mets `#COMPOSE_PROFILES=tunnel` en commentaire puis `docker compose stop cloudflared`, ou supprime le tunnel
+dans Cloudflare. `CLAUNOTE_TUNNEL_APPAREILS=0` retire le contrôle des appareils : à n'utiliser **que** si
+Cloudflare Access fait déjà le tri.
+
+### Dépannage
+
+| Symptôme | Cause probable |
+|---|---|
+| Erreur Cloudflare **1033** | cloudflared arrêté ou jeton faux : `docker compose logs -f cloudflared` |
+| Erreur **502** | adresse du service fausse dans le tunnel : doit être `HTTP` + `web:8000` |
+| Le code est redemandé à chaque ouverture | cookies bloqués (navigation privée), ou appareil retiré |
+| « Trop d'essais » | 5 codes faux en 5 min depuis la même adresse : attends 5 min |
+| Erreur **1020** (accès refusé) | la règle « France seulement » : désactive-la en voyage |

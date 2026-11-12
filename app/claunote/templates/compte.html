@@ -53,6 +53,32 @@
   </script>
   {% endif %}
 </div>
+<div class="carte" id="appareils" style="max-width: 560px">
+  <strong>Appareils par Internet</strong>
+  <p class="doux">Par l'adresse Cloudflare (hors VPN), le site ne s'ouvre que sur ces appareils. Par le VPN, rien ne change.
+    {% if par_tunnel %}{% if appareil_ici %}Tu es connecté par Internet depuis <strong>{{ appareil_ici.nom }}</strong>.{% endif %}{% endif %}</p>
+  {% if appareils %}
+  <ul class="liste-cles">
+    {% for a in appareils %}
+    <li><span><strong>{{ a.nom }}</strong>{% if appareil_ici and appareil_ici.id == a.id %} <span class="doux">(cet appareil)</span>{% endif %}<br>
+      <span class="doux">ajouté le {{ a.cree.strftime('%d/%m/%Y') }}{% if a.vu %} · vu le {{ a.vu.strftime('%d/%m/%Y') }}{% endif %}</span></span>
+      <form method="post" action="/appareils/{{ a.id|urlencode }}/retirer" onsubmit="return confirm('Retirer {{ a.nom }} ? Il ne pourra plus ouvrir le site par Internet sans un nouveau code.')">
+        <button class="lien-danger">Retirer</button></form></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="doux">Aucun appareil pour l'instant.</p>
+  {% endif %}
+  {% if code_appareil %}
+  <p class="carte accent">Code à taper sur le nouvel appareil : <strong style="font-size: 1.4em; letter-spacing: 2px">{{ code_appareil }}</strong><br>
+    <span class="doux">Valable 15 minutes, une seule fois. Dans l'appli iPhone, tape-le <em>dans l'appli</em> (pas dans Safari).</span></p>
+  {% elif code_expire %}
+  <p class="doux">Un code créé tout à l'heure est encore valable quelques minutes.</p>
+  {% endif %}
+  <form method="post" action="/appareils/code" class="actions" style="margin: 0">
+    <button class="principal">Ajouter un appareil</button>
+  </form>
+</div>
 <style>
   .liste-cles { list-style: none; padding: 0; margin: 0 0 12px; }
   .liste-cles li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--bord); }
