@@ -1572,8 +1572,8 @@ def supprimer_campagne(campagne_id: int, garder: bool = Form(False)):
 
 
 @app.get("/campagne/{campagne_id}/pdf")
-def campagne_pdf(campagne_id: int, corrige: int = 1, telecharger: int = 0):
-    """Livret : programme jour par jour puis tous les supports prêts."""
+def campagne_pdf(campagne_id: int, corrige: int = 1, telecharger: int = 0, programme: int = 0):
+    """Livret : tous les supports prêts (fiches, questions…) ; le programme jour par jour seulement sur demande."""
     campagne = db.campagne(campagne_id)
     if campagne is None:
         raise HTTPException(404)
@@ -1581,7 +1581,7 @@ def campagne_pdf(campagne_id: int, corrige: int = 1, telecharger: int = 0):
     reperes = {}
     for r in revs:
         reperes.update({f"{r['id']}:{k}": v for k, v in (r["reperes"] or {}).items()})
-    contenu = pdf.campagne_pdf(campagne, revs, _sources(reperes), corrige=bool(corrige))
+    contenu = pdf.campagne_pdf(campagne, revs, _sources(reperes), corrige=bool(corrige), programme=bool(programme))
     return _pdf(contenu, pdf.nom(campagne["titre"]), bool(telecharger))
 
 
@@ -2425,9 +2425,8 @@ def agenda_preparer(ev_id: str = Form(...)):
     if rev_id:
         return RedirectResponse(f"/revision/{rev_id}", status_code=303)
     le = ev["le"].astimezone(pronote.PARIS).date()
-    plan = (le - dt.date.today()).days >= pronote.JOURS_PLAN
-    params = {"sujet": ev["titre"] if ev["id"].startswith("devoir:") else "",
-              "genre": "plan" if plan else "fiche", "date_eval": le.isoformat() if plan else ""}
+    params = {"sujet": ev["titre"] if ev["id"].startswith("devoir:") else "", "genre": "fiche",
+              "date_eval": le.isoformat()}
     return RedirectResponse(f"/reviser/nouvelle?{urlencode(params)}", status_code=303)
 
 

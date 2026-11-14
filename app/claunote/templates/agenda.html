@@ -76,7 +76,7 @@
       <a href="/revision/{{ e.revision_id }}">{{ 'En préparation…' if e.revision_statut == 'en_attente' else 'Voir la révision' }}</a>
     {% else %}
       <form method="post" action="/agenda/preparer"><input type="hidden" name="ev_id" value="{{ e.id }}">
-        <button class="principal" title="Fiche ou plan de révision à partir de tes cours">Préparer</button></form>
+        <button class="principal" title="Fiche synthèse et questions à partir de tes cours">Préparer</button></form>
     {% endif %}
   </div>
   {% else %}

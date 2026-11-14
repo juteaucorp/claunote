@@ -161,11 +161,11 @@ def ev(id_, matiere, titre, jour):
             "le": dt.datetime(2026, 10, jour, 8, tzinfo=pronote.PARIS)}
 
 
-def test_preparer_plan_ou_fiche(fausse_base):
+def test_preparer_toujours_une_fiche(fausse_base):
     aujourd_hui = dt.date(2026, 10, 23)
-    # Contrôle de l'emploi du temps dans 5 jours : plan sur toute la matière, niveau le plus récent
+    # Contrôle de l'emploi du temps dans 5 jours : fiche sur toute la matière, niveau le plus récent
     assert pronote.preparer(ev("cours:c1", "SISR - RESEAUX", "Évaluation", 28), aujourd_hui) == 1
-    assert fausse_base["revisions"][0] == ("plan", "Réseaux : évaluation du 28/10", [7, 8], dt.date(2026, 10, 28))
+    assert fausse_base["revisions"][0] == ("fiche", "Réseaux : évaluation du 28/10", [7, 8], dt.date(2026, 10, 28))
     # Devoir annonçant un DS dans 2 jours : fiche ciblée sur le thème
     assert pronote.preparer(ev("devoir:d1", "MATHEMATIQUES", "Suites", 25), aujourd_hui) == 2
     assert fausse_base["revisions"][1][:3] == ("fiche", "Mathématiques : Suites", [3])

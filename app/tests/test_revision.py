@@ -260,3 +260,19 @@ def test_generer_transmet_le_mode_strict(monkeypatch):
     revision.generer("fiche", "Lois binomiales", DOCS)
     revision.generer("fiche", "Lois binomiales", DOCS, strict=True)
     assert "ne refuse JAMAIS" in vu[0] and "ne refuse JAMAIS" not in vu[1]
+
+
+def test_fiche_synthese_pas_un_plan():
+    """La fiche demandée est une synthèse dense avec pièges et questions, pas un plan ni un résumé."""
+    p = revision.prompt("fiche", "CEJM")
+    assert "FICHE SYNTHÈSE" in p and "NI un plan de révision" in p
+    assert "PIÈGES" in p and "QUESTIONS" in p and "RÉPONSES" in p
+    assert "Vue d'ensemble" not in p
+
+
+def test_aerer_listes():
+    """Une liste collée à un paragraphe est décollée (sinon Markdown la rend en un bloc), sauf dans le code."""
+    assert revision.aerer_listes("Phrase :\n- a\n- b") == "Phrase :\n\n- a\n- b"
+    assert revision.aerer_listes("- a\n- b\n\n1. c") == "- a\n- b\n\n1. c"
+    assert revision.aerer_listes("```\nx\n- a\n```") == "```\nx\n- a\n```"
+    assert revision.aerer_listes("| a |\n- b") == "| a |\n- b"

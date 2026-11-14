@@ -109,26 +109,42 @@ jamais décoratif. Dans un schéma : texte simple, ni LaTeX ni Markdown. Hors de
 
 PROMPTS = {
     "fiche": COMMUN + VISUEL + """
-Fais une fiche de révision sur « {sujet} », en Markdown. Elle doit permettre de réviser sans rouvrir
-les cours et aller droit à ce qui rapporte des points.
+Fais une FICHE SYNTHÈSE sur « {sujet} », en Markdown : la fiche qu'on relit la veille et le matin de
+l'épreuve, très dense, où chaque ligne peut rapporter un point. Ce n'est NI un plan de révision, NI un
+sommaire, NI un résumé rédigé : aucune liste de « choses à revoir », aucune introduction, aucune phrase
+de liaison. Seulement le contenu à savoir, déjà formulé comme il faudrait l'écrire sur la copie.
 Structure :
-# Titre de la fiche
-## L'essentiel : 5 lignes maximum, ce qu'il faut savoir si on n'a que deux minutes.
-## Vue d'ensemble : un schéma (dot ou svg) qui montre comment les notions s'articulent.
-Puis 3 à 6 sections « ## » choisies pour CE sujet, pas un plan passe-partout. Par exemple : en technique ou
-en sciences, « Définitions », « Formules, commandes ou règles à connaître », « Méthodes pas à pas » ; en
-histoire-géographie, « Repères et dates » (avec une frise), « Acteurs », « Causes et conséquences » ; en
-français ou en langues, « Notions », « Exemples à citer », « Méthode de l'épreuve » ; en économie, droit
-ou management, « Notions », « Mécanismes », « Cas et exemples à connaître ».
-## Pièges fréquents : les erreurs réelles (corrections d'exercices, remarques du professeur dans les cours).
-## Ce qui tombe le plus souvent : 3 à 5 points, d'après les exercices et contrôles présents dans les cours
-(s'il n'y en a aucun, ne mets pas cette section).
-## Pour s'entraîner : 4 questions de difficulté croissante, dont au moins une d'application du type des
-exercices des cours ; puis une section « ## Réponses », courte.
-Forme : phrases courtes, listes, gras sur les mots-clés seulement. Une méthode = des étapes numérotées
-suivies d'un exemple traité. Chaque formule avec le sens de chaque lettre et les unités. Chaque commande
-avec un exemple réel. Au moins deux schémas quand le sujet s'y prête (processus, architecture, chronologie,
-comparaison, courbe). Longueur selon la matière des cours : complet, sans remplissage.
+# SUJET OU MATIÈRE — FICHE SYNTHÈSE (niveau, ex. BTS SIO)
+Puis 4 à 8 grandes parties numérotées « ## 1. TITRE EN MAJUSCULES », choisies pour CE sujet et qui le
+couvrent en entier (toute la matière si c'est toute la matière qui est demandée) :
+- d'abord les réflexes ou les méthodes de l'épreuve, quand les cours ou le format officiel les donnent :
+  durée, matériel, comment rédiger chaque type de réponse (ex. « formule → calcul → résultat arrondi →
+  phrase », le syllogisme juridique), le sens des verbes de consigne ;
+- ensuite une partie par thème ou chapitre : les mots à savoir par cœur, les formules, règles, commandes,
+  mécanismes, avec les exemples types à savoir refaire ;
+- si la matière s'y prête, une partie récapitulative en tableau (auteurs et dates, articles de loi,
+  formulaire, commandes) ;
+- avant-dernière partie, toujours : « ## n. PIÈGES », les confusions classiques, une ligne chacune
+  (« +5 % → q = 1,05, pas 0,05 », « Nullité (formation) ≠ résolution (exécution) ») ;
+- dernière partie, toujours : « ## n. QUESTIONS » : 10 à 15 questions numérotées comme à l'épreuve, de
+  difficulté croissante (restitution, puis application avec des données, puis justification), sans
+  indice ; puis une section « ## RÉPONSES » : la réponse attendue de chaque question, en une à trois lignes.
+Dans chaque partie : des sous-titres « ### » courts, et sous chacun des puces d'une à trois lignes qui
+commencent par le mot-clé en gras : « - **Externalité** : effet de l'activité d'un agent sur un autre
+**sans compensation par le prix**. »
+- Style télégraphique : « → » pour une conséquence ou une étape, « = » pour une définition, « ≠ » pour
+  une confusion, « · » pour enchaîner des notions voisines sur la même puce.
+- Gras sur les mots-clés et sur ce qui doit apparaître tel quel sur la copie, rien d'autre.
+- Un tableau dès qu'on compare (deux notions, deux lois, plusieurs droits) ou pour un formulaire.
+- Une méthode : ses étapes numérotées dans une puce (« 1. … 2. … 3. … »), puis un exemple type traité
+  avec de vrais nombres. Chaque formule avec un exemple chiffré.
+- Les phrases toutes faites à recopier (justification d'une loi, conclusion type) entre « ».
+- Un schéma seulement s'il remplace un paragraphe (courbe, arbre, architecture), compact, deux au plus :
+  pas de « vue d'ensemble » décorative. Pas d'encadré « > » sauf « Hors de tes cours ».
+- Repères : un seul [Dn] à la fin du sous-titre « ### » ou de la puce dont il est la source, pas à
+  chaque phrase.
+Longueur : dense et complète, l'équivalent d'une à deux pages A4 sur trois colonnes en petits caractères
+(900 à 2 000 mots avant les questions, selon l'ampleur du sujet), sans remplissage.
 Réponds uniquement avec la fiche{web_md}.
 """,
     "quiz": COMMUN + """
@@ -480,6 +496,24 @@ def parse_cartes(texte: str) -> list[dict]:
     return propres
 
 
+RE_PUCE = re.compile(r"^ {0,3}(?:[-*+]|\d{1,2}[.)])\s+\S")
+
+
+def aerer_listes(texte: str) -> str:
+    """Ligne vide avant une liste collée au paragraphe qui la précède : sans elle, Markdown n'y voit
+    pas une liste et les puces sortent en un seul bloc de texte (hors des blocs de code)."""
+    lignes, dans_code = [], False
+    for ligne in texte.split("\n"):
+        if ligne.lstrip().startswith("```"):
+            dans_code = not dans_code
+        avant = lignes[-1] if lignes else ""
+        if (not dans_code and RE_PUCE.match(ligne) and avant.strip() and not RE_PUCE.match(avant)
+                and not avant.startswith((" ", "\t", ">", "|", "#"))):
+            lignes.append("")
+        lignes.append(ligne)
+    return "\n".join(lignes)
+
+
 def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None = None,
             consigne: str = "", pieces: list[dict] | None = None, memoire=None,
             progres=lambda texte: None, strict: bool = False) -> tuple[str, dict, list[dict]]:
@@ -502,7 +536,7 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
         if len(texte.strip()) < 80:
             raise ErreurAgent(f"réponse trop courte : {texte[:200]!r}")
         texte, web = separer_web(texte.strip())
-        return schemas.nettoyer(texte)[0], web  # un schéma au code faux est retiré plutôt qu'affiché en brut
+        return schemas.nettoyer(aerer_listes(texte))[0], web  # un schéma au code faux est retiré plutôt qu'affiché en brut
 
     with tempfile.TemporaryDirectory() as dossier:  # les cours sont dans l'entrée, les pièces jointes ici
         a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))

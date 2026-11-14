@@ -24,7 +24,8 @@
   <details class="menu-plus">
     <summary aria-label="Plus d'actions">{{ icone('plus', 20) }}</summary>
     <div class="feuille-menu">
-      {% if pretes %}<a href="/campagne/{{ campagne.id }}/pdf?corrige=0" target="_blank">{{ icone('examen', 18) }} Livret sans corrigés</a>{% endif %}
+      {% if pretes %}<a href="/campagne/{{ campagne.id }}/pdf?corrige=0" target="_blank">{{ icone('examen', 18) }} Livret sans corrigés</a>
+      <a href="/campagne/{{ campagne.id }}/pdf?programme=1" target="_blank">{{ icone('agenda', 18) }} Livret avec le programme</a>{% endif %}
       {% if erreurs or campagne.statut == 'erreur' %}
       <form method="post" action="/campagne/{{ campagne.id }}/relancer"><button>{{ icone('relancer', 18) }} Relancer ce qui a échoué</button></form>
       {% endif %}

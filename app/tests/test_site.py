@@ -503,7 +503,7 @@ def test_agenda_preparer(agenda):
     assert r.headers["location"] == "/revision/42"
     # Pas de cours : formulaire de révision prérempli
     r = agenda.post("/agenda/preparer", data={"ev_id": "devoir:d1"}, follow_redirects=False)
-    assert r.headers["location"].startswith("/reviser/nouvelle?sujet=Unit+4&genre=plan&date_eval=")
+    assert r.headers["location"].startswith("/reviser/nouvelle?sujet=Unit+4&genre=fiche&date_eval=")
     agenda.evs["cours:c1"]["revision_id"] = 7
     assert agenda.post("/agenda/preparer", data={"ev_id": "cours:c1"}, follow_redirects=False).headers["location"] == "/revision/7"
     assert agenda.post("/agenda/preparer", data={"ev_id": "x"}).status_code == 404
