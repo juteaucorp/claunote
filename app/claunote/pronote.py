@@ -23,7 +23,6 @@ URL = os.environ.get("PRONOTE_URL", "http://pronote:3000")
 JOURS_SYNCHRO = 28
 PREPARATION_AUTO = os.environ.get("PRONOTE_PREPARATION_AUTO", "0") == "1"
 JOURS_AUTO = 10       # préparation auto des évaluations de moins de 10 jours
-JOURS_PLAN = 3        # à partir de 3 jours avant : un plan, sinon une fiche
 PARIS = ZoneInfo("Europe/Paris")
 
 # Un devoir qui annonce une évaluation (le contrôle n'est pas toujours marqué dans l'emploi du temps)
@@ -206,9 +205,9 @@ def preparer(ev: dict, aujourd_hui: dt.date | None = None) -> int | None:
     if not ids:
         return None
     le = ev["le"].astimezone(PARIS).date()
-    genre = "plan" if (le - aujourd_hui).days >= JOURS_PLAN else "fiche"
     libelle = f"{matiere} : {sujet}" if sujet else f"{matiere} : évaluation du {le:%d/%m}"
-    rev_id = db.creer_revision(genre, libelle, ids, le)
+    # Toujours une fiche synthèse (avec ses questions) : un plan jour par jour ne se fait qu'à la demande
+    rev_id = db.creer_revision("fiche", libelle, ids, le)
     db.lier_revision(ev["id"], rev_id)
     db.demander_scan()  # réveille le worker
     return rev_id

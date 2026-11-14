@@ -45,7 +45,7 @@ def restaurer(rendu: str, formules: list[tuple[str, bool]], texte: bool = False)
         if i >= len(formules):
             return m.group(0)
         latex, bloc = formules[i]
-        return html.escape(en_texte(latex), quote=False) if texte else en_html(latex, bloc)
+        return en_texte_html(latex) if texte else en_html(latex, bloc)
     return RE_JETON.sub(remettre, rendu)
 
 
@@ -117,6 +117,16 @@ def en_texte(latex: str) -> str:
         m.group(2) if m.group(2) is not None else m.group(3), EXPOSANTS if m.group(1) == "^" else INDICES, m.group(1)), t)
     t = t.replace("{", "").replace("}", "").replace("~", " ").replace("\x01", "{").replace("\x02", "}")
     return re.sub(r"\s+", " ", t).strip()
+
+
+def en_texte_html(latex: str) -> str:
+    """Pour le PDF : le texte lisible, avec de vrais exposants et indices là où Unicode n'en a pas
+    (« e^(a+b) » → e<sup>a+b</sup>, « P_B(A) » → P<sub>B</sub>(A))."""
+    t = html.escape(en_texte(latex), quote=False)
+    for signe, balise in (("^", "sup"), ("_", "sub")):
+        t = re.sub(re.escape(signe) + r"\(([^()]+)\)", rf"<{balise}>\1</{balise}>", t)
+        t = re.sub(re.escape(signe) + r"([^\s()<&])", rf"<{balise}>\1</{balise}>", t)
+    return t
 
 
 def _parenthese(x: str) -> str:

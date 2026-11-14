@@ -79,3 +79,34 @@ def test_prompts_autorisent_les_schemas():
         p = revision.prompt(genre, "VLAN", date_eval=__import__("datetime").date(2030, 1, 2))
         assert "```dot" in p and "```svg" in p and "digraph { rankdir=LR" in p
     assert '"schema"' not in revision.prompt("cartes", "VLAN") and "`schema`" in revision.prompt("quiz", "VLAN")
+
+
+def test_fiche_dense_pdf():
+    """Une fiche sort en synthèse : titre à part, une couleur par partie, questions et réponses repérées."""
+    contenu = ("# MATHS — FICHE SYNTHÈSE\n\n## 1. SUITES\nTexte :\n- **q** = $e^{a+b}$ [D1]\n\n## 2. PIÈGES\n- x\n\n"
+               "## 3. QUESTIONS\n1. Quoi ?\n\n## RÉPONSES\n1. Ça.")
+    titre, corps = pdf.fiche_dense(str(pdf.md(contenu)))
+    assert titre == "MATHS — FICHE SYNTHÈSE" and "<h1>" not in corps
+    assert 'class="partie c0"><h2>1. SUITES' in corps and 'class="partie c1"><h2>2. PIÈGES' in corps
+    assert 'class="partie questions"' in corps and 'class="partie reponses"' in corps
+    assert "<li><strong>q</strong> = e<sup>a+b</sup>" in corps
+    rev = {"sujet": "Maths", "genre": "fiche", "statut": "pret", "contenu": contenu, "reperes": {}}
+    assert pdf.section(rev, {})["dense"] and pdf.revision_pdf(rev, {})[:4] == b"%PDF"
+    assert not pdf.section(dict(rev, genre="plan"), {})["dense"]
+
+
+def test_livret_sans_programme():
+    """Le livret d'une campagne ne contient le programme jour par jour que si on le demande."""
+    import datetime as dt
+    vus = []
+    campagne = {"titre": "BTS blanc", "debut": dt.date(2026, 11, 16), "fin": dt.date(2026, 11, 20), "consigne": "",
+                "programme": {"jours": [{"date": "2026-11-16", "titre": "", "taches": [
+                    {"matiere": "Maths", "quoi": "Suites", "duree": 30, "support": ""}]}]}}
+    rendre = pdf.rendre
+    pdf.rendre = lambda html: vus.append(html) or b"%PDF"
+    try:
+        pdf.campagne_pdf(campagne, [], {})
+        pdf.campagne_pdf(campagne, [], {}, programme=True)
+    finally:
+        pdf.rendre = rendre
+    assert "Programme jour par jour" not in vus[0] and "Programme jour par jour" in vus[1]
