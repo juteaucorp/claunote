@@ -1,0 +1,104 @@
+{# Réviser en une phrase : ce qui a été compris, à corriger d'un toucher avant de lancer (demande.py) #}
+{% from "_icones.html" import icone %}
+<form method="post" action="/reviser/lancer" class="carte compris" id="compris"
+      onsubmit="const ok = this.querySelector('[name=genres]:checked') && this.querySelector('[name=matieres]:checked'); this.querySelector('.manque').hidden = !!ok; return !!ok">
+  <input type="hidden" name="texte" value="{{ compris.texte }}">
+  <input type="hidden" name="titre" value="{{ compris.titre }}">
+  {% if compris.fin %}<input type="hidden" name="fin" value="{{ compris.fin.isoformat() }}">{% endif %}
+  {% if aucun_cours %}
+  <p>Il faut d'abord des cours classés : dépose des scans depuis <a href="/deposer">Ajouter</a>.</p>
+  {% else %}
+  <p class="sur-titre">Voilà ce que j'ai compris</p>
+  <p class="phrase">{{ phrase }}</p>
+  {% for raison in compris.pourquoi %}<p class="doux raison">{{ raison }}</p>{% endfor %}
+
+  {# Tout est clair : un seul bouton. Un doute : les questions sont ouvertes, en couleur. #}
+  {% set doute = compris.incertain.matieres or compris.incertain.genres or not compris.matieres %}
+  <details class="reglages" {{ 'open' if doute }}>
+  <summary>{{ 'À préciser' if doute else 'Modifier (matière, support, sujet, date)' }}</summary>
+  <fieldset class="{{ 'a-preciser' if compris.incertain.matieres }}">
+    <legend>{% if compris.incertain.matieres %}C'est pour quelle matière ?{% else %}Matière{% endif %}</legend>
+    {% if compris.incertain.matieres %}<p class="doux aide">Je n'ai pas reconnu la matière dans ta phrase. Touche la bonne (plusieurs possibles).</p>{% endif %}
+    <div class="choix-puces">
+      {% for c in devant %}
+      <label><input type="checkbox" name="matieres" value="{{ c.niveau }}|{{ c.matiere }}" {{ 'checked' if (c.niveau ~ '|' ~ c.matiere) in cochees }}>
+        <span>{{ c.matiere }} <small>{{ c.niveau }} · {{ c.n }} cours</small></span></label>
+      {% endfor %}
+    </div>
+    {% if autres %}
+    <details class="autres">
+      <summary>Autre matière ou autre année</summary>
+      {% for niveau, liste in autres %}
+      <p class="doux niveau">{{ niveau }}</p>
+      <div class="choix-puces">
+        {% for c in liste %}
+        <label><input type="checkbox" name="matieres" value="{{ c.niveau }}|{{ c.matiere }}">
+          <span>{{ c.matiere }} <small>{{ c.n }} cours</small></span></label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+      <p class="doux aide">Plusieurs matières cochées = une campagne, avec un programme jour par jour.</p>
+    </details>
+    {% endif %}
+  </fieldset>
+
+  <fieldset class="{{ 'a-preciser' if compris.incertain.genres }}">
+    <legend>{% if compris.incertain.genres %}Tu veux quoi comme support ?{% else %}Support{% endif %}</legend>
+    {% if compris.incertain.genres %}<p class="doux aide">Tu ne l'as pas dit : j'ai coché une fiche. Change si besoin, tu peux en cocher plusieurs.</p>{% endif %}
+    <div class="choix-puces">
+      {% for g, libelle in genres.items() %}
+      <label class="g-{{ g }}"><input type="checkbox" name="genres" value="{{ g }}" {{ 'checked' if g in compris.genres }}>
+        <span>{{ icone(g, 18) }}{{ libelle }} <small>{{ descriptions[g] }}</small></span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  <div class="precisions">
+    <label>Sujet précis <span class="doux">(vide = toute la matière)</span>
+      <input name="sujet" value="{{ compris.sujet }}" placeholder="ex. le contrat, les suites, les VLAN"></label>
+    <label>Date du contrôle <span class="doux">({{ 'trouvée dans Pronote' if compris.source_date == 'pronote' else 'facultatif' }})</span>
+      <input type="date" name="date_eval" min="{{ demain.isoformat() }}" value="{{ compris.date.isoformat() if compris.date and compris.date >= demain else '' }}"></label>
+  </div>
+  <label class="strict"><input type="checkbox" name="strict" value="1"> Rester strictement dans mes cours <span class="doux">(sinon l'IA complète ce qui manque et le signale)</span></label>
+
+  </details>
+
+  <p class="alerte manque" hidden>Coche au moins une matière et un support.</p>
+  <div class="actions">
+    <button class="principal lancer">Lancer</button>
+    <a class="bouton" href="/reviser">Annuler</a>
+  </div>
+  <p class="doux aide">1 à 3 minutes par support. Tu peux quitter la page, une notification te prévient. Ta phrase entière est transmise à l'IA.</p>
+  {% endif %}
+</form>
+<style>
+  .compris { border-color: var(--accent); }
+  .compris .sur-titre { margin: 0; font-size: .78rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--doux); }
+  .compris .phrase { margin: 2px 0 6px; font-size: 1.12rem; font-weight: 600; line-height: 1.35; }
+  .compris .raison, .compris .aide { margin: 2px 0 8px; font-size: .88rem; }
+  .compris fieldset { border: 0; margin: 14px 0 0; padding: 0; min-width: 0; }
+  .compris legend { float: left; width: 100%; padding: 0; margin-bottom: 6px; font-weight: 600; }
+  .compris legend + * { clear: both; }
+  .compris .reglages { margin-top: 8px; }
+  .compris .reglages > summary { display: inline-block; padding: 6px 0; }
+  .compris fieldset.a-preciser { padding: 12px; border-radius: 14px; background: var(--accent-pale); }
+  .choix-puces { display: flex; flex-wrap: wrap; gap: 8px; }
+  .choix-puces label { position: relative; cursor: pointer; }
+  .choix-puces input { position: absolute; opacity: 0; pointer-events: none; }
+  .choix-puces label > span { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 44px; padding: 6px 14px; border-radius: 14px;
+    border: 1.5px solid var(--bord); background: var(--carte); font-weight: 600; line-height: 1.25; }
+  .choix-puces small { font-weight: 400; color: var(--doux); font-size: .8rem; }
+  .choix-puces svg { color: var(--g, var(--doux)); }
+  .choix-puces label:has(input:checked) > span { border-color: var(--g, var(--accent)); background: color-mix(in srgb, var(--g, var(--accent)) 12%, var(--carte));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--g, var(--accent)) 16%, transparent); }
+  .choix-puces label:has(input:focus-visible) > span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .compris .autres .niveau { margin: 10px 0 4px; font-weight: 600; }
+  .precisions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .precisions label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+  .precisions label .doux { font-weight: 400; }
+  .precisions input { width: 100%; }
+  .compris .strict { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; flex-wrap: wrap; }
+  .compris .actions { margin-top: 16px; }
+  .compris button.lancer { padding-left: 28px; padding-right: 28px; font-size: 1.05rem; }
+  @media (max-width: 640px) { .precisions { grid-template-columns: 1fr; } .compris button.lancer { flex: 1; } }
+</style>

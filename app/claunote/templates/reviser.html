@@ -6,10 +6,52 @@
 {% include "_reviser.html" %}
 <h1>Réviser</h1>
 
-{# 1. Ce qui est à faire maintenant : contrôles qui arrivent, programme du jour, flashcards dues #}
+{# 1. Dire ce qu'on veut, en une phrase : le site choisit la matière et le support, et demande ce qui manque #}
+{% if a_choisir %}
+<form class="carte demande" method="post" action="/reviser/demande" hx-post="/reviser/demande" hx-target="#compris" hx-swap="outerHTML"
+      hx-on::after-request="document.getElementById('compris').scrollIntoView({ behavior: 'smooth', block: 'nearest' })">
+  <label for="texte-demande">Dis-moi ce que tu veux réviser</label>
+  <textarea id="texte-demande" name="texte" rows="2" required maxlength="1000" enterkeyhint="send"
+            placeholder="ex. Une fiche de CEJM sur le contrat pour jeudi"></textarea>
+  <div class="exemples" aria-label="Exemples">
+    {% for e in evaluations[:2] if e.cours %}
+    <button type="button" data-exemple="Une fiche pour le contrôle de {{ e.cours }} du {{ e.le.astimezone(paris).strftime('%d/%m') }}">Contrôle de {{ e.cours }} du {{ e.le.astimezone(paris).strftime('%d/%m') }}</button>
+    {% endfor %}
+    <button type="button" data-exemple="Interroge-moi sur ">Interroge-moi sur…</button>
+    <button type="button" data-exemple="Des flashcards sur ">Des flashcards sur…</button>
+    <button type="button" data-exemple="Prépare-moi le BTS blanc de la semaine prochaine en ">BTS blanc de la semaine prochaine…</button>
+  </div>
+  <div class="pied-demande">
+    <span class="doux">Écris comme tu parles : je choisis la matière et le support, et je te demande ce qui n'est pas clair.</span>
+    <button class="principal">C'est parti</button>
+  </div>
+</form>
+<div id="compris"></div>
+<script>
+  // Un exemple touché remplit la zone de texte ; Entrée envoie (Maj + Entrée : nouvelle ligne)
+  (() => {
+    const zone = document.getElementById("texte-demande");
+    document.querySelectorAll(".exemples button").forEach((b) => b.addEventListener("click", () => {
+      zone.value = b.dataset.exemple; zone.focus(); zone.setSelectionRange(zone.value.length, zone.value.length);
+      if (!b.dataset.exemple.endsWith(" ")) zone.form.requestSubmit();
+    }));
+    zone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (zone.value.trim()) zone.form.requestSubmit(); }
+    });
+  })();
+</script>
+<p class="liens-rapides doux">Autrement :
+  <a href="/demander">poser une question à l'IA</a> ·
+  <a href="/reviser/nouvelle">tout régler moi-même</a> ·
+  <a href="/campagne/nouvelle">campagne sur mesure</a> ·
+  <a href="/progression">ma progression</a> ·
+  <a href="/cartes">mes flashcards</a></p>
+{% endif %}
+
+{# 2. Ce qui est à faire maintenant : contrôles qui arrivent, programme du jour, flashcards dues #}
 {% set dues = nb_cartes_a_revoir() %}
 {% if evaluations or du_jour or dues %}
-<h2 class="premier">À faire maintenant</h2>
+<h2>À faire maintenant</h2>
 {% if evaluations %}
 <ul class="carte lignes prochaines">
   {% for e in evaluations %}
@@ -58,25 +100,6 @@
 </div>
 {% endif %}
 {% endif %}
-
-{# 2. Créer #}
-<h2>Préparer</h2>
-<div class="lancer">
-  <a class="carte tuile" href="/reviser/nouvelle">
-    <span class="pastille-genre">{{ icone('nouveau') }}</span>
-    <span><strong>Une révision</strong><span class="doux">Fiche, quiz, flashcards, épreuve blanche ou plan sur un chapitre</span></span>
-  </a>
-  <a class="carte tuile tuile-question" href="/demander">
-    <span class="pastille-genre">{{ icone('bulle') }}</span>
-    <span><strong>Une question</strong><span class="doux">Une info, une notion à réexpliquer : l'IA ou tes cours répondent dans un chat</span></span>
-  </a>
-  <a class="carte tuile tuile-campagne" href="/campagne/nouvelle">
-    <span class="pastille-genre">{{ icone('campagne') }}</span>
-    <span><strong>Une campagne</strong><span class="doux">Plusieurs matières d'un coup + un programme jour par jour (ex. semaine de BTS blanc)</span></span>
-  </a>
-</div>
-
-<p class="liens-rapides doux"><a href="/progression">Ta progression</a> · <a href="/cartes">Toutes tes flashcards</a></p>
 
 {% if campagnes %}
 <h2>Campagnes</h2>
@@ -139,19 +162,22 @@
 
 
 <style>
-  h2.premier { margin-top: 4px; }
+  .demande { border-color: var(--accent); padding: 16px; }
+  .demande > label { display: block; font: 600 1.15rem ui-serif, Georgia, serif; margin-bottom: 8px; }
+  .demande textarea { width: 100%; font-size: 1.05rem; border-radius: 14px; padding: 12px 14px; resize: vertical; min-height: 64px; }
+  .demande textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .exemples { display: flex; gap: 6px; overflow-x: auto; margin: 10px 0 0; padding-bottom: 2px; scrollbar-width: none; }
+  .exemples::-webkit-scrollbar { display: none; }
+  .exemples button { flex: none; min-height: 36px; padding: 4px 12px; border-radius: 999px; font-size: .88rem; font-weight: 500; color: var(--doux); background: var(--fond-doux); }
+  .pied-demande { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .pied-demande .doux { flex: 1; font-size: .88rem; line-height: 1.35; }
+  .pied-demande button { flex: none; padding-left: 22px; padding-right: 22px; }
+  .liens-rapides { margin: 0 0 8px; line-height: 1.9; }
+  @media (max-width: 640px) { .pied-demande { flex-direction: column; align-items: stretch; } .exemples { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; } }
   .prochaines li { align-items: center; } .prochaines form { margin: 0; }
   .compte-a-rebours { flex: none; min-width: 58px; text-align: center; padding: 3px 8px; border-radius: 999px; background: var(--fond-doux); border: 1px solid var(--bord); font-size: .82rem; font-weight: 600; }
   .compte-a-rebours.proche { background: var(--accent); border-color: var(--accent); color: #fff; }
   .programme-jour { margin-top: 12px; }
-  .lancer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
-  .tuile-question { --g: var(--g-quiz); }
-  .tuile { display: flex; gap: 12px; align-items: flex-start; margin: 0; text-decoration: none; color: var(--texte); transition: border-color .15s, transform .15s; }
-  .tuile:hover { border-color: var(--accent); }
-  .tuile:active { transform: scale(.98); }
-  .tuile > span:last-child { display: flex; flex-direction: column; gap: 2px; }
-  .tuile strong { font-size: 1.05rem; }
-  .tuile-campagne { --g: var(--g-examen); }
   .rangee { display: flex; align-items: center; gap: 12px; }
   .rangee .corps { flex: 1; min-width: 0; }
   .taches { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
@@ -160,10 +186,7 @@
   .defile { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x mandatory; }
   .campagne { margin: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; text-decoration: none; color: var(--texte); scroll-snap-align: start; }
   .campagne:hover { border-color: var(--accent); }
-  @media (max-width: 900px) and (min-width: 641px) { .lancer { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 640px) {
-    .lancer { grid-template-columns: 1fr; gap: 8px; }
-    .tuile { padding: 12px 16px; align-items: center; }
     .defile { grid-auto-columns: 78%; margin: 0 -12px; padding: 0 12px 4px; scroll-padding: 12px; }
   }
 </style>

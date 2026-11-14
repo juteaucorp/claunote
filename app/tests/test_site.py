@@ -150,7 +150,9 @@ def test_reviser_met_les_controles_proches_en_premier(client, monkeypatch):
          "revision_id": None, "revision_statut": None}] if genre == "evaluation" else [])
     r = client.get("/reviser")
     assert "À faire maintenant" in r.text and "Contrôle VLAN" in r.text and 'value="eval:1"' in r.text
-    assert r.text.index("À faire maintenant") < r.text.index("/reviser/nouvelle") < r.text.index("Déjà fait")
+    # La demande en une phrase d'abord (avec le contrôle en exemple), puis ce qui presse, puis l'historique
+    assert r.text.index("Dis-moi ce que tu veux réviser") < r.text.index("À faire maintenant") < r.text.index("Déjà fait")
+    assert "Une fiche pour le contrôle de Réseaux du" in r.text
 
 
 def test_demander_une_fiche_depuis_un_document(client):
@@ -1478,3 +1480,45 @@ def test_revision_complement_hors_cours(client, monkeypatch):
     assert 'class="encadre e-ia"' in r.text and "[IA]" not in r.text
     assert "Complété hors de tes cours" in client.get("/revision/7").text
     assert "Complété hors de tes cours" not in client.get("/revision/8").text
+
+
+def test_reviser_en_une_phrase(client, monkeypatch):
+    """Une phrase → ce qui a été compris (avec une question si la matière manque) → révision ou campagne."""
+    monkeypatch.setattr(db, "niveaux_matieres_comptes", lambda: [
+        {"niveau": "BTS1", "matiere": "Réseaux", "n": 3}, {"niveau": "BTS2", "matiere": "Réseaux", "n": 2},
+        {"niveau": "BTS2", "matiere": "CEJM", "n": 4}])
+    monkeypatch.setattr(db, "recherche", lambda q: [])
+    assert "Dis-moi ce que tu veux réviser" in client.get("/reviser").text
+    r = client.post("/reviser/demande", data={"texte": "une fiche de réseaux sur les vlan"})
+    assert "Voilà ce que j&#39;ai compris" in r.text or "Voilà ce que j'ai compris" in r.text
+    assert "Fiche en Réseaux (BTS2) sur « vlan »" in r.text and 'value="BTS2|Réseaux" checked' in r.text
+    assert 'name="genres" value="fiche" checked' in r.text and 'name="sujet" value="vlan"' in r.text
+    # Appel par la page (htmx) : seulement le bloc, sans l'en-tête du site
+    bloc = client.post("/reviser/demande", data={"texte": "quiz"}, headers={"HX-Request": "true"}).text
+    assert "<header>" not in bloc and "C'est pour quelle matière ?" in bloc and 'value="BTS2|CEJM"' in bloc
+    assert client.post("/reviser/demande", data={"texte": " "}, follow_redirects=False).headers["location"] == "/reviser"
+
+    appels = []
+    monkeypatch.setattr(db, "choisir_documents", lambda n, m, q="": [1] if n == "BTS2" else [2])
+    monkeypatch.setattr(db, "creer_revision", lambda *a, **k: appels.append((a, k)) or len(appels))
+    monkeypatch.setattr(db, "creer_campagne", lambda *a: appels.append(("campagne", a)) or 9)
+    base = {"texte": "une fiche de réseaux sur les vlan", "sujet": "vlan", "date_eval": ""}
+    r = client.post("/reviser/lancer", data={**base, "genres": ["fiche"], "matieres": ["BTS2|Réseaux"]}, follow_redirects=False)
+    assert r.headers["location"] == "/revision/1"
+    (genre, libelle, ids, date), options = appels[0]
+    assert (genre, libelle, ids, date) == ("fiche", "Réseaux : vlan", [1], None)
+    assert "une fiche de réseaux sur les vlan" in options["consigne"] and options["strict"] is False
+    # Deux supports, la même matière sur deux années : deux révisions sur tous ses cours
+    appels.clear()
+    r = client.post("/reviser/lancer", data={**base, "genres": ["fiche", "quiz"], "matieres": ["BTS1|Réseaux", "BTS2|Réseaux"]},
+                    follow_redirects=False)
+    assert r.headers["location"] == "/reviser#deja" and [a[0][0] for a in appels] == ["fiche", "quiz"]
+    assert appels[0][0][2] == [1, 2] and "plusieurs années (BTS1, BTS2)" in appels[0][1]["consigne"]
+    # Plusieurs matières : une campagne
+    appels.clear()
+    r = client.post("/reviser/lancer", data={**base, "sujet": "", "titre": "BTS blanc", "genres": ["fiche"],
+                                             "matieres": ["BTS2|Réseaux", "BTS2|CEJM"]}, follow_redirects=False)
+    assert r.headers["location"] == "/campagne/9" and appels[0][0] == "campagne" and appels[0][1][0] == "BTS blanc"
+    assert [a[0][1] for a in appels[1:]] == ["Réseaux", "CEJM"]
+    assert client.post("/reviser/lancer", data={**base, "genres": [], "matieres": ["BTS2|CEJM"]}).status_code == 400
+    assert client.post("/reviser/lancer", data={**base, "genres": ["plan"], "matieres": ["BTS2|CEJM"]}).status_code == 400

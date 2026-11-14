@@ -22,8 +22,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
+from starlette.datastructures import FormData
 
-from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, db, decoupage, formules,
+from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, db, decoupage, demande, formules,
                       importation, index, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, ressources, revision, schemas, securite, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
@@ -1335,6 +1336,91 @@ async def demander_revision(request: Request):
     return RedirectResponse(f"/revision/{rev_id}", status_code=303)
 
 
+DESCRIPTIONS_GENRES = {"fiche": "synthèse dense + questions", "quiz": "10 questions à choix", "cartes": "20 cartes à mémoriser",
+                       "examen": "sujet type examen + corrigé", "plan": "jour par jour jusqu'au contrôle"}
+
+
+@app.post("/reviser/demande", response_class=HTMLResponse)
+def lire_demande(request: Request, texte: str = Form("")):
+    """Réviser en une phrase : on montre ce qu'on a compris, avec une question là où ce n'est pas sûr."""
+    if not texte.strip():
+        return RedirectResponse("/reviser", status_code=303)
+    choix = db.niveaux_matieres_comptes()
+    aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    compris = demande.comprendre(texte[:1000], choix, db.evenements_a_venir("evaluation", 30), aujourdhui,
+                                 chercher=db.recherche)
+    cochees = {f"{m['niveau']}|{m['matiere']}" for m in compris["matieres"]}
+    niveaux = [n for n in reversed(NIVEAUX) if any(c["niveau"] == n for c in choix)]  # l'année en cours d'abord
+    # Devant : ce qui est coché, les matières possibles d'après les cours, et sans piste toute l'année en cours
+    devant = [c for c in choix if f"{c['niveau']}|{c['matiere']}" in cochees]
+    if compris["incertain"]["matieres"]:
+        for nom in compris["candidates"]:
+            annees = [c for c in choix if c["matiere"] == nom and c["niveau"] in NIVEAUX]
+            if annees:
+                devant.append(max(annees, key=lambda c: NIVEAUX.index(c["niveau"])))
+        if not devant and niveaux:
+            devant = [c for c in choix if c["niveau"] == niveaux[0]]
+    cles_devant = {f"{c['niveau']}|{c['matiere']}" for c in devant}
+    autres = [(n, [c for c in choix if c["niveau"] == n and f"{n}|{c['matiere']}" not in cles_devant]) for n in niveaux]
+    gabarit = "_demande.html" if request.headers.get("HX-Request") else "reviser_demande.html"
+    return templates.TemplateResponse(request, gabarit, {
+        "compris": compris, "phrase": demande.phrase(compris), "genres": revision.COURTS,
+        "descriptions": DESCRIPTIONS_GENRES, "cochees": cochees, "devant": devant,
+        "autres": [(n, liste) for n, liste in autres if liste], "aucun_cours": not choix,
+        "demain": aujourdhui + dt.timedelta(days=1)})
+
+
+@app.post("/reviser/lancer")
+async def lancer_demande(request: Request):
+    """Crée ce qui a été compris (et corrigé à l'écran) : une révision par support, ou une campagne
+    dès qu'il y a plusieurs matières."""
+    f = await request.form()
+    texte, sujet = (f.get("texte") or "").strip()[:1000], (f.get("sujet") or "").strip()
+    genres = [g for g in revision.GENRES if g in f.getlist("genres")]
+    choisies = [m for m in f.getlist("matieres") if "|" in m]
+    if not genres or not choisies:
+        raise HTTPException(400, "choisis au moins une matière et un support")
+    try:
+        eval_le = dt.date.fromisoformat(f.get("date_eval") or "") if f.get("date_eval") else None
+    except ValueError:
+        raise HTTPException(400, "date invalide")
+    aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    if "plan" in genres and (eval_le is None or eval_le <= aujourdhui):
+        raise HTTPException(400, "un plan de révision demande une date d'évaluation future")
+    consigne = f"Demande de l'élève, dans ses mots : « {texte} »" if texte else ""
+    choisies.sort(key=lambda nm: -_rang_niveau(nm.partition("|")[0]))  # l'année la plus récente d'abord
+    concepts = {matieres.concept(nm.partition("|")[2]) for nm in choisies}
+    if len(concepts) > 1:
+        # Plusieurs matières : une campagne (un jeu de supports par matière + un programme jour par jour)
+        fin = eval_le if eval_le and eval_le > aujourdhui else aujourdhui + dt.timedelta(days=7)
+        try:
+            fin = max(fin, dt.date.fromisoformat(f.get("fin") or ""))
+        except ValueError:
+            pass
+        champs = [("titre", (f.get("titre") or "").strip() or f"Révisions du {aujourdhui:%d/%m}"), ("consigne", consigne),
+                  ("debut", aujourdhui.isoformat()), ("fin", min(fin, aujourdhui + dt.timedelta(days=60)).isoformat())]
+        champs += [("genres", g) for g in genres if g != "plan"] or [("genres", "fiche")]
+        champs += [("matieres", nm) for nm in choisies] + [(f"sujet:{nm}", sujet) for nm in choisies]
+        return RedirectResponse(f"/campagne/{_creer_campagne(FormData(champs), [])}", status_code=303)
+    ids, niveaux = [], []
+    for nm in choisies:
+        niveau, _, matiere = nm.partition("|")
+        trouves = db.choisir_documents(niveau, matiere, sujet) or db.choisir_documents(niveau, matiere)
+        ids += [i for i in trouves if i not in ids]
+        niveaux.append(niveau)
+    if not ids:
+        raise HTTPException(400, "aucun cours classé pour ce choix")
+    matiere = choisies[0].partition("|")[2]
+    if len(niveaux) > 1:
+        consigne += (f"\n\nCe support couvre {matiere} sur plusieurs années ({', '.join(reversed(niveaux))}) : "
+                     "reprends les notions de chacune de ces années, pas seulement la plus récente.")
+    libelle = f"{matiere} : {sujet}" if sujet else f"{matiere} ({', '.join(niveaux)})"
+    crees = [db.creer_revision(g, libelle, ids, eval_le, consigne=consigne.strip(), strict=bool(f.get("strict")))
+             for g in genres]
+    db.demander_scan()
+    return RedirectResponse(f"/revision/{crees[0]}" if len(crees) == 1 else "/reviser#deja", status_code=303)
+
+
 def _sources(reperes: dict) -> dict[int, str]:
     return {d["id"]: d["titre"] or d["nom"] for d in db.documents(sorted(set((reperes or {}).values())))}
 
@@ -1476,6 +1562,11 @@ def nouvelle_campagne(request: Request):
 async def creer_campagne(request: Request):
     """Une révision par matière et par support coché, plus un programme jour par jour."""
     f = await request.form()
+    return RedirectResponse(f"/campagne/{_creer_campagne(f, await _pieces(f))}", status_code=303)
+
+
+def _creer_campagne(f, pieces: list[dict]) -> int:
+    """Crée la campagne décrite par le formulaire `f` (page Campagne, ou demande en une phrase)."""
     titre = (f.get("titre") or "").strip() or "Campagne de révision"
     consigne = (f.get("consigne") or "").strip()
     try:
@@ -1504,7 +1595,6 @@ async def creer_campagne(request: Request):
         if sujet and sujet not in g["sujets"]:
             g["sujets"].append(sujet)
     epreuves = _epreuves(f, groupes)
-    pieces = await _pieces(f)
     campagne_id = db.creer_campagne(titre, consigne, debut, fin, epreuves)
     if pieces:
         db.ajouter_pieces(pieces, campagne_id=campagne_id)
@@ -1521,7 +1611,7 @@ async def creer_campagne(request: Request):
             db.creer_revision(genre, f"{g['matiere']} : {sujet}" if sujet else g["matiere"], g["ids"],
                               date_epreuve if genre == "examen" else None, consigne=consigne_rev, campagne_id=campagne_id)
     db.demander_scan()
-    return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
+    return campagne_id
 
 
 @app.get("/campagne/{campagne_id}", response_class=HTMLResponse)
