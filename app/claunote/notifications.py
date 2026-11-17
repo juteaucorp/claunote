@@ -107,11 +107,19 @@ def envoyer(abo: dict, charge: dict) -> str | None:
         return str(e)[:300]
 
 
-def envoyer_a_tous(titre: str, corps: str, url: str, tag: str = "") -> tuple[int, list[str]]:
-    """Envoie sur chaque appareil abonné ; oublie ceux qui ne répondent plus."""
+ICI = object()
+
+
+def envoyer_a_tous(titre: str, corps: str, url: str, tag: str = "", compte_id=ICI) -> tuple[int, list[str]]:
+    """Envoie sur chaque appareil abonné du compte ; oublie ceux qui ne répondent plus.
+
+    `compte_id` : None pour les admins (alertes de sécurité, Pronote) ; par défaut, le compte de la requête
+    (ou les admins pour le worker, qui ne travaille pour personne en particulier)."""
+    if compte_id is ICI:
+        compte_id = db.compte_actuel()
     charge = {"titre": titre, "corps": corps, "url": url, "tag": tag, "badge": badge()}
     envoyes, erreurs = 0, []
-    for abo in db.abonnements():
+    for abo in db.abonnements_de(compte_id):
         erreur = envoyer(abo, charge)
         if erreur == "expire":
             db.retirer_abonnement(abo["endpoint"])
@@ -127,18 +135,25 @@ def vider_file(maintenant: dt.datetime):
     p = preferences()
     if en_silence(maintenant, p):
         return
-    file = db.reserver_notifications()
+    par_compte: dict = {}
+    for n in db.reserver_notifications():   # chaque compte reçoit les siennes (None : les admins)
+        par_compte.setdefault(n.get("compte_id"), []).append(n)
+    for compte_id, file in par_compte.items():
+        _vider(file, compte_id)
+
+
+def _vider(file: list[dict], compte_id: int | None):
     if len(file) > MAX_PAR_TOUR:  # une rafale (synchro, import…) = une seule notification résumée
         envoyes, erreurs = envoyer_a_tous(
             f"{len(file)} nouveautés sur Claunote", " · ".join(n["titre"] for n in file)[:300], "/notifications",
-            "resume")
+            "resume", compte_id=compte_id)
         statut, erreur = ("envoye", None) if envoyes or not erreurs else ("erreur", " ; ".join(erreurs))
         for n in file:
             db.maj_notification(n["id"], statut, erreur)
         log(f"{len(file)} notifications regroupées en une : {statut}")
         return
     for n in file:
-        envoyes, erreurs = envoyer_a_tous(n["titre"], n["corps"], n["url"], n["cle"])
+        envoyes, erreurs = envoyer_a_tous(n["titre"], n["corps"], n["url"], n["cle"], compte_id=compte_id)
         if envoyes or not erreurs:
             db.maj_notification(n["id"], "envoye")
             log(f"envoyée : {n['titre']}")

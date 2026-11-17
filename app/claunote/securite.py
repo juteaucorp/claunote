@@ -67,8 +67,19 @@ TYPES = {
     "erreur_serveur": ("info", "Erreur du serveur"),
     "deblocage": ("info", "Blocages levés"),
     "mise_a_jour": ("info", "Mise à jour demandée"),
+    "invitation": ("attention", "Jeton d'invitation créé"),
+    "invitation_annulee": ("info", "Jeton d'invitation annulé"),
+    "invitation_echec": ("attention", "Jeton d'invitation refusé"),
+    "compte_cree": ("alerte", "Nouveau compte créé"),
+    "compte_modifie": ("attention", "Compte modifié (droits, rôle, accès)"),
+    "compte_deconnecte": ("info", "Compte déconnecté de ses appareils"),
+    "compte_supprime": ("alerte", "Compte supprimé"),
+    "lien_mot_de_passe": ("attention", "Lien de nouveau mot de passe créé"),
+    "tout_voir": ("attention", "Admin : « Tout voir »"),
+    "conditions": ("info", "Conditions d'utilisation acceptées"),
 }
-TOUJOURS = {"appareil_ajoute", "cle_ajoutee", "mot_de_passe", "deconnexion_partout", "connexion_ok"}
+TOUJOURS = {"appareil_ajoute", "cle_ajoutee", "mot_de_passe", "deconnexion_partout", "connexion_ok", "compte_cree",
+            "compte_supprime"}
 
 _verrou_etat = threading.Lock()
 _echecs: collections.deque = collections.deque()                  # (instant, ip, par Internet)
@@ -147,7 +158,8 @@ def alerter(type: str, titre: str, corps: str, evenement: int | None = None) -> 
 
     def envoyer():
         try:
-            envoyes, erreurs = notifications.envoyer_a_tous(f"🔒 {titre}", corps[:300], "/securite", f"securite-{type}")
+            envoyes, erreurs = notifications.envoyer_a_tous(f"🔒 {titre}", corps[:300], "/securite", f"securite-{type}",
+                                                             compte_id=None)
             if notif:
                 db.maj_notification(notif, "envoye" if envoyes or not erreurs else "erreur",
                                     "; ".join(erreurs) or None)

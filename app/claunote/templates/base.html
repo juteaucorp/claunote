@@ -242,6 +242,8 @@
   .connexion { max-width: 380px; margin: 8vh auto 0; text-align: center; }
   .connexion img { width: 72px; height: 72px; border-radius: 18px; border: 1px solid var(--bord); background: #fff; }
   .connexion form { text-align: left; }
+  .tout-voir { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+  .tout-voir button { margin: 0; }
   .connexion input { width: 100%; }
   .connexion button { width: 100%; margin-top: 6px; }
   .flashcard { min-height: 200px; display: flex; flex-direction: column; justify-content: center; text-align: center; font-size: 1.2rem; }
@@ -284,48 +286,51 @@
 {% from "_icones.html" import icone %}
 {% set chemin = request.url.path %}
 {% if not sans_nav %}
-{% set cartes_dues = nb_cartes_a_revoir() %}
-{% set evals = nb_evaluations_proches() %}
-{% set a_importer = nb_import_a_confirmer() %}
+{% set cartes_dues = nb_cartes_a_revoir() if peut('reviser') else 0 %}
+{% set evals = nb_evaluations_proches() if peut('agenda') else 0 %}
+{% set a_importer = nb_import_a_confirmer() if est_admin() else 0 %}
 {% set attente = nb_a_verifier() + a_importer %}
 {% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
-{% set en_pause = analyses_en_pause() %}
+{% set admin = est_admin() %}
+{% set en_pause = analyses_en_pause() if admin else False %}
 {% macro liens_plus() %}
-      {% set actus = nb_actualites() %}
-      <a href="/actualites">{{ icone('actualites') }}<span>Actualités<small>veille, flux RSS, sujets suivis</small></span>{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>
-      <a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>
-      <a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>
-      <a href="/analyses">{{ icone('etat') }}<span>Activité<small>analyses, état du service</small></span>{% if en_pause %}<span class="badge">pause</span>{% endif %}</a>
-      {% set alertes_secu = nb_alertes_securite() %}
-      <a href="{{ '/securite' if alertes_secu else '/compte' }}">{{ icone('compte') }}<span>Réglages<small>compte, sécurité, notifications, mise à jour</small></span>{% if alertes_secu %}<span class="badge" title="Alertes de sécurité">{{ alertes_secu }}</span>{% elif nb_mises_a_jour() %}<span class="badge">{{ nb_mises_a_jour() }}</span>{% endif %}</a>
+      {% if peut('actualites') %}{% set actus = nb_actualites() %}
+      <a href="/actualites">{{ icone('actualites') }}<span>Actualités<small>veille, flux RSS, sujets suivis</small></span>{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
+      {% if peut('deposer') %}<a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer and admin %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>{% endif %}
+      {% if peut('organiser') %}<a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>{% endif %}
+      {% if admin %}<a href="/analyses">{{ icone('etat') }}<span>Activité<small>analyses, état du service</small></span>{% if en_pause %}<span class="badge">pause</span>{% endif %}</a>{% endif %}
+      {% set alertes_secu = nb_alertes_securite() if admin else 0 %}
+      <a href="{{ '/securite' if alertes_secu else '/compte' }}">{{ icone('compte') }}<span>Réglages<small>{% if admin %}compte, comptes invités, sécurité, mise à jour{% else %}ton compte, notifications, tes données{% endif %}</small></span>{% if alertes_secu %}<span class="badge" title="Alertes de sécurité">{{ alertes_secu }}</span>{% elif admin and nb_mises_a_jour() %}<span class="badge">{{ nb_mises_a_jour() }}</span>{% endif %}</a>
+      {% if admin %}<form method="post" action="/comptes/tout-voir"><input type="hidden" name="actif" value="{{ '' if moi().tout_voir else '1' }}"><input type="hidden" name="suite" value="{{ chemin }}">
+        <button title="Voir et utiliser les données de tous les comptes">{{ icone('cours') }}<span>{% if moi().tout_voir %}Revenir à mes données<small>« Tout voir » est actif</small>{% else %}Tout voir<small>les données de tous les comptes</small>{% endif %}</span></button></form>{% endif %}
 {% endmacro %}
 <header>
   <div class="barre">
     <a class="marque" href="/"><img src="/static/logo.svg" alt="">Claunote</a>
     <nav class="haut" aria-label="Menu">
       <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">Aujourd'hui</a>
-      <a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">Cours</a>
-      <a href="/reviser" id="maj-h-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
-      <a href="/agenda" id="maj-h-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
+      {% if peut('bibliotheque') %}<a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">Cours</a>{% endif %}
+      {% if peut('reviser') %}<a href="/reviser" id="maj-h-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
+      {% if peut('agenda') %}<a href="/agenda" id="maj-h-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
     </nav>
     <div class="outils">
       <form action="/recherche" class="recherche-entete"><input name="q" type="search" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
       <a href="/recherche" class="bouton-icone loupe" title="Rechercher" aria-label="Rechercher">{{ icone('recherche', 20) }}</a>
-      <a href="/deposer" class="bouton-icone {{ 'actif' if chemin.startswith('/deposer') }}" title="Déposer des scans" aria-label="Déposer">{{ icone('deposer', 20) }}</a>
+      {% if peut('deposer') %}<a href="/deposer" class="bouton-icone {{ 'actif' if chemin.startswith('/deposer') }}" title="Déposer des scans" aria-label="Déposer">{{ icone('deposer', 20) }}</a>{% endif %}
       <details class="menu-plus" data-menu>
         <summary id="maj-h-plus" class="maj bouton-icone {{ 'actif' if rubrique == 'plus' }}" title="Plus : à vérifier, organiser, compte…" aria-label="Plus">{{ icone('plus', 20) }}{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
         <div class="feuille-haut">{{ liens_plus() }}</div>
       </details>
     </div>
     <a href="/recherche" class="icone-entete" aria-label="Rechercher">{{ icone('recherche') }}</a>
-    <a href="/deposer" class="icone-entete" aria-label="Déposer un scan">{{ icone('deposer') }}</a>
+    {% if peut('deposer') %}<a href="/deposer" class="icone-entete" aria-label="Déposer un scan">{{ icone('deposer') }}</a>{% endif %}
   </div>
 </header>
 <nav class="onglets verre" aria-label="Onglets">
   <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">{{ icone('accueil') }}Aujourd'hui</a>
-  <a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}Cours</a>
-  <a href="/reviser" id="maj-o-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>
-  <a href="/agenda" id="maj-o-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>
+  {% if peut('bibliotheque') %}<a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}Cours</a>{% endif %}
+  {% if peut('reviser') %}<a href="/reviser" id="maj-o-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
+  {% if peut('agenda') %}<a href="/agenda" id="maj-o-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
   <details id="plus" data-menu>
     <summary id="maj-o-plus" class="maj {{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
     <div class="feuille verre">{{ liens_plus() }}</div>
@@ -336,6 +341,10 @@
   {% if not sans_nav %}<p id="retour-scan" class="carte accent"></p>
   {% set panne = bandeau_service() if not chemin.startswith('/etat') else None %}
   <div id="maj-bandeau" class="maj">{% if panne %}<div class="carte bandeau"><a href="/etat">{{ icone('etat', 20) }}<span><strong>{{ panne[0] }}</strong>{% if panne[1] %}<br><span class="doux">{{ panne[1] }}</span>{% endif %}</span></a>{% if panne[2] %}<button hx-post="/claude/reessayer" hx-target="#retour-scan" hx-swap="innerHTML" title="Un tout petit appel à Claude : s'il répond, la file repart. Aucun crédit acheté.">Réessayer</button>{% endif %}</div>{% endif %}</div>
+  {% if moi() and moi().tout_voir and est_admin() %}<form method="post" action="/comptes/tout-voir" class="carte accent tout-voir">
+    <input type="hidden" name="suite" value="{{ chemin }}"><span>👁 <strong>Tout voir</strong> : tu vois et modifies les données <strong>de tous les comptes</strong>.</span>
+    <button>Revenir à mes données</button></form>{% endif %}
+  {% set dq = disque_admin() %}{% if dq and dq.niveau in ('attention', 'critique') and not chemin.startswith('/etat') %}<p class="carte alerte">💽 {{ dq.phrase }} <a href="/etat">Détails</a></p>{% endif %}
   {% if mdp_par_defaut() and not chemin.startswith('/compte') %}<p class="carte accent">⚠️ Tu utilises le mot de passe par défaut
     (<code>admin</code> / <code>claunote</code>). <a href="/compte">Change-le maintenant</a>.</p>{% endif %}
   {% endif %}

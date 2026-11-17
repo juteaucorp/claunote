@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block titre %}Conditions d'utilisation{% endblock %}
+{% block contenu %}
+{% if compte and not sans_nav %}{% from "_onglets.html" import onglets %}{{ onglets('reglages', 'conditions') }}{% endif %}
+<article class="juridique">
+<h1>Conditions d'utilisation et mentions légales</h1>
+<p class="doux">Version {{ version }}. En résumé : <strong>projet personnel, gratuit, non commercial, fourni sans
+  garantie, à utiliser à tes risques</strong>, avec des services externes qui ont leurs propres règles.</p>
+
+{% if a_accepter %}
+<form method="post" action="/conditions" class="carte accent">
+  <p>{% if compte.conditions_version %}Les conditions ont changé depuis ta dernière acceptation (version {{ compte.conditions_version }}).
+    {% else %}Pour utiliser Claunote, lis et accepte ces conditions.{% endif %}</p>
+  <label class="case"><input type="checkbox" name="accepte" value="1" required>
+    <span>J'ai lu et j'accepte les conditions d'utilisation (version {{ version }}) et la page
+      <a href="/tes-donnees">Tes données</a>.</span></label>
+  <div class="actions"><button class="principal">J'accepte</button></div>
+  <p class="doux">Si tu refuses, n'utilise pas le site et demande à l'admin de supprimer ton compte.
+    <form method="post" action="/deconnexion" style="display:inline"><button class="lien-danger">Me déconnecter</button></form></p>
+</form>
+{% endif %}
+
+<h2>1. Ce qu'est Claunote</h2>
+<p>Claunote est un <strong>projet personnel</strong>, développé par un particulier pour organiser ses propres cours et
+  réviser. Il n'est porté par <strong>aucune entreprise ni association</strong>. Chaque installation (« instance ») est
+  hébergée et administrée par une personne privée, <strong>l'admin de l'instance</strong>, sur sa propre machine.
+  L'accès se fait <strong>uniquement sur invitation</strong> de cet admin.</p>
+
+<h2>2. Gratuit, non commercial, jamais payant</h2>
+<p>Claunote est <strong>gratuit</strong>. Il n'est pas, et n'est pas destiné à être, <strong>vendu, loué ou proposé en
+  abonnement</strong>, ni financé par la publicité. Personne ne peut te demander d'argent ou une contrepartie pour y
+  accéder : si on te le demande, ce n'est pas l'usage prévu. Il n'y a donc <strong>ni contrat de vente ni prestation
+  de service</strong> entre toi et le créateur ou l'admin : seulement une mise à disposition à titre gracieux et
+  amical, que l'admin peut arrêter à tout moment.</p>
+
+<h2>3. Services externes</h2>
+<p>Pour fonctionner, une instance peut utiliser des services tiers, <strong>indépendants de Claunote</strong>, chacun
+  soumis à ses propres conditions et à sa propre politique de confidentialité :</p>
+<ul>
+  <li><strong>Claude</strong> (Anthropic PBC, États-Unis) : lecture des scans, fiches, quiz, questions, seulement si ton
+    compte a le droit « Forfait Claude » ;</li>
+  <li><strong>kDrive</strong> (Infomaniak Network SA, Suisse) : stockage des fichiers ;</li>
+  <li><strong>Cloudflare</strong> (Cloudflare, Inc., États-Unis) : accès par Internet, si l'admin l'a activé ;</li>
+  <li><strong>Pronote</strong> (Index Éducation, France) : agenda et notes, si l'admin l'a branché ;</li>
+  <li>sites d'actualités et flux RSS publics, GitHub (mises à jour du logiciel).</li>
+</ul>
+<p>Claunote n'est <strong>ni affilié ni approuvé</strong> par ces services. Le créateur et l'admin n'ont aucun contrôle
+  sur leur fonctionnement, leur disponibilité, leurs changements ou ce qu'ils font des données qu'ils reçoivent, et
+  n'en sont pas responsables.</p>
+
+<h2>4. Intelligence artificielle</h2>
+<p>Les classements, transcriptions, fiches, quiz, flashcards et réponses sont <strong>produits automatiquement</strong>
+  et peuvent être <strong>faux, incomplets ou inventés</strong>. Ils ne remplacent ni tes cours, ni tes professeurs, ni
+  ton travail. <strong>Vérifie toujours</strong> ce que tu apprends. Aucun résultat scolaire n'est garanti.</p>
+
+<h2>5. Fourni « en l'état », sans garantie</h2>
+<p>Claunote est fourni <strong>« en l'état »</strong>, sans aucune garantie : ni de disponibilité, ni d'absence
+  d'erreurs ou de failles, ni de conservation de tes données. L'instance peut être arrêtée, modifiée, réinitialisée ou
+  supprimée <strong>à tout moment, sans préavis</strong>. <strong>Garde toi-même une copie</strong> de ce qui compte
+  pour toi.</p>
+
+<h2>6. Responsabilité</h2>
+<p>Tu utilises Claunote <strong>à tes propres risques</strong>. Dans toute la mesure permise par la loi, ni le créateur
+  du logiciel, ni l'admin qui héberge l'instance ne peuvent être tenus responsables des dommages liés à son utilisation
+  ou à son indisponibilité : perte ou fuite de données, erreur de l'IA, mauvaise note, panne ou décision d'un service
+  externe, accès non autorisé malgré les protections mises en place.</p>
+<p class="doux">Cette limitation ne s'applique pas en cas de faute lourde ou intentionnelle, ni aux droits que la loi
+  te garantit et qu'aucune clause ne peut écarter, notamment tes droits sur tes données personnelles
+  (<a href="/tes-donnees">Tes données</a>).</p>
+
+<h2>7. Ce que tu t'engages à faire</h2>
+<ul>
+  <li>Garder ton mot de passe pour toi et ne pas prêter ton compte.</li>
+  <li>Ne déposer que des documents que tu as le droit d'utiliser (tes notes, les supports de tes cours pour ton usage
+    personnel), rien d'illégal, et pas de données personnelles d'autres personnes sans leur accord.</li>
+  <li>Ne pas chercher à contourner les droits, accéder aux données des autres comptes, tester ou attaquer le site.</li>
+  <li>Utiliser Claude et les autres services dans le respect de leurs conditions.</li>
+</ul>
+<p>En cas d'abus, l'admin peut suspendre ou supprimer ton compte.</p>
+
+<h2>8. Mineurs</h2>
+<p>Si tu as moins de 15 ans, l'accord d'un de tes parents (ou de la personne qui exerce l'autorité parentale) est
+  nécessaire pour créer un compte.</p>
+
+<h2>9. Changements</h2>
+<p>Ces conditions peuvent évoluer. À chaque nouvelle version, ton accord est redemandé à ta connexion ; la version et
+  la date de ton acceptation sont enregistrées. Si tu refuses, tu peux demander la suppression de ton compte.</p>
+
+<h2>10. Droit applicable</h2>
+<p>Ces conditions sont soumises au <strong>droit français</strong>. En cas de désaccord, on cherche d'abord une
+  solution à l'amiable avec l'admin de l'instance.</p>
+
+<h2>Mentions légales</h2>
+<ul>
+  <li><strong>Éditeur</strong> : particulier, projet personnel non professionnel (art. 6 III-2 de la loi n° 2004-575
+    du 21 juin 2004 pour la confiance dans l'économie numérique).{% if contact %} Contact de l'admin de cette instance :
+    <strong>{{ contact }}</strong>.{% else %} Contact : l'admin de cette instance, qui t'a invité.{% endif %}</li>
+  <li><strong>Hébergement</strong> : sur la machine personnelle de l'admin de l'instance ; fichiers chez Infomaniak
+    Network SA (Genève, Suisse) ; accès par Internet éventuel via Cloudflare, Inc. (San Francisco, États-Unis).</li>
+  <li><strong>Code</strong> : logiciel Claunote, publié par son créateur. Marques citées (Claude, Anthropic, Infomaniak,
+    kDrive, Cloudflare, Pronote) : propriété de leurs titulaires respectifs.</li>
+</ul>
+<p class="carte doux">Ces pages informent et fixent les règles d'usage : elles <strong>ne constituent pas un conseil juridique</strong>, et une clause ne supprime pas les obligations prévues par la loi.</p>
+</article>
+<style>
+  .juridique { max-width: 760px; }
+  .juridique h2 { margin-top: 24px; font-size: 1.1rem; }
+  .juridique .case { display: flex; gap: 8px; align-items: flex-start; }
+  .juridique .case input { width: auto; flex: none; margin-top: 4px; }
+</style>
+{% endblock %}

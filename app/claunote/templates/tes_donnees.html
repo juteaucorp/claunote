@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block titre %}Tes données{% endblock %}
+{% block contenu %}
+{% if compte and not sans_nav %}{% from "_onglets.html" import onglets %}{{ onglets('reglages', 'donnees') }}{% endif %}
+<article class="juridique">
+<h1>Tes données</h1>
+<p class="doux">Ce que Claunote garde sur toi, où, pour combien de temps, et qui peut le voir. Version {{ version }}.</p>
+
+<div class="carte schema" aria-label="Où vont tes données">
+<pre>
+ toi ──► site Claunote (machine de l'admin)
+          ├── base de données : compte, transcriptions, fiches, cartes, questions
+          ├── kDrive (Infomaniak, Suisse) : tes fichiers, dans Etudes/comptes/&lt;ton identifiant&gt;/
+          ├── modèles locaux (sur la machine) : rien ne sort
+          └── Claude (Anthropic, États-Unis) : seulement avec le droit « Forfait Claude »
+</pre>
+</div>
+
+<h2>Qui est responsable</h2>
+<p><strong>L'admin de l'instance</strong>, la personne qui t'a invité et qui héberge le site sur sa machine{% if contact %}
+  (<strong>{{ contact }}</strong>){% endif %}. C'est à lui que tu t'adresses pour toute question ou demande.</p>
+
+<h2>Ce qui est gardé</h2>
+<ul>
+  <li><strong>Ton compte</strong> : identifiant, prénom si tu l'as donné, mot de passe <em>haché</em> (jamais en clair),
+    droits, dates de création et de dernière connexion, version et date des conditions acceptées.</li>
+  <li><strong>Tes documents</strong> : les fichiers que tu déposes, leur transcription, leur classement.</li>
+  <li><strong>Ton travail</strong> : fiches, quiz, flashcards et tes réponses, campagnes, questions posées et réponses.</li>
+  <li><strong>Tes appareils</strong> : clés Face ID (partie publique seulement), abonnements aux notifications.</li>
+  <li><strong>Journal de sécurité</strong> : connexions et refus, avec adresse IP, pays, navigateur (180 jours).</li>
+</ul>
+<p>Pas de publicité, pas de revente, pas de profilage commercial, <strong>aucun traceur</strong> : seuls des cookies
+  nécessaires (session, appareil approuvé), sans bandeau à accepter.</p>
+
+<h2>Pourquoi, et sur quelle base</h2>
+<ul>
+  <li>T'aider à organiser tes cours et à réviser : <strong>ton consentement</strong>, donné à la création du compte
+    (RGPD, art. 6.1.a), que tu peux retirer à tout moment.</li>
+  <li>Protéger le site (journal de sécurité, blocages) : <strong>intérêt légitime</strong> (art. 6.1.f).</li>
+</ul>
+
+<h2>Qui peut voir tes données</h2>
+<ul>
+  <li><strong>Les autres comptes : non.</strong> Chaque compte ne voit que ses propres cours, fiches, cartes et
+    questions ; la base de données elle-même l'impose.</li>
+  <li><strong>L'admin : oui.</strong> Avec le bouton « Tout voir », un admin peut voir et utiliser les données de tous
+    les comptes, pour aider ou dépanner ; et comme il héberge la machine et le kDrive, il y a techniquement accès. Chaque
+    activation de « Tout voir » est notée dans le journal de sécurité.</li>
+  <li><strong>Les services externes</strong>, pour ce dont ils ont besoin : Infomaniak stocke tes fichiers ; Anthropic
+    reçoit le contenu de tes documents et de tes questions <strong>seulement si ton compte a le droit « Forfait
+    Claude »</strong> (sinon tout est traité sur la machine) ; Cloudflare voit passer le trafic si tu te connectes par
+    Internet. Anthropic et Cloudflare sont aux États-Unis : les transferts suivent leurs propres garanties
+    contractuelles.</li>
+</ul>
+{% if compte %}<p class="carte accent">Ton compte <strong>@{{ compte.identifiant }}</strong> :
+  {% if compte.role == 'admin' %}admin (tous les droits).{% elif 'claude' in (compte.droits or []) %}utilise le forfait
+  Claude de l'admin : tes documents peuvent être envoyés à Anthropic.{% else %}n'utilise pas Claude : tes documents sont
+  lus sur la machine de l'admin, rien n'est envoyé à Anthropic.{% endif %}</p>{% endif %}
+
+<h2>Combien de temps</h2>
+<ul>
+  <li>Tant que ton compte existe. À sa <strong>suppression</strong>, tout ce qui est sur le site part avec lui
+    (documents, fiches, cartes, questions).</li>
+  <li>Tes fichiers dans kDrive (Etudes/comptes/&lt;ton identifiant&gt;/) restent jusqu'à ce que l'admin les efface :
+    demande-le-lui en même temps.</li>
+  <li>Journal de sécurité : 180 jours. Jetons d'invitation : 15 minutes, puis gardés 30 jours comme trace.</li>
+</ul>
+
+<h2>Tes droits</h2>
+<p>Tu peux demander à l'admin d'<strong>accéder</strong> à tes données, de les <strong>corriger</strong>, de les
+  <strong>effacer</strong>, d'en recevoir une <strong>copie</strong> (portabilité), de <strong>limiter</strong> ou de
+  t'<strong>opposer</strong> à leur traitement, et retirer ton consentement. Si tu n'obtiens pas de réponse, tu peux
+  saisir la <strong>CNIL</strong> (<a href="https://www.cnil.fr/fr/plaintes" rel="noopener noreferrer" target="_blank">cnil.fr</a>).</p>
+
+<p class="carte doux">Une instance de Claunote est un projet privé entre particuliers ; le RGPD peut s'appliquer dès
+  que des personnes extérieures au foyer de l'admin y ont un compte, et cette page en suit les principes dans tous les
+  cas. Elle
+  <strong>ne constitue pas un conseil juridique</strong>. Voir aussi les <a href="/conditions">conditions d'utilisation</a>.</p>
+</article>
+<style>
+  .juridique { max-width: 760px; }
+  .juridique h2 { margin-top: 24px; font-size: 1.1rem; }
+  .schema pre { margin: 0; overflow-x: auto; font-size: .85rem; line-height: 1.5; }
+</style>
+{% endblock %}

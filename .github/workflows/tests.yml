@@ -8,6 +8,16 @@ permissions:
 jobs:
   app:
     runs-on: ubuntu-latest
+    # Vraie base jetable : la séparation des données par compte (row-level security) y est testée
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: {POSTGRES_USER: claunote, POSTGRES_PASSWORD: test, POSTGRES_DB: claunote_test}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U claunote" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CLAUNOTE_TEST_DB: postgresql://claunote:test@localhost:5432/claunote_test
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

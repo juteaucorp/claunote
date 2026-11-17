@@ -26,6 +26,7 @@ propres cours. Il récupère aussi tes évaluations sur Pronote et te dit quoi r
 - [Installation](#installation)
 - [Le fichier .env](#le-fichier-env)
 - [Ouvrir le site : VPN ou Internet](#ouvrir-le-site--vpn-ou-internet)
+- [Plusieurs comptes](#plusieurs-comptes)
 - [Mettre à jour](#mettre-à-jour)
 - [Réglages avancés](#réglages-avancés)
 - [Vie privée et coûts](#vie-privée-et-coûts)
@@ -203,6 +204,27 @@ passe Pronote n'est jamais stocké** (seul un jeton de reconnexion l'est).
 - **Cloudflare Tunnel** : il faut un domaine géré par Cloudflare (compte gratuit). La procédure complète
   (tunnel, route `HTTP web:8000`, règle « France seulement », approbation des appareils, dépannage) est ici :
   **[docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)**.
+
+## Plusieurs comptes
+
+```
+ admin ──Réglages → Comptes → « Inviter »──► jeton (15 min, un seul usage)
+                                               └─► /invitation : la personne choisit identifiant + mot de passe
+                                                   et accepte les conditions d'utilisation
+ chaque compte ──► ses propres cours, fiches, cartes, questions (la base le garantit : row-level security)
+ admin ──« Tout voir »──► les données de tous les comptes (bandeau visible, noté dans Sécurité)
+```
+
+- **Droits par fonctionnalité** : Bibliothèque, Déposer, Organiser, Réviser, Agenda Pronote, Actualités, et
+  **« Forfait Claude de l'admin »**. Sans ce dernier, le compte ne consomme jamais ton abonnement : ses scans sont
+  lus par les modèles locaux, et les fiches ou quiz (qui demandent Claude) lui sont refusés.
+- L'admin désactive, déconnecte, limite dans le temps ou supprime un compte (avec ses données sur le site ; ses
+  fichiers restent dans kDrive, sous `Etudes/comptes/<identifiant>/`). Un mot de passe oublié se refait avec un
+  lien de 15 min : l'admin ne connaît jamais le mot de passe.
+- Pages publiques **Conditions d'utilisation** (`/conditions`) et **Tes données** (`/tes-donnees`, RGPD) :
+  acceptées à la création du compte et redemandées quand elles changent. Elles ne sont pas un conseil juridique.
+- Installation d'avant les comptes : rien à faire. Ton identifiant et ton mot de passe deviennent le compte admin,
+  tes données restent les tiennes, et tu n'es pas déconnecté.
 
 ## Mettre à jour
 

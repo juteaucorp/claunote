@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block titre %}Accès réservé{% endblock %}
+{% block contenu %}
+<h1>Accès réservé</h1>
+<div class="carte" style="max-width: 560px">
+  {% if droit %}
+  <p>Ton compte n'a pas le droit <strong>« {{ droit[0] }} »</strong> ({{ droit[1]|lower }}).</p>
+  {% else %}
+  <p>Cette page est <strong>réservée à l'admin</strong> de l'environnement.</p>
+  {% endif %}
+  <p class="doux">Demande-le à l'admin qui t'a invité : il règle les droits de chaque compte dans Réglages → Comptes.</p>
+  <p><a href="/">Retour à l'accueil</a></p>
+</div>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block titre %}{% if inv and inv.genre == 'mot_de_passe' %}Nouveau mot de passe{% else %}Créer ton compte{% endif %}{% endblock %}
+{% block contenu %}
+<div class="connexion invitation">
+  <img src="/static/logo.svg" alt="">
+  <h1>{% if inv and inv.genre == 'mot_de_passe' %}Nouveau mot de passe{% else %}Créer ton compte{% endif %}</h1>
+  {% if erreur %}<p class="carte alerte">{{ erreur }}</p>{% endif %}
+  {% if not inv %}
+  <form method="get" action="/invitation" class="carte">
+    <p>L'admin de cet environnement t'a donné un <strong>jeton</strong> (valable 15 min, une seule fois).</p>
+    <p><label>Jeton<br><input name="jeton" autocomplete="off" autocapitalize="characters" required autofocus
+      placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"></label></p>
+    <button class="principal">Continuer</button>
+  </form>
+  {% elif inv.genre == 'mot_de_passe' %}
+  <form method="post" action="/invitation" class="carte">
+    <input type="hidden" name="jeton" value="{{ jeton }}">
+    <p>Compte <strong>@{{ cible.identifiant if cible else '?' }}</strong> : choisis ton nouveau mot de passe. Tes autres appareils seront déconnectés.</p>
+    <p><label>Nouveau mot de passe ({{ mdp_min }} caractères au moins)<br><input type="password" name="mot_de_passe" minlength="{{ mdp_min }}" autocomplete="new-password" required></label></p>
+    <p><label>Encore une fois<br><input type="password" name="confirmation" minlength="{{ mdp_min }}" autocomplete="new-password" required></label></p>
+    <button class="principal">Changer le mot de passe</button>
+  </form>
+  {% else %}
+  <form method="post" action="/invitation" class="carte">
+    <input type="hidden" name="jeton" value="{{ jeton }}">
+    <p class="doux">Jeton valable jusqu'à {{ inv.expire_le|paris }}. Tes cours, fiches et cartes ne seront visibles que de
+      toi (et de l'admin, voir <a href="/tes-donnees" target="_blank">Tes données</a>).</p>
+    <p><label>Identifiant (pour te connecter)<br><input name="identifiant" value="{{ identifiant or '' }}" autocomplete="username"
+      autocapitalize="none" pattern="[a-z0-9][a-z0-9._\-]{1,31}" maxlength="32" required autofocus></label>
+      <br><span class="doux">minuscules, chiffres, point, tiret</span></p>
+    <p><label>Ton prénom (facultatif)<br><input name="nom" value="{{ nom or '' }}" maxlength="60" autocomplete="given-name"></label></p>
+    <p><label>Mot de passe ({{ mdp_min }} caractères au moins)<br><input type="password" name="mot_de_passe" minlength="{{ mdp_min }}" autocomplete="new-password" required></label></p>
+    <p><label>Encore une fois<br><input type="password" name="confirmation" minlength="{{ mdp_min }}" autocomplete="new-password" required></label></p>
+    <div class="consentement">
+      <p><strong>Avant de continuer, à savoir :</strong></p>
+      <ul>
+        <li>Claunote est un <strong>projet personnel, gratuit et non commercial</strong> : jamais d'abonnement, jamais payant.</li>
+        <li>Il s'appuie sur des <strong>services externes</strong> (Claude d'Anthropic, Infomaniak, Cloudflare, Pronote) qui ont leurs propres conditions.</li>
+        <li>Il est fourni <strong>« en l'état », sans garantie</strong> : tu l'utilises <strong>à tes risques</strong>. Garde une copie de ce qui compte pour toi.</li>
+        <li>Les réponses de l'IA peuvent être <strong>fausses</strong> : vérifie avec tes cours.</li>
+      </ul>
+      <label><input type="checkbox" name="accepte" value="1" required>
+        <span>J'ai lu et j'accepte les <a href="/conditions" target="_blank">conditions d'utilisation</a> (version {{ version }})
+        et la page <a href="/tes-donnees" target="_blank">Tes données</a>. J'ai 15 ans ou plus, ou l'accord d'un parent.</span></label>
+    </div>
+    <button class="principal">Créer mon compte</button>
+  </form>
+  {% endif %}
+  <p class="doux" style="text-align:center"><a href="/connexion">J'ai déjà un compte</a> · <a href="/conditions">Conditions</a> · <a href="/tes-donnees">Tes données</a></p>
+</div>
+<style>
+  .invitation { max-width: 520px; }
+  .consentement { border: 1px solid var(--bord); border-radius: 12px; padding: 10px 14px; margin: 0 0 14px; background: var(--fond-doux); }
+  .consentement ul { margin: 0 0 10px; padding-left: 20px; }
+  .consentement label { display: flex; gap: 8px; align-items: flex-start; }
+  .consentement input[type=checkbox] { width: auto; flex: none; margin-top: 4px; }
+</style>
+{% endblock %}

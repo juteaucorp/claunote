@@ -5,7 +5,10 @@
 {% from "_onglets.html" import onglets %}
 {{ onglets('reglages', 'compte') }}
 <h1>Compte</h1>
-<p class="doux">Connecté en tant que <strong>{{ utilisateur }}</strong>.</p>
+<p class="doux">Connecté en tant que <strong>{{ utilisateur }}</strong>{% if moi() %} ·
+  {% if est_admin() %}admin (tous les droits) · <a href="/comptes">gérer les comptes</a>{% else %}droits :
+  {% for d in moi().droits or [] %}{{ droits_noms.get(d, d) }}{{ ', ' if not loop.last }}{% else %}aucun{% endfor %}{% endif %}{% endif %}.
+  <a href="/tes-donnees">Tes données</a> · <a href="/conditions">Conditions</a></p>
 <div class="actions" style="margin-bottom: 16px">
   <a class="bouton" href="/installer">{{ icone('telephone', 18) }}Installer sur l'iPhone</a>
   <form method="post" action="/deconnexion" style="margin: 0"><button style="display: inline-flex; align-items: center; gap: 6px">{{ icone('sortie', 18) }}Déconnexion</button></form>
@@ -53,6 +56,7 @@
   </script>
   {% endif %}
 </div>
+{% if est_admin() %}
 <div class="carte" id="appareils" style="max-width: 560px">
   <strong>Appareils par Internet</strong>
   <p class="doux">Par l'adresse Cloudflare (hors VPN), le site ne s'ouvre que sur ces appareils. Par le VPN, rien ne change.
@@ -79,6 +83,7 @@
     <button class="principal">Ajouter un appareil</button>
   </form>
 </div>
+{% endif %}
 <style>
   .liste-cles { list-style: none; padding: 0; margin: 0 0 12px; }
   .liste-cles li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--bord); }
