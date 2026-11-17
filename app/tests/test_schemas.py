@@ -95,6 +95,27 @@ def test_fiche_dense_pdf():
     assert not pdf.section(dict(rev, genre="plan"), {})["dense"]
 
 
+
+def test_fiche_dense_aux_couleurs_de_claunote():
+    """Marque et logo de Claunote en tête ; ajouts de l'IA en ✚ avec une légende, repères discrets."""
+    contenu = "# MATHS — FICHE SYNTHÈSE\n\n## 1. SUITES [IA]\n- **q** = raison [D1][IA]\n\n## 2. PIÈGES\n- x"
+    rev = {"sujet": "Maths", "genre": "fiche", "statut": "pret", "contenu": contenu, "reperes": {}}
+    s = pdf.section(rev, {})
+    assert s["ia"] and "pas dans tes cours" not in str(s["corps"]) and str(s["corps"]).count('class="ia"') == 2
+    assert '<span class="ref">D1</span>' in str(s["corps"])
+    vus = []
+    rendre = pdf.rendre
+    pdf.rendre = lambda html: vus.append(html) or b"%PDF"
+    try:
+        pdf.revision_pdf(rev, {})
+    finally:
+        pdf.rendre = rendre
+    assert "Claunote · fiche synthèse" in vus[0] and "logo.svg" in vus[0] and "= pas dans tes cours" in vus[0]
+    assert "table-layout: fixed" in vus[0]
+    # Ailleurs (épreuve, plan), le badge « pas dans tes cours » reste
+    assert "pas dans tes cours" in str(pdf.md("x [IA]"))
+
+
 def test_livret_sans_programme():
     """Le livret d'une campagne ne contient le programme jour par jour que si on le demande."""
     import datetime as dt

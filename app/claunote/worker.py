@@ -668,6 +668,8 @@ def traiter_revision(kd: KDrive, rev: dict):
     """
     quoi = (f"{revision.GENRES.get(rev['genre'], rev['genre'])} « {rev['sujet']} » "
             f"({modeles.NOMS[modeles.choisir(rev['genre'])]})")
+    if rev.get("retouche") and rev.get("contenu"):
+        return retoucher_revision(kd, rev, quoi)
     activite(quoi)
     try:
         # Beaucoup de cours : condensés par groupes, gardés en base pour reprendre après une limite
@@ -699,6 +701,31 @@ def traiter_revision(kd: KDrive, rev: dict):
             notifications.campagne_prete(rev["campagne_id"])
     except Exception as e:
         log(f"notification impossible : {e}")
+
+
+def retoucher_revision(kd: KDrive, rev: dict, quoi: str):
+    """Modification demandée par l'élève sur un support prêt. Ratée : l'ancien contenu reste, avec l'erreur."""
+    activite(f"{quoi} : modification")
+    try:
+        contenu, web = revision.retoucher(
+            rev, rev["retouche"], db.documents(rev["doc_ids"]),
+            pieces=db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True), memoire=db.Condenses(),
+            progres=lambda etape: activite(f"{quoi} : {etape}"))
+    except ErreurAgent as e:
+        db.finir_retouche(rev["id"], erreur=f"La modification n'a pas marché : {e}")
+        log(f"modification de la révision {rev['id']} impossible : {e}")
+        return
+    except ClaudeIndisponible as e:
+        if panne_sur("revisions", rev["id"], e):
+            db.finir_retouche(rev["id"], erreur=f"La modification n'a pas marché, Claude Code s'arrête à chaque essai : {e}")
+            return
+        raise
+    db.finir_retouche(rev["id"], contenu, web)
+    log(f"révision modifiée : {rev['genre']} « {rev['sujet']} »")
+    try:
+        copier_pdf(kd, db.revision(rev["id"]))
+    except KDriveIndisponible as e:
+        log(f"PDF de la révision {rev['id']} : kDrive indisponible ({e}), copie au prochain tour")
 
 
 def copier_pdf(kd: KDrive, rev: dict) -> int | None:
