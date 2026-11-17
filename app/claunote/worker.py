@@ -689,6 +689,12 @@ def traiter_revision(kd: KDrive, rev: dict):
     if rev["genre"] == "cartes":
         db.creer_cartes(rev["id"], json.loads(contenu))
     db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, web=web)
+    sujet = rev.get("sujet") or ""
+    if rev["genre"] in revision.GENRES_TEXTE and (sujet.endswith("…") or len(sujet) > revision.TITRE_MAX):
+        # Titre raccourci d'une longue demande : celui que l'IA a donné au support est plus parlant
+        titre = revision.titre_du_support(contenu, sujet, rev.get("matiere"))
+        if titre:
+            db.renommer_revision(rev["id"], titre)
     try:
         copier_pdf(kd, db.revision(rev["id"]))
     except KDriveIndisponible as e:   # la révision est prête sur le site ; son PDF ira dans kDrive plus tard

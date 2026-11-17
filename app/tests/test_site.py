@@ -1556,3 +1556,17 @@ def test_modifier_une_fiche_par_une_demande(client, monkeypatch):
     page = client.get("/revision/5").text
     assert "La modification n&#39;a pas marché" in page and "raison" in page and "plus court" in page
 
+
+def test_renommer_une_revision(client, monkeypatch):
+    fiche = {"id": 5, "genre": "fiche", "sujet": "Maths : existe parce que…", "date_eval": None, "erreur": None,
+             "reperes": {}, "statut": "pret", "contenu": "## 1. SUITES", "retouche": None, "retouches": []}
+    vu = []
+    monkeypatch.setattr(db, "revision", lambda i: fiche if i == 5 else None)
+    monkeypatch.setattr(db, "renommer_revision", lambda i, s: vu.append((i, s)))
+    assert 'action="/revision/5/renommer"' in client.get("/revision/5").text
+    r = client.post("/revision/5/renommer", data={"sujet": "  Maths :   matrices et Boole "}, follow_redirects=False)
+    assert r.status_code == 303 and vu == [(5, "Maths : matrices et Boole")]
+    client.post("/revision/5/renommer", data={"sujet": "  "})
+    assert len(vu) == 1
+    assert client.post("/revision/9/renommer", data={"sujet": "x"}).status_code == 404
+
