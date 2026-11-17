@@ -18,7 +18,7 @@ function fauxPawnote({ refuser = false } = {}) {
   const appels = [];
   const session = () => ({
     userResource: {
-      name: "JUTEAU Anto", className: "BTS SIO 2", establishmentName: "Lycée Test",
+      name: "MARTIN Camille", className: "BTS SIO 2", establishmentName: "Lycée Test",
       tabs: new Map([[198, {
         periods: [
           { id: "p1", name: "Semestre 1", startDate: new Date("2026-09-01"), endDate: new Date("2027-01-31") },
@@ -107,7 +107,7 @@ test("connexion QR : profil gardé, jeton stocké sans mot de passe, fichier pri
   assert.equal((await stat(fichier)).mode & 0o777, 0o600);
   const e = await compte.etat();
   assert.equal(e.connecte, true);
-  assert.equal(e.nom, "JUTEAU Anto");
+  assert.equal(e.nom, "MARTIN Camille");
 });
 
 test("QR invalide ou PIN invalide refusés avant d'appeler Pronote", async () => {

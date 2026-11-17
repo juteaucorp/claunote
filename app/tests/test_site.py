@@ -535,6 +535,9 @@ def test_pages_protegees(anonyme):
     for public in ("/connexion", "/static/logo.svg", "/manifest.webmanifest", "/sw.js", "/hors-ligne"):
         assert anonyme.get(public).status_code == 200, public
     assert "Bibliothèque" not in anonyme.get("/connexion").text  # pas de menu avant connexion
+    # Ressemblent à une page publique mais exigent la connexion (ancien test par préfixe « /appareil »)
+    for prive in ("/appareils/code", "/appareils/abc/retirer", "/connexionx", "/installerx", "/certificat.crtx"):
+        assert anonyme.post(prive).status_code == 401, prive
 
 
 def test_connexion_et_deconnexion(anonyme):

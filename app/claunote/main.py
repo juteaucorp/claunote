@@ -61,13 +61,21 @@ def _noter_appel(**appel):
 
 # Pas de documentation automatique de l'API (/docs, /openapi.json) : rien à montrer à un curieux
 app = FastAPI(title="Claunote", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-PUBLIC = ("/appareil", "/connexion", "/cles/connexion", "/static/", "/manifest.webmanifest", "/sw.js", "/hors-ligne", "/installer", "/certificat")
+# Pages ouvertes sans connexion : chemins EXACTS (un préfixe « /appareil » ouvrait aussi « /appareils/code »
+# et « /appareils/…/retirer », qui doivent rester réservés au compte), plus les fichiers statiques.
+PUBLIC = frozenset({"/appareil", "/connexion", "/cles/connexion", "/cles/connexion/options", "/manifest.webmanifest",
+                    "/sw.js", "/hors-ligne", "/installer", "/certificat.crt"})
+PUBLIC_PREFIXES = ("/static/",)
+
+
+def _public(chemin: str) -> bool:
+    return chemin in PUBLIC or chemin.startswith(PUBLIC_PREFIXES)
 
 
 @app.middleware("http")
 async def exiger_connexion(request: Request, call_next):
     chemin = request.url.path
-    if chemin.startswith(PUBLIC) or request.app.state.compte.session_valide(request.cookies.get(auth.COOKIE)):
+    if _public(chemin) or request.app.state.compte.session_valide(request.cookies.get(auth.COOKIE)):
         return await call_next(request)
     if request.headers.get("HX-Request"):
         return Response(status_code=401, headers={"HX-Redirect": "/connexion"})
