@@ -1521,6 +1521,16 @@ def relancer_revision(rev_id: int):
     return RedirectResponse(f"/revision/{rev_id}", status_code=303)
 
 
+@app.post("/revision/{rev_id}/renommer")
+async def renommer_revision(request: Request, rev_id: int):
+    if db.revision(rev_id) is None:
+        raise HTTPException(404)
+    sujet = re.sub(r"\s+", " ", str((await request.form()).get("sujet") or "")).strip()[:120]
+    if sujet:
+        db.renommer_revision(rev_id, sujet)
+    return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
 @app.post("/revision/{rev_id}/modifier")
 async def modifier_revision(request: Request, rev_id: int):
     """« Ajoute un exemple sur… », « plus court », « corrige la partie 3 » : Claunote refait le support en tenant

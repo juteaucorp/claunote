@@ -5,7 +5,7 @@
 <title>{{ titre }}</title>
 <style>
   @page { size: A4; margin: 18mm 16mm 18mm 16mm;
-    @bottom-left { content: "Claunote · {{ titre|replace('"', '') }}"; font: 8pt sans-serif; color: #8a857c; }
+    @bottom-left { content: "Claunote · {{ titre|replace('"', '')|truncate(60) }}"; font: 8pt sans-serif; color: #8a857c; }
     @bottom-right { content: counter(page) " / " counter(pages); font: 8pt sans-serif; color: #8a857c; } }
   body { font: 10.5pt/1.5 "DejaVu Sans", "Liberation Sans", sans-serif; color: #1f1e1d; }
   h1, h2, h3 { font-family: "DejaVu Serif", "Liberation Serif", Georgia, serif; line-height: 1.25; }
@@ -53,7 +53,7 @@
 
   /* Fiche synthèse : A4, trois colonnes serrées, une couleur par partie (pdf.fiche_dense), aux couleurs de Claunote */
   @page dense { size: A4; margin: 9mm 9mm 11mm 9mm;
-    @bottom-left { content: "Claunote · {{ titre|replace('"', '') }}"; font: 6.5pt sans-serif; color: #8a857c; }
+    @bottom-left { content: "Claunote · {{ titre|replace('"', '')|truncate(60) }}"; font: 6.5pt sans-serif; color: #8a857c; }
     @bottom-right { content: counter(page) " / " counter(pages); font: 6.5pt sans-serif; color: #8a857c; } }
   .dense { page: dense; font: 7.6pt/1.26 "DejaVu Sans", "Liberation Sans", sans-serif; color: #1f1e1d;
     overflow-wrap: anywhere; hyphens: auto; --p: #c4623f; }
@@ -108,7 +108,7 @@
 <div class="entete">
   <img src="{{ logo }}" alt="">
   <div><div class="marque">Claunote</div>
-    <h1>{{ titre }}</h1>
+    <h1>{{ titre|truncate(90) }}</h1>
     <div class="doux">{{ sous_titre }} · créé le {{ le.strftime('%d/%m/%Y') }}</div></div>
 </div>
 {% endif %}
@@ -133,7 +133,7 @@
   <div class="tete-dense"><img src="{{ logo }}" alt="">
     <div><div class="marque-dense">Claunote · fiche synthèse</div>
       <h1 class="titre-dense">{{ s.titre_dense or s.titre }}</h1>
-      <p class="infos-dense">{{ [s.rev.matiere, s.rev.niveau, s.titre if s.titre_dense else '']|select|join(' · ') }}{{ ' · ' if s.rev.matiere or s.rev.niveau or s.titre_dense }}{{ le.strftime('%d/%m/%Y') }}</p></div></div>
+      <p class="infos-dense">{{ [s.rev.matiere, s.rev.niveau]|select|join(' · ') }}{{ ' · ' if s.rev.matiere or s.rev.niveau }}{{ le.strftime('%d/%m/%Y') }}</p></div></div>
   <div class="colonnes">
   {% elif sections|length > 1 or programme %}
   <div class="titre-section"><div class="genre">{{ s.genre }}{% if s.rev.matiere %} · {{ s.rev.matiere }}{% endif %}</div><h1>{{ s.titre }}</h1></div>

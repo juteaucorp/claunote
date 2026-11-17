@@ -7,7 +7,7 @@
     <li class="g-{{ r.genre }}">
       <span class="pastille-genre">{{ icone(r.genre, 20) }}</span>
       <div class="corps">
-        <a href="/revision/{{ r.id }}"><strong>{{ r.sujet }}</strong></a>
+        <a href="/revision/{{ r.id }}" title="{{ r.sujet }}"><strong>{{ r.sujet|truncate(90) }}</strong></a>
         <div class="doux meta">
           <span>{{ courts[r.genre] }}</span>
           {% if r.matiere and r.matiere not in r.sujet %}<span>{{ r.matiere }}</span>{% endif %}
