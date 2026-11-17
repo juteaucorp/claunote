@@ -30,6 +30,7 @@
 <div class="barre-actions">
   <a class="bouton" href="/revision/{{ rev.id }}/pdf" target="_blank">{{ icone('pdf', 18) }}<span>PDF</span></a>
   <a class="bouton" href="#" data-partager data-pdf="/revision/{{ rev.id }}/pdf" data-nom="{{ nom_pdf }}" data-titre="{{ rev.sujet }}">{{ icone('partager', 18) }}<span>Partager</span></a>
+  {% if rev.genre in ('fiche', 'examen', 'plan') %}<a class="bouton" href="#modifier">{{ icone('relancer', 18) }}<span>Modifier</span></a>{% endif %}
   {% if rev.genre in ('fiche', 'examen', 'plan') %}<a class="bouton" href="/revision/{{ rev.id }}/carte-mentale">{{ icone('carte_mentale', 18) }}<span>Carte mentale</span></a>{% endif %}
   {% if rev.genre != 'quiz' %}
   <form method="post" action="/revision/{{ rev.id }}/fait"><input type="hidden" name="fait" value="{{ '0' if rev.fait_le else '1' }}">
@@ -50,10 +51,16 @@
 </div>
 {% endif %}
 
-{% if rev.statut == 'en_attente' %}
+{% if rev.statut == 'en_attente' and rev.retouche %}
+<div class="carte accent rangee-attente"><span>Claunote modifie ta {{ genres[rev.genre]|lower }} : « {{ rev.retouche|truncate(140) }} ». La page se met à jour toute seule ; d'ici là, voici la version actuelle.</span>
+  <form method="post" action="/revision/{{ rev.id }}/annuler-modification"><button>Annuler</button></form></div>
+{% elif rev.statut == 'pret' and rev.erreur %}
+<div class="carte"><p class="alerte">{{ rev.erreur }}</p><p class="doux">La version d'avant est gardée. Reformule ta demande plus bas pour réessayer.</p></div>
+{% endif %}
+<style>.rangee-attente { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; } .rangee-attente form { margin: 0; }</style>
+{% if rev.statut == 'en_attente' and not (rev.retouche and contenu) %}
 <div class="carte accent rangee-attente"><span>L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).</span>
   <form method="post" action="/revision/{{ rev.id }}/supprimer" onsubmit="return confirm('Annuler cette demande ?')"><button>Annuler</button></form></div>
-<style>.rangee-attente { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; } .rangee-attente form { margin: 0; }</style>
 {% elif rev.statut == 'erreur' %}
 <div class="carte"><p class="alerte">Erreur : {{ rev.erreur }}</p>
   <div class="actions">
@@ -145,14 +152,35 @@
     nav.hidden = false;
   })();
 </script>
+{% if rev.statut == 'pret' and rev.genre in ('fiche', 'examen', 'plan') %}
+<form class="carte modifier" id="modifier" method="post" action="/revision/{{ rev.id }}/modifier">
+  <label for="demande-modif"><strong>Demander une modification à Claunote</strong></label>
+  <p class="doux">Dis ce qu'il faut changer, comme à un prof : la fiche est refaite avec tes cours, le reste ne bouge pas.</p>
+  <textarea id="demande-modif" name="demande" rows="3" required maxlength="2000" placeholder="Ex. : ajoute un exemple corrigé sur les suites géométriques"></textarea>
+  <div class="idees-modif">
+    {% for idee in ["Ajoute plus d'exemples chiffrés", "Fais plus court, l'essentiel seulement", "Ajoute 5 questions plus difficiles", "Explique plus simplement la partie ", "Corrige : "] %}
+    <button type="button" data-idee="{{ idee }}">{{ idee|trim|trim(':') }}</button>
+    {% endfor %}
+  </div>
+  <button class="principal">Modifier la {{ genres[rev.genre]|lower }}</button>
+</form>
+<script>
+  document.querySelectorAll(".idees-modif [data-idee]").forEach((b) => b.addEventListener("click", () => {
+    const zone = document.getElementById("demande-modif");
+    zone.value = b.dataset.idee; zone.focus(); zone.setSelectionRange(zone.value.length, zone.value.length);
+  }));
+</script>
+{% endif %}
 {% if corrige %}
 <details class="carte corrige"><summary>Voir le corrigé</summary><div class="transcription contenu-revision">{{ corrige }}</div></details>
 {% elif rev.genre == 'examen' %}<p class="doux">Pas de corrigé séparé dans ce sujet.</p>{% endif %}
 {% endif %}
 
-{% if rev.consigne or pieces %}
-<details class="carte"{{ ' open' if pieces and not rev.consigne }}><summary>Contexte donné à l'IA{% if pieces %} · {{ pieces|length }} fichier{{ 's' if pieces|length > 1 }}{% endif %}</summary>
+{% if rev.consigne or pieces or rev.retouches %}
+<details class="carte"{{ ' open' if pieces and not rev.consigne }}><summary>Contexte donné à l'IA{% if pieces %} · {{ pieces|length }} fichier{{ 's' if pieces|length > 1 }}{% endif %}{% if rev.retouches %} · {{ rev.retouches|length }} modification{{ 's' if rev.retouches|length > 1 }}{% endif %}</summary>
   {% if rev.consigne %}<p>{{ rev.consigne|e|replace('\n', '<br>'|safe) }}</p>{% endif %}
+  {% if rev.retouches %}<p class="doux">Modifications demandées :</p>
+  <ul>{% for r in rev.retouches %}<li>{{ r.demande }}</li>{% endfor %}</ul>{% endif %}
   {% include "_pieces.html" %}
 </details>
 {% endif %}
@@ -207,6 +235,10 @@
   .etiquette-web { --g: var(--g-plan); }
   a.web { color: var(--g-plan); }
   a.etat { text-decoration: none; }
+  .modifier textarea { width: 100%; margin: 6px 0 8px; }
+  .modifier .doux { margin: 4px 0 0; }
+  .idees-modif { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .idees-modif button { padding: 5px 11px; border-radius: 999px; font-size: .84rem; font-weight: 500; }
   .resultat .score { font-size: 1.6rem; font-family: ui-serif, Georgia, serif; margin-right: 8px; }
 </style>
 {% endblock %}

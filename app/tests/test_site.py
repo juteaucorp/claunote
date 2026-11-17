@@ -1525,3 +1525,34 @@ def test_reviser_en_une_phrase(client, monkeypatch):
     assert [a[0][1] for a in appels[1:]] == ["Réseaux", "CEJM"]
     assert client.post("/reviser/lancer", data={**base, "genres": [], "matieres": ["BTS2|CEJM"]}).status_code == 400
     assert client.post("/reviser/lancer", data={**base, "genres": ["plan"], "matieres": ["BTS2|CEJM"]}).status_code == 400
+
+
+def test_modifier_une_fiche_par_une_demande(client, monkeypatch):
+    """« Ajoute un exemple… » : la demande part en file, la fiche actuelle reste lisible, l'historique est gardé."""
+    fiche = {"id": 5, "genre": "fiche", "sujet": "Suites", "date_eval": None, "erreur": None, "reperes": {"D1": 1},
+             "statut": "pret", "contenu": "## 1. SUITES\n- **q** = raison [D1]", "retouche": None, "retouches": []}
+    quiz = {**fiche, "id": 7, "genre": "quiz", "contenu": "[]"}
+    revs = {5: fiche, 7: quiz}
+    vu = []
+    monkeypatch.setattr(db, "revision", lambda i: revs.get(i))
+    monkeypatch.setattr(db, "demander_retouche", lambda i, d: vu.append((i, d)) or True)
+    monkeypatch.setattr(db, "finir_retouche", lambda i, *a, **k: vu.append(("annule", i)))
+    page = client.get("/revision/5").text
+    assert 'action="/revision/5/modifier"' in page and 'href="#modifier"' in page
+    r = client.post("/revision/5/modifier", data={"demande": "  ajoute un exemple chiffré "}, follow_redirects=False)
+    assert r.status_code == 303 and vu == [(5, "ajoute un exemple chiffré")] and "scan" in client.appels
+    client.post("/revision/5/modifier", data={"demande": "   "})
+    assert len(vu) == 1   # demande vide : rien
+    assert client.post("/revision/7/modifier", data={"demande": "x"}).status_code == 400   # pas un quiz
+    assert client.post("/revision/9/modifier", data={"demande": "x"}).status_code == 404
+    # Modification en cours : bandeau, ancienne version affichée, pas de formulaire
+    revs[5] = {**fiche, "statut": "en_attente", "retouche": "ajoute un exemple chiffré"}
+    page = client.get("/revision/5").text
+    assert "Claunote modifie ta fiche" in page and "raison" in page and 'action="/revision/5/modifier"' not in page
+    client.post("/revision/5/annuler-modification")
+    assert vu[-1] == ("annule", 5)
+    # Ratée : l'erreur est dite, la version d'avant reste ; l'historique apparaît
+    revs[5] = {**fiche, "erreur": "La modification n'a pas marché : x", "retouches": [{"demande": "plus court"}]}
+    page = client.get("/revision/5").text
+    assert "La modification n&#39;a pas marché" in page and "raison" in page and "plus court" in page
+

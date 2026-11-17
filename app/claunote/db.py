@@ -104,6 +104,9 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS score JSONB;           -- dernier
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS sources_web JSONB NOT NULL DEFAULT '[]';  -- [{"repere": "W1", "titre", "url"}]
 -- Rester dans les cours ; sinon (par défaut) l'IA complète ce qu'ils ne couvrent pas, marqué [IA]
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS strict BOOLEAN NOT NULL DEFAULT false;
+-- Modification demandée par l'élève (« ajoute un exemple sur… ») en attente, et l'historique de celles faites
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS retouche TEXT;
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS retouches JSONB NOT NULL DEFAULT '[]';
 -- Révisions d'avant l'historique : matière du premier cours utilisé
 UPDATE revisions r SET niveau = d.niveau, matiere = d.matiere FROM documents d
  WHERE r.matiere IS NULL AND d.id = r.doc_ids[1] AND d.matiere IS NOT NULL;
@@ -868,7 +871,28 @@ def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=No
 
 def relancer_revision(rev_id: int):
     with connect() as c:
-        c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL WHERE id = %s", (rev_id,))
+        c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL, retouche = NULL WHERE id = %s", (rev_id,))
+
+
+def demander_retouche(rev_id: int, demande: str) -> bool:
+    """Met en file une modification d'un support prêt ; le contenu actuel reste affiché d'ici là."""
+    with connect() as c:
+        return c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL, retouche = %s "
+                         "WHERE id = %s AND statut IN ('pret', 'erreur') AND contenu IS NOT NULL",
+                         (demande, rev_id)).rowcount == 1
+
+
+def finir_retouche(rev_id: int, contenu: str | None = None, web=None, erreur: str | None = None):
+    """Modification faite (nouveau contenu, gardée dans l'historique) ou ratée (l'ancien contenu reste, avec l'erreur)."""
+    with connect() as c:
+        if contenu is None:
+            c.execute("UPDATE revisions SET statut = 'pret', retouche = NULL, erreur = %s WHERE id = %s",
+                      (erreur, rev_id))
+        else:
+            c.execute("UPDATE revisions SET statut = 'pret', contenu = %s, sources_web = %s, erreur = NULL, "
+                      "kdrive_id = NULL, retouches = retouches || jsonb_build_array(jsonb_build_object("
+                      "'demande', retouche, 'le', now())), retouche = NULL WHERE id = %s",
+                      (contenu, Jsonb(web or []), rev_id))
 
 
 def marquer_fait(rev_id: int, fait: bool = True, score: dict | None = None):

@@ -20,15 +20,23 @@ _env.filters["schema"] = schemas.figure
 LOGO = (Path(__file__).parent / "static" / "logo.svg").as_uri()
 
 
-def md(texte: str | None) -> Markup:
+RE_REPERE = re.compile(r"\[((?:D|W)\d+)\]")
+
+
+def md(texte: str | None, dense: bool = False) -> Markup:
     """Markdown → HTML ; le HTML brut éventuel est neutralisé, les repères [D1] restent du texte.
-    Les formules $…$ deviennent du texte lisible (« √(x²+1) ≤ α ») : pas de JavaScript dans un PDF."""
+    Les formules $…$ deviennent du texte lisible (« √(x²+1) ≤ α ») : pas de JavaScript dans un PDF.
+    `dense` (fiche synthèse) : repères en petit et gris, ajouts de l'IA marqués d'un simple ✚ (légende en bas)."""
     texte, figures = schemas.proteger(revision.aerer_listes(texte or ""))
     texte, maths = formules.proteger(texte)
     texte = texte.replace("&", "&amp;").replace("<", "&lt;")
     rendu = formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths,
                                texte=True)
-    rendu = rendu.replace("[IA]", '<span class="ajout-ia">pas dans tes cours</span>')
+    if dense:
+        rendu = re.sub(r"\s*\[IA\]", ' <span class="ia">✚</span>', rendu)
+        rendu = RE_REPERE.sub(r'<span class="ref">\1</span>', rendu)
+    else:
+        rendu = rendu.replace("[IA]", '<span class="ajout-ia">pas dans tes cours</span>')
     return Markup(schemas.restaurer(rendu, figures))
 
 
@@ -69,7 +77,7 @@ def fiche_dense(rendu: str) -> tuple[Markup, Markup]:
 def section(rev: dict, sources: dict[int, str], cartes: list[dict] | None = None, corrige: bool = True) -> dict:
     """Ce qu'il faut pour afficher une révision dans le PDF (sujet, corrigé à part)."""
     s = {"rev": rev, "titre": rev["sujet"], "genre": revision.GENRES.get(rev["genre"], rev["genre"]),
-         "corps": Markup(""), "corrige": Markup(""), "questions": [], "cartes": [], "dense": False, "titre_dense": "",
+         "corps": Markup(""), "corrige": Markup(""), "questions": [], "cartes": [], "dense": False, "titre_dense": "", "ia": False,
          "sources": [(r, sources[i]) for r, i in (rev.get("reperes") or {}).items() if i in sources],
          "web": rev.get("sources_web") or []}
     if rev["statut"] != "pret":
@@ -82,8 +90,8 @@ def section(rev: dict, sources: dict[int, str], cartes: list[dict] | None = None
         sujet, corr = revision.separer_corrige(rev["contenu"] or "")
         s["corps"], s["corrige"] = md(sujet), md(corr)
     elif rev["genre"] == "fiche":
-        s["dense"] = True
-        s["titre_dense"], s["corps"] = fiche_dense(str(md(rev["contenu"])))
+        s["dense"], s["ia"] = True, "[IA]" in (rev["contenu"] or "")
+        s["titre_dense"], s["corps"] = fiche_dense(str(md(rev["contenu"], dense=True)))
     else:
         s["corps"] = md(rev["contenu"])
     if not corrige:

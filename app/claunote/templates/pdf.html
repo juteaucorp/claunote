@@ -51,47 +51,54 @@
   .e-definition { border-left-color: #8a4fb8 !important; background: #f4eef9 !important; } .e-definition > p:first-child > strong:first-child { color: #8a4fb8 !important; }
   h2 { break-after: avoid; } h3 { break-after: avoid; } tr { break-inside: avoid; }
 
-  /* Fiche synthèse : A4, trois colonnes serrées, un bandeau de couleur par partie (pdf.fiche_dense) */
+  /* Fiche synthèse : A4, trois colonnes serrées, une couleur par partie (pdf.fiche_dense), aux couleurs de Claunote */
   @page dense { size: A4; margin: 9mm 9mm 11mm 9mm;
-    @bottom-left { content: "Claunote · {{ titre|replace('"', '') }}"; font: 6.5pt sans-serif; color: #9a958c; }
-    @bottom-right { content: counter(page) " / " counter(pages); font: 6.5pt sans-serif; color: #9a958c; } }
-  .dense { page: dense; font: 7.6pt/1.24 "DejaVu Sans", "Liberation Sans", sans-serif; color: #111; }
-  .dense .titre-dense { font: 700 11.5pt/1.2 "DejaVu Sans", sans-serif; color: #1f4e8c; margin: 0 0 1.5pt; }
-  .dense .infos-dense { font-size: 6.5pt; color: #77736b; margin: 0 0 4pt; }
-  .dense .colonnes { columns: 3; column-gap: 4mm; column-fill: auto; }
-  .dense h1, .dense h2, .dense h3 { font-family: "DejaVu Sans", "Liberation Sans", sans-serif; }
-  .dense h2 { font-size: 8.6pt; line-height: 1.2; margin: 5pt 0 2.5pt; padding: 2pt 4pt; color: #fff; background: #3a3a3a;
-    text-transform: uppercase; letter-spacing: .01em; }
+    @bottom-left { content: "Claunote · {{ titre|replace('"', '') }}"; font: 6.5pt sans-serif; color: #8a857c; }
+    @bottom-right { content: counter(page) " / " counter(pages); font: 6.5pt sans-serif; color: #8a857c; } }
+  .dense { page: dense; font: 7.6pt/1.26 "DejaVu Sans", "Liberation Sans", sans-serif; color: #1f1e1d;
+    overflow-wrap: anywhere; hyphens: auto; --p: #c4623f; }
+  .dense .tete-dense { display: flex; align-items: center; gap: 6pt; padding-bottom: 3.5pt; margin-bottom: 5pt;
+    border-bottom: 1.4pt solid #d97757; }
+  .dense .tete-dense img { width: 19pt; height: 19pt; flex: none; }
+  .dense .marque-dense { font: 700 6.2pt sans-serif; color: #b5583a; letter-spacing: .08em; text-transform: uppercase; }
+  .dense .titre-dense { font: 600 12.5pt/1.15 "DejaVu Serif", "Liberation Serif", Georgia, serif; color: #1f1e1d; margin: 0; letter-spacing: -.01em; }
+  .dense .infos-dense { font-size: 6.4pt; color: #6f6b63; margin: 0; }
+  .dense .colonnes { columns: 3; column-gap: 4.5mm; column-fill: auto; }
+  .dense h1, .dense h3 { font-family: "DejaVu Sans", "Liberation Sans", sans-serif; }
+  .dense h2 { font: 600 8.4pt/1.2 "DejaVu Serif", "Liberation Serif", Georgia, serif; margin: 6pt 0 2.5pt; padding: 2.2pt 5pt;
+    color: #fff; background: var(--p); border-radius: 3pt; letter-spacing: .01em; }
   .dense .partie:first-child h2 { margin-top: 0; }
-  .dense h3 { font-size: 7.7pt; line-height: 1.2; margin: 3.5pt 0 1pt; color: #3a3a3a; }
+  .dense h3 { font-size: 7.7pt; line-height: 1.2; margin: 3.5pt 0 1pt; color: var(--p); }
   .dense h4 { font-size: 7.6pt; margin: 2pt 0 0; }
   .dense p { margin: 1.5pt 0; }
   .dense ul, .dense ol { margin: 0 0 1.5pt; padding-left: 9pt; }
   .dense li { margin: 0 0 1pt; }
+  .dense li::marker { color: var(--p); }
   .dense li > p { margin: 0; }
-  .dense table { margin: 2.5pt 0; font-size: 7pt; line-height: 1.18; }
-  .dense th, .dense td { border: .4pt solid #b9b9b9; padding: 1pt 2.5pt; }
-  .dense th { background: #ebebeb; font-weight: 400; }
-  .dense pre, .dense code { font-size: 6.8pt; }
-  .dense pre { padding: 2pt 4pt; margin: 2pt 0; border-radius: 2pt; }
+  .dense strong { color: #1f1e1d; }
+  /* Tableaux : largeur fixe de la colonne, mots longs coupés : rien ne déborde sur la colonne voisine */
+  .dense table { margin: 2.5pt 0; font-size: 6.8pt; line-height: 1.18; table-layout: fixed; width: 100%; }
+  .dense th, .dense td { border: .4pt solid #e4ddd2; padding: 1pt 2.5pt; overflow-wrap: anywhere; word-break: break-word; }
+  .dense th { background: #faf3ee; color: var(--p); font-weight: 600; }
+  .dense pre, .dense code { font-size: 6.6pt; }
+  .dense pre { padding: 2pt 4pt; margin: 2pt 0; border-radius: 2pt; white-space: pre-wrap; overflow-wrap: anywhere; }
   .dense figure.schema { margin: 3pt 0; }
   .dense figure.schema figcaption { font-size: 6.5pt; margin-top: 1pt; }
-  .dense blockquote, .dense blockquote.encadre { margin: 2.5pt 0; padding: 2pt 5pt; border-left-width: 2pt; border-radius: 0; }
-  .dense .ajout-ia { font-size: 6pt; padding: 0 2.5pt; }
-  .dense .sources { margin-top: 5pt; font-size: 6.3pt; line-height: 1.25; }
-  .dense .c0 h2 { background: #3a3a3a; } .dense .c0 h3 { color: #3a3a3a; }
-  .dense .c1 h2 { background: #2e6b4f; } .dense .c1 h3 { color: #2e6b4f; }
-  .dense .c2 h2 { background: #1f4e8c; } .dense .c2 h3 { color: #1f4e8c; }
-  .dense .c3 h2 { background: #c8501e; } .dense .c3 h3 { color: #c8501e; }
-  .dense .c4 h2 { background: #5b3a8c; } .dense .c4 h3 { color: #5b3a8c; }
-  .dense .c5 h2 { background: #a51d2d; } .dense .c5 h3 { color: #a51d2d; }
-  .dense .questions h2 { background: #111; } .dense .reponses h2 { background: #fff; color: #111; border: .8pt solid #111; }
-  .dense .reponses { break-before: column; }
+  .dense blockquote, .dense blockquote.encadre { margin: 2.5pt 0; padding: 2pt 5pt; border-left-width: 2pt; border-radius: 0 3pt 3pt 0; }
+  .dense .sources { margin-top: 5pt; font-size: 6.2pt; line-height: 1.25; color: #6f6b63; }
+  .dense .ref { font-size: 5.4pt; color: #a29d93; vertical-align: .25em; line-height: 0; }
+  .dense .ia { font-size: 6.4pt; color: #a0701c; font-weight: 700; }
+  .dense .c0 { --p: #c4623f; } .dense .c1 { --p: #3b6fb6; } .dense .c2 { --p: #3f8a57; }
+  .dense .c3 { --p: #8a4fb8; } .dense .c4 { --p: #2f8b8b; } .dense .c5 { --p: #b5583a; }
+  .dense .questions { --p: #1f1e1d; }
+  .dense .reponses { --p: #6f6b63; break-before: column; }
+  .dense .reponses h2 { background: #faf3ee; color: #1f1e1d; border: .6pt solid #d97757; }
   .dense figure.schema svg { min-width: 0 !important; width: 100%; height: auto; }
   .dense sup, .dense sub { font-size: 5.6pt; line-height: 0; }
-  .dense h2 .ajout-ia { color: #fff; border-color: #fff; text-transform: none; font-weight: 400; }
+  .dense h2 .ia { color: #fff; }
   .dense blockquote.e-ia { border-left-style: solid !important; }
   .dense .questions ol > li { margin-bottom: 2.5pt; }
+  .sur { text-decoration: overline; }
 </style>
 </head>
 <body>
@@ -123,8 +130,10 @@
 {% for s in sections %}
 <div class="section{{ ' dense' if s.dense }}">
   {% if s.dense %}
-  <h1 class="titre-dense">{{ s.titre_dense or s.titre }}</h1>
-  <p class="infos-dense">{{ [s.rev.matiere, s.rev.niveau, s.titre if s.titre_dense else '']|select|join(' · ') }}{{ ' · ' if s.rev.matiere or s.rev.niveau or s.titre_dense }}{{ le.strftime('%d/%m/%Y') }}</p>
+  <div class="tete-dense"><img src="{{ logo }}" alt="">
+    <div><div class="marque-dense">Claunote · fiche synthèse</div>
+      <h1 class="titre-dense">{{ s.titre_dense or s.titre }}</h1>
+      <p class="infos-dense">{{ [s.rev.matiere, s.rev.niveau, s.titre if s.titre_dense else '']|select|join(' · ') }}{{ ' · ' if s.rev.matiere or s.rev.niveau or s.titre_dense }}{{ le.strftime('%d/%m/%Y') }}</p></div></div>
   <div class="colonnes">
   {% elif sections|length > 1 or programme %}
   <div class="titre-section"><div class="genre">{{ s.genre }}{% if s.rev.matiere %} · {{ s.rev.matiere }}{% endif %}</div><h1>{{ s.titre }}</h1></div>
@@ -150,9 +159,9 @@
     {% for k in s.cartes %}<tr><td>{{ k.recto|maths }}</td><td>{{ k.verso|maths }}</td></tr>{% endfor %}</table>
   {% endif %}
   {% if s.corrige %}<div class="corrige">{{ s.corrige }}</div>{% endif %}
-  {% if s.sources or s.web %}
-  <div class="sources"><strong>Sources :</strong>
-    {% for r, t in s.sources %}[{{ r }}] {{ t }}{{ ' · ' if not loop.last }}{% endfor %}
+  {% if s.sources or s.web or (s.dense and s.ia) %}
+  <div class="sources">{% if s.dense and s.ia %}<span class="ia">✚</span> = pas dans tes cours, ajouté par l'IA d'après le programme.<br>{% endif %}{% if s.sources %}<strong>Sources :</strong>
+    {% for r, t in s.sources %}[{{ r }}] {{ t }}{{ ' · ' if not loop.last }}{% endfor %}{% endif %}
     {% if s.web %}<br><strong>Web :</strong>
     {% for w in s.web %}[{{ w.repere }}] {{ w.titre }} ({{ w.url }}){{ ' · ' if not loop.last }}{% endfor %}{% endif %}</div>
   {% endif %}

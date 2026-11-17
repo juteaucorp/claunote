@@ -335,7 +335,8 @@ templates.env.filters["surligner_md"] = lambda extrait: surligner(re.sub(r"\*\*(
 def rendu_markdown(texte: str | None) -> str:
     # Formules mises à l'abri du Markdown, puis rendues par KaTeX dans le navigateur (voir formules.py)
     # Schémas (blocs ```dot / ```svg) dessinés ici en SVG, les mêmes que dans le PDF (voir schemas.py)
-    texte, figures = schemas.proteger(texte or "")
+    # Listes et tableaux collés au texte décollés (sinon une ligne qui suit un tableau en devient une rangée)
+    texte, figures = schemas.proteger(revision.aerer_listes(texte or ""))
     texte, maths = formules.proteger(texte)
     # Le HTML brut éventuel de la transcription est neutralisé avant le rendu
     texte = texte.replace("&", "&amp;").replace("<", "&lt;")
@@ -1441,7 +1442,7 @@ def voir_revision(request: Request, rev_id: int):
     reperes = rev["reperes"] or {}
     web = rev.get("sources_web") or []
     contenu, corrige, questions, cartes = None, None, [], []
-    if rev["statut"] == "pret":
+    if rev["statut"] == "pret" or (rev.get("retouche") and rev.get("contenu")):  # modification en cours : l'actuel reste lisible
         if rev["genre"] == "quiz":
             questions = json.loads(rev["contenu"])
         elif rev["genre"] == "cartes":
@@ -1517,6 +1518,32 @@ def relancer_revision(rev_id: int):
         raise HTTPException(404)
     db.relancer_revision(rev_id)
     db.demander_scan()
+    return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+@app.post("/revision/{rev_id}/modifier")
+async def modifier_revision(request: Request, rev_id: int):
+    """« Ajoute un exemple sur… », « plus court », « corrige la partie 3 » : Claunote refait le support en tenant
+    compte de la demande (même cours, même format) ; l'actuel reste affiché pendant ce temps."""
+    rev = db.revision(rev_id)
+    if rev is None:
+        raise HTTPException(404)
+    if rev["genre"] not in revision.GENRES_TEXTE or rev["statut"] != "pret":
+        raise HTTPException(400, "ce support ne peut pas être modifié maintenant")
+    demande = str((await request.form()).get("demande") or "").strip()[:2000]
+    if demande:
+        db.demander_retouche(rev_id, demande)
+        db.demander_scan()
+    return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+@app.post("/revision/{rev_id}/annuler-modification")
+def annuler_modification(rev_id: int):
+    rev = db.revision(rev_id)
+    if rev is None:
+        raise HTTPException(404)
+    if rev.get("retouche") and rev["statut"] == "en_attente":
+        db.finir_retouche(rev_id)
     return RedirectResponse(f"/revision/{rev_id}", status_code=303)
 
 

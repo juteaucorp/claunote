@@ -924,3 +924,30 @@ def test_repartir_modeles_locaux_eteints(worker, monkeypatch):
     loc, cla = worker.repartir(items, "local", True)
     assert loc == [] and [i["id"] for i in cla] == [1, 2, 3]   # même ceux confiés au local partent chez Claude
     assert worker.repartir(items, "toujours", False) == ([], [])
+
+
+def test_modification_de_revision(worker, monkeypatch):
+    """Une révision avec une modification en attente est retouchée, pas régénérée ; ratée, l'ancienne reste."""
+    from claunote import db
+    from claunote.agent import ErreurAgent
+    vu = {}
+    monkeypatch.setattr(worker.revision, "generer", lambda *a, **k: pytest.fail("pas une régénération"))
+    monkeypatch.setattr(worker.revision, "retoucher", lambda rev, demande, docs, **k: vu.update(demande=demande) or
+                        ("# Fiche modifiée", []))
+    monkeypatch.setattr(db, "pieces_jointes", lambda r=None, c=None, contenu=False: [])
+    monkeypatch.setattr(db, "Condenses", dict)
+    monkeypatch.setattr(db, "documents", lambda ids: [])
+    monkeypatch.setattr(db, "finir_retouche", lambda i, contenu=None, web=None, erreur=None: vu.update(
+        fin=(i, contenu, erreur)))
+    monkeypatch.setattr(worker, "copier_pdf", lambda kd, rev: vu.update(pdf=True))
+    monkeypatch.setattr(db, "revision", lambda i: {"id": i})
+    rev = {"id": 4, "genre": "fiche", "sujet": "Suites", "doc_ids": [3], "date_eval": None, "contenu": "# Fiche",
+           "retouche": "plus court"}
+    worker.traiter_revision(None, rev)
+    assert vu["demande"] == "plus court" and vu["fin"] == (4, "# Fiche modifiée", None) and vu["pdf"]
+
+    def rate(*a, **k):
+        raise ErreurAgent("réponse trop courte")
+    monkeypatch.setattr(worker.revision, "retoucher", rate)
+    worker.traiter_revision(None, rev)
+    assert vu["fin"][1] is None and "réponse trop courte" in vu["fin"][2]

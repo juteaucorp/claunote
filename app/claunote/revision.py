@@ -60,7 +60,11 @@ Règles :
 - Sources fiables seulement (sites officiels, éducation nationale, documentation officielle,
   Légifrance, Wikipédia en dernier recours). Marque chaque apport du web par [W1], [W2]…
 - Écris en français, simplement. Formules de maths, de physique ou de chimie en LaTeX entre
-  $…$ (ex. $u_n = u_0 \\times q^n$, $\\ce{{H2O}}$) : le site les affiche proprement.
+  $…$ (ex. $u_n = u_0 \\times q^n$, $\\ce{{H2O}}$) : le site les affiche proprement. Toute formule,
+  même un seul symbole, est entre $…$ (jamais de \\frac ou \\sigma hors des $) ; un seul antislash par
+  commande ; des accolades autour de chaque argument ($\\frac{{1}}{{2}}$, $\\overline{{a}}$, pas \\frac12) ;
+  seulement des commandes courantes (\\frac, \\sqrt, \\overline, \\times, \\leq, \\in, lettres grecques…).
+- Un tableau : une ligne vide avant et après, des cellules courtes (quelques mots), 4 colonnes au plus.
 {consigne}"""
 
 # Ce que dit le prompt sur les cours, selon le mode choisi dans le formulaire
@@ -497,21 +501,57 @@ def parse_cartes(texte: str) -> list[dict]:
 
 
 RE_PUCE = re.compile(r"^ {0,3}(?:[-*+]|\d{1,2}[.)])\s+\S")
+RE_SEPARATEUR = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$|^\s*\|\s*:?-{2,}:?\s*\|\s*$")
 
 
 def aerer_listes(texte: str) -> str:
-    """Ligne vide avant une liste collée au paragraphe qui la précède : sans elle, Markdown n'y voit
-    pas une liste et les puces sortent en un seul bloc de texte (hors des blocs de code)."""
-    lignes, dans_code = [], False
-    for ligne in texte.split("\n"):
-        if ligne.lstrip().startswith("```"):
+    """Lignes vides là où Markdown en a besoin (hors des blocs de code) :
+    - avant une liste collée au paragraphe qui la précède, sinon les puces sortent en un seul bloc ;
+    - avant un tableau collé à un paragraphe, sinon il n'est pas reconnu ;
+    - après un tableau suivi directement d'une ligne sans « | », sinon cette ligne devient une rangée
+      du tableau (puces rangées dans la première colonne, tableau qui déborde de sa colonne) ;
+    - après une liste suivie d'un paragraphe, sinon il se colle à la dernière puce."""
+    lignes_in = texte.split("\n")
+    lignes, dans_code, dans_tableau = [], False, False
+    for i, ligne in enumerate(lignes_in):
+        cloture = ligne.lstrip().startswith("```")
+        if cloture:
             dans_code = not dans_code
+            dans_tableau = False
         avant = lignes[-1] if lignes else ""
-        if (not dans_code and RE_PUCE.match(ligne) and avant.strip() and not RE_PUCE.match(avant)
-                and not avant.startswith((" ", "\t", ">", "|", "#"))):
-            lignes.append("")
+        suivante = lignes_in[i + 1] if i + 1 < len(lignes_in) else ""
+        if not dans_code and not cloture:
+            if dans_tableau and ligne.strip() and "|" not in ligne:
+                lignes.append("")
+                dans_tableau = False
+            elif not ligne.strip():
+                dans_tableau = False
+            if "|" in ligne and RE_SEPARATEUR.match(suivante) and not RE_SEPARATEUR.match(ligne):
+                if avant.strip() and "|" not in avant:
+                    lignes.append("")
+                dans_tableau = True
+            elif (RE_PUCE.match(ligne) and avant.strip() and not RE_PUCE.match(avant)
+                    and not avant.startswith((" ", "\t", ">", "|", "#"))):
+                lignes.append("")
+            elif (RE_PUCE.match(avant) and ligne.strip() and not RE_PUCE.match(ligne)
+                    and not ligne.startswith((" ", "\t", "|"))):
+                lignes.append("")   # paragraphe après une liste : pas la suite de la dernière puce
         lignes.append(ligne)
     return "\n".join(lignes)
+
+
+def _lecteur(genre: str):
+    """Lit la réponse de l'IA ; réponse inutilisable : ErreurAgent, et demander() réessaie avec le modèle au-dessus."""
+    def lire(texte: str):
+        if genre == "quiz":
+            return json.dumps(parse_quiz(texte, melanger=True), ensure_ascii=False), web_json(texte)
+        if genre == "cartes":
+            return json.dumps(parse_cartes(texte), ensure_ascii=False), web_json(texte)
+        if len(texte.strip()) < 80:
+            raise ErreurAgent(f"réponse trop courte : {texte[:200]!r}")
+        texte, web = separer_web(texte.strip())
+        return schemas.nettoyer(aerer_listes(texte))[0], web  # un schéma au code faux est retiré plutôt qu'affiché en brut
+    return lire
 
 
 def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None = None,
@@ -526,18 +566,7 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
     if not docs:
         raise ErreurAgent("aucun document à utiliser")
     texte_cours, reperes, _ = contexte(docs, sujet, consigne, memoire, progres)
-
-    def lire(texte: str):
-        # Réponse inutilisable : demander() réessaie avec le modèle au-dessus
-        if genre == "quiz":
-            return json.dumps(parse_quiz(texte, melanger=True), ensure_ascii=False), web_json(texte)
-        if genre == "cartes":
-            return json.dumps(parse_cartes(texte), ensure_ascii=False), web_json(texte)
-        if len(texte.strip()) < 80:
-            raise ErreurAgent(f"réponse trop courte : {texte[:200]!r}")
-        texte, web = separer_web(texte.strip())
-        return schemas.nettoyer(aerer_listes(texte))[0], web  # un schéma au code faux est retiré plutôt qu'affiché en brut
-
+    lire = _lecteur(genre)
     with tempfile.TemporaryDirectory() as dossier:  # les cours sont dans l'entrée, les pièces jointes ici
         a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
         progres("rédaction")
@@ -546,6 +575,49 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
                                      Path(dossier), lire=lire, outils=OUTILS_WEB + (["Read"] if a_lire else []),
                                      entree=entree_avec_pieces(texte_cours, texte_pieces), timeout=1200)
     return contenu, reperes, web
+
+
+RETOUCHE = """
+
+=== MODIFICATION D'UN SUPPORT EXISTANT ===
+Ce support existe déjà : il est à la fin de l'entrée, après les cours, sous « {marque} ». L'élève
+demande de le modifier, dans ses mots :
+{demande}
+- Applique cette demande, et seulement elle : garde tel quel tout ce qu'elle ne touche pas (structure,
+  parties, repères [D1]…, marques [IA], schémas), sauf une erreur évidente que tu corriges au passage.
+- Si elle demande d'ajouter ou de développer, appuie-toi sur les cours fournis (même règles qu'au-dessus).
+- Respecte toujours le format décrit plus haut pour ce genre de support.
+- Réponds avec le support COMPLET modifié (pas seulement le morceau changé), dans le même format, sans
+  phrase avant ni après pour expliquer ce que tu as fait.
+"""
+MARQUE_ACTUEL = "=== SUPPORT ACTUEL À MODIFIER ==="
+
+
+def retoucher(rev: dict, demande: str, docs: list[dict], pieces: list[dict] | None = None, memoire=None,
+              progres=lambda texte: None) -> tuple[str, list[dict]]:
+    """Modifie un support prêt selon une demande libre de l'élève (« ajoute un exemple sur… », « plus court »).
+
+    L'IA reçoit les cours (pour pouvoir ajouter du contenu), le support actuel et la demande ; elle renvoie
+    le support complet. Renvoie (contenu, sources web) ; les repères des cours ne changent pas."""
+    demande = (demande or "").strip()
+    if not demande:
+        raise ErreurAgent("demande de modification vide")
+    if not (rev.get("contenu") or "").strip():
+        raise ErreurAgent("rien à modifier : le support n'a pas encore de contenu")
+    genre = rev["genre"]
+    texte_cours, _, _ = contexte(docs, rev["sujet"], demande, memoire, progres) if docs else ("", {}, 0)
+    consigne = rev.get("consigne") or ""
+    with tempfile.TemporaryDirectory() as dossier:
+        a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
+        progres("modification")
+        texte_prompt = prompt(genre, rev["sujet"], rev.get("date_eval") if genre == "plan" else None,
+                              consigne=consigne, fichiers=a_lire, strict=bool(rev.get("strict")))
+        texte_prompt += RETOUCHE.format(marque=MARQUE_ACTUEL,
+                                        demande="\n".join(f"  > {ligne}" for ligne in demande.splitlines()))
+        entree = entree_avec_pieces(texte_cours, texte_pieces) + f"\n\n{MARQUE_ACTUEL}\n\n{rev['contenu']}"
+        (contenu, web), _ = demander(genre, texte_prompt, Path(dossier), lire=_lecteur(genre),
+                                     outils=OUTILS_WEB + (["Read"] if a_lire else []), entree=entree, timeout=1200)
+    return contenu, web or (rev.get("sources_web") or [])
 
 
 def nom_fichier(genre: str, sujet: str, quand: dt.date, extension: str = "md") -> str:

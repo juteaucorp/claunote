@@ -276,3 +276,38 @@ def test_aerer_listes():
     assert revision.aerer_listes("- a\n- b\n\n1. c") == "- a\n- b\n\n1. c"
     assert revision.aerer_listes("```\nx\n- a\n```") == "```\nx\n- a\n```"
     assert revision.aerer_listes("| a |\n- b") == "| a |\n- b"
+
+
+def test_retoucher_une_fiche(monkeypatch):
+    """Modification demandée par l'élève : l'IA reçoit les cours, la fiche actuelle et la demande, et renvoie tout."""
+    vu = {}
+
+    def faux(prompt, cwd, outils=None, entree=None, timeout=0, **k):
+        vu.update(prompt=prompt, entree=entree)
+        return "# Fiche\n## 1. SUITES\n- **q** = raison [D1]\n- **Exemple** : u0 = 2, q = 3 → u2 = 18. [D1]\n"
+
+    monkeypatch.setattr(agent, "appeler_claude", faux)
+    rev = {"id": 3, "genre": "fiche", "sujet": "Suites", "contenu": "# Fiche\n## 1. SUITES\n- **q** = raison [D1]",
+           "consigne": "pour le BTS blanc", "sources_web": [{"repere": "W1", "titre": "t", "url": "https://x"}]}
+    contenu, web = revision.retoucher(rev, "ajoute un exemple chiffré", DOCS)
+    assert "u2 = 18" in contenu and web == rev["sources_web"]   # sources web d'avant gardées
+    assert "ajoute un exemple chiffré" in vu["prompt"] and "COMPLET" in vu["prompt"] and "FICHE SYNTHÈSE" in vu["prompt"]
+    assert "pour le BTS blanc" in vu["prompt"]
+    assert vu["entree"].index("[D1] VLAN") < vu["entree"].index(revision.MARQUE_ACTUEL) < vu["entree"].index("raison [D1]")
+    with pytest.raises(ErreurAgent):
+        revision.retoucher(rev, "  ", DOCS)
+    with pytest.raises(ErreurAgent):
+        revision.retoucher({**rev, "contenu": ""}, "plus court", DOCS)
+
+
+def test_aerer_tableaux():
+    """Une ligne collée sous un tableau n'en devient pas une rangée ; un tableau collé à un paragraphe est reconnu."""
+    t = "Avant :\n| a | b |\n|---|---|\n| 1 | 2 |\n- puce\nTexte"
+    assert revision.aerer_listes(t) == "Avant :\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- puce\n\nTexte"
+    assert revision.aerer_listes("| a | b |\n|---|---|\n| 1 | 2 |\n\nx") == "| a | b |\n|---|---|\n| 1 | 2 |\n\nx"
+    assert revision.aerer_listes("```\n| a |\n|---|\nx\n```") == "```\n| a |\n|---|\nx\n```"
+
+
+def test_consignes_de_format_des_formules():
+    p = revision.prompt("fiche", "Suites")
+    assert "jamais de \\frac ou \\sigma hors des $" in p and "$\\frac{1}{2}$" in p and "ligne vide avant et après" in p
