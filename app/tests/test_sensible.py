@@ -3,8 +3,8 @@ import pytest
 from claunote import ocr, sensible
 
 RIB = """RELEVÉ D'IDENTITÉ BANCAIRE
-Titulaire du compte : M. Antonin Dupont
-Domiciliation : Agence Angers
+Titulaire du compte : Mme Camille Martin
+Domiciliation : Agence Paris Centre
 IBAN : FR76 3000 6000 0112 3456 7890 189   BIC : AGRIFRPP"""
 
 
@@ -43,7 +43,7 @@ def test_verdict_sur_doute_rien():
 
 @pytest.mark.parametrize("nom,dossiers,niveau,categorie", [
     ("RIB.pdf", [], "sur", "banque"), ("Scan CNI recto.jpg", [], "sur", "identite"),
-    ("passeport anto.pdf", [], "sur", "identite"), ("Avis d'impôt 2024.pdf", [], "sur", "impots"),
+    ("passeport camille.pdf", [], "sur", "identite"), ("Avis d'impôt 2024.pdf", [], "sur", "impots"),
     ("fiche de paie mars.pdf", [], "sur", "paie"), ("mots de passe.txt", [], "sur", "secret"),
     ("ordonnance.jpg", [], "doute", "sante"), ("releve.pdf", ["Banque"], "doute", "banque"),
     ("TP routage.pdf", ["BTS1", "Réseaux"], None, None), ("Cours CEJM.pdf", [], None, None),
