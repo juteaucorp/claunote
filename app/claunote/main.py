@@ -27,7 +27,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
 from claunote import (actualites, agent, anki, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande,
-                      disque, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
+                      disque, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
@@ -1394,7 +1394,8 @@ def page_deposer(request: Request):
 
 
 @app.post("/deposer", response_class=HTMLResponse)
-def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: str = Form(""), paquet: int = 0):
+def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: str = Form(""), matiere: str = Form(""),
+            paquet: int = 0):
     """Envoie les fichiers dans l'inbox kDrive, en gardant les dossiers d'un dossier déposé.
 
     Un niveau choisi devient un sous-dossier de l'inbox : le worker s'en sert comme année d'étude.
@@ -1403,6 +1404,8 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
     """
     if niveau and niveau not in NIVEAUX:
         raise HTTPException(400, "niveau inconnu")
+    # Matière choisie : un sous-dossier de l'année, que le worker reconnaît (formations.matiere_depuis_dossier)
+    matiere = " ".join(matiere.replace("/", " ").replace("\\", " ").split())[:80] if niveau else ""
     kd = KDrive.from_env()
     dossiers_kdrive: dict[tuple, int] = {}
     envoyes, ignores = [], []
@@ -1410,7 +1413,7 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
         parts = [p for p in PurePosixPath((f.filename or "").replace("\\", "/")).parts if p not in ("", ".", "..", "/")]
         if not parts:
             continue
-        chemin = ([niveau] if niveau else []) + parts
+        chemin = ([niveau] if niveau else []) + ([matiere] if matiere else []) + parts
         if (PurePosixPath(parts[-1]).suffix.lower() not in EXTENSIONS
                 or any(p.lower() in importation.DOSSIERS_INUTILES for p in parts[:-1])
                 or parts[-1].lower() in importation.SYSTEME_NOMS or parts[-1].startswith(("~$", "._"))):
@@ -1438,8 +1441,23 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
 
 
 def _filtres_depot() -> dict:
-    """Listes partagées avec la page Déposer, qui écarte le code et les fichiers système avant l'envoi."""
-    return {"extensions": sorted(EXTENSIONS), "dossiers_inutiles": sorted(importation.DOSSIERS_INUTILES)}
+    """Listes partagées avec la page Déposer, qui écarte le code et les fichiers système avant l'envoi,
+    et les matières proposées pour chaque année (celles du référentiel, puis celles déjà rangées)."""
+    return {"extensions": sorted(EXTENSIONS), "dossiers_inutiles": sorted(importation.DOSSIERS_INUTILES),
+            "matieres_depot": _matieres_depot()}
+
+
+def _matieres_depot() -> dict[str, list[str]]:
+    par_niveau: dict[str, list[str]] = defaultdict(list)
+    try:
+        for f in db.formations():
+            if f["statut"] == "pret":
+                par_niveau[f["niveau"]] += formations.noms_officiels(f["referentiel"])
+        for r in db.matieres_par_annee():
+            par_niveau[r["niveau"]].append(r["matiere"])
+    except Exception:
+        return {}
+    return {n: list(dict.fromkeys(noms)) for n, noms in par_niveau.items()}
 
 
 @app.get("/recherche", response_class=HTMLResponse)
@@ -2654,16 +2672,101 @@ def _propositions_matieres() -> tuple[list[dict], list[dict]]:
 templates.env.globals["nb_matieres_en_double"] = lambda: len(_propositions_matieres()[1])
 
 
-@app.get("/organiser/matieres", response_class=HTMLResponse)
-def page_matieres(request: Request, message: str = ""):
-    comptes, groupes = _propositions_matieres()
+GARDER, AUTRE = "__garder__", "__autre__"
+
+
+def _annees_matieres(comptes: list[dict]) -> list[dict]:
+    """Une carte par année : formation, référentiel, matières rangées et où les ranger (page Matières)."""
     par_niveau = defaultdict(list)
     for r in comptes:
         par_niveau[r["niveau"]].append(r)
-    niveaux = [n for n in reversed(NIVEAUX) if n in par_niveau]
+    forms = {f["niveau"]: f for f in db.formations()}
+    regles = db.matieres_regles()
+    annees = []
+    for niveau in reversed(NIVEAUX):
+        if niveau not in par_niveau and niveau not in forms:
+            continue
+        f = forms.get(niveau)
+        ref = f["referentiel"] if f and f["statut"] == "pret" else None
+        rangees = par_niveau.get(niveau, [])
+        noms = [r["matiere"] for r in rangees]
+        n_par_nom = {r["matiere"]: r["n"] for r in rangees}
+        officielles = [{**m, "n": n_par_nom.get(m["nom"], 0)} for m in (ref or {}).get("matieres", [])]
+        annees.append({
+            "niveau": niveau, "formation": f, "ref": ref, "rangees": rangees, "officielles": officielles,
+            "noms_officiels": [m["nom"] for m in officielles],
+            "suggestions": formations.suggestions_reorganisation(niveau, noms, ref, regles),
+            "regles": sorted(((src, cible) for (n, src), cible in regles.items() if n == niveau), key=lambda x: x[1]),
+            "propositions": formations.SUGGESTIONS.get(niveau, [])})
+    return annees
+
+
+@app.get("/organiser/matieres", response_class=HTMLResponse)
+def page_matieres(request: Request, message: str = ""):
+    comptes, groupes = _propositions_matieres()
+    annees = _annees_matieres(comptes)
+    montrees = {a["niveau"] for a in annees}
+    officiels = {a["niveau"]: a["noms_officiels"] for a in annees}
+    for g in groupes:   # le nom du référentiel de l'année, s'il est dans le groupe
+        nom = next((n["nom"] for n in g["noms"] if n["nom"] in officiels.get(g["niveau"], [])), None)
+        g["nom"] = nom or g["nom"]
     return templates.TemplateResponse(request, "matieres.html", {
-        "groupes": groupes, "par_niveau": par_niveau, "niveaux": niveaux, "message": message,
-        "pause": _claude_en_pause(), "nb_distinctes": sum(map(len, db.matieres_distinctes().values()))})
+        "groupes": groupes, "annees": annees, "message": message, "pause": _claude_en_pause(),
+        "GARDER": GARDER, "AUTRE": AUTRE, "autres_niveaux": [n for n in reversed(NIVEAUX) if n not in montrees],
+        "suggestions_formation": formations.SUGGESTIONS,
+        "en_attente": any(a["formation"] and a["formation"]["statut"] in ("a_chercher", "en_cours") for a in annees),
+        "nb_distinctes": sum(map(len, db.matieres_distinctes().values()))})
+
+
+def _vers_matieres(message: str, niveau: str = "") -> RedirectResponse:
+    ancre = f"#annee-{niveau}" if niveau else ""
+    return RedirectResponse(f"/organiser/matieres?{urlencode({'message': message})}{ancre}", status_code=303)
+
+
+@app.post("/organiser/formation")
+def definir_formation(niveau: str = Form(...), nom: str = Form("")):
+    """Nom de la formation d'une année : Claude cherchera son référentiel officiel (worker)."""
+    if niveau not in NIVEAUX:
+        raise HTTPException(400, "année inconnue")
+    nom = " ".join(nom.split())[:200]
+    db.definir_formation(niveau, nom)
+    if not nom:
+        return _vers_matieres(f"{niveau} : formation oubliée. Les règles de rangement restent.", niveau)
+    db.demander_scan()   # réveille le worker
+    return _vers_matieres(f"{niveau} : « {nom} » enregistrée. Claude cherche le référentiel officiel "
+                          "(quelques minutes) ; la page se met à jour toute seule.", niveau)
+
+
+@app.post("/organiser/reorganiser")
+async def reorganiser_matieres(request: Request):
+    """Ranger chaque matière d'une année dans une autre (officielle, existante ou nouveau nom).
+    Chaque changement devient une règle : les prochains dépôts suivent le même rangement."""
+    f = await request.form()
+    niveau = f.get("niveau", "")
+    if niveau not in NIVEAUX:
+        raise HTTPException(400, "année inconnue")
+    anciennes, cibles, autres = f.getlist("ancienne"), f.getlist("cible"), f.getlist("autre")
+    if not (len(anciennes) == len(cibles) == len(autres)):
+        raise HTTPException(400, "formulaire incomplet")
+    vers: dict[str, list[str]] = defaultdict(list)
+    for ancienne, cible, autre in zip(anciennes, cibles, autres):
+        cible = " ".join(autre.split())[:80] if cible == AUTRE else cible
+        if ancienne and cible and cible not in (GARDER, AUTRE) and cible != ancienne:
+            vers[cible].append(ancienne)
+    if not vers:
+        return _vers_matieres(f"{niveau} : rien à changer.", niveau)
+    n = sum(db.fusionner_matieres(niveau, olds, cible) for cible, olds in vers.items())
+    if n:
+        db.demander_scan()   # le worker déplace les fichiers
+    resume = " ; ".join(f"{', '.join(olds)} → {cible}" for cible, olds in vers.items())
+    return _vers_matieres(f"{niveau} : {resume}. {n} document{'s' if n > 1 else ''} rangé{'s' if n > 1 else ''} "
+                          "autrement ; les prochains dépôts suivront ce rangement.", niveau)
+
+
+@app.post("/organiser/regles/supprimer")
+def supprimer_regle(niveau: str = Form(...), source: str = Form(...)):
+    db.supprimer_regle(niveau, source)
+    return _vers_matieres(f"{niveau} : règle « {source} » retirée. Les documents déjà rangés ne bougent pas.", niveau)
 
 
 @app.post("/organiser/matieres/ia", response_class=HTMLResponse)
@@ -2720,7 +2823,7 @@ async def fusionner_matieres(request: Request):
         db.demander_scan()  # réveille le worker : il déplace les fichiers dans kDrive
     message = (f"{niveau} : {', '.join(m for m in noms if m != nom)} → {nom}. "
                f"{n} document{'s' if n > 1 else ''} renommé{'s' if n > 1 else ''}, "
-               "les fichiers sont déplacés dans kDrive en arrière-plan.")
+               "les fichiers sont déplacés dans kDrive en arrière-plan, et les prochains dépôts suivront ce nom.")
     return RedirectResponse(f"/organiser/matieres?{urlencode({'message': message})}", status_code=303)
 
 

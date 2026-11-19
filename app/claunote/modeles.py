@@ -42,6 +42,7 @@ TACHES = {
     "matieres": "haiku",     # repérer les matières en double (liste de noms + quelques titres)
     "controle": "haiku",     # vérifier un classement fait par le modèle local (texte seul)
     "actualites": "haiku",   # trier les articles des flux RSS selon les sujets suivis (par lots de 40)
+    "referentiel": "opus",   # référentiel officiel d'une formation (recherche web) : rare, doit être juste
     "coherence": "haiku",    # une nouvelle fiche reste-t-elle dans le sujet ? (plans comparés, texte court)
     "actualites_point": "opus",   # « L'essentiel » des actualités : le point du jour (court, au plus toutes les 3 h)
 }
@@ -58,6 +59,7 @@ LIBELLES = {
     "matieres": "Matières en double",
     "controle": "Vérification du modèle local",
     "actualites": "Tri des actualités",
+    "referentiel": "Référentiel d'une formation",
     "coherence": "Vérification hors sujet d'un support",
     "actualites_point": "Point du jour des actualités",
     "sonde": "Test de Claude (bouton Réessayer)",

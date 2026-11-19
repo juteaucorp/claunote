@@ -66,6 +66,8 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "file_attente", lambda: {"scans": 0, "revisions": 0, "campagnes": 0, "reclassements": 0})
     monkeypatch.setattr(db, "matieres_par_annee", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "n": 3}])
     monkeypatch.setattr(db, "matieres_distinctes", lambda: {})
+    monkeypatch.setattr(db, "formations", lambda: [])
+    monkeypatch.setattr(db, "matieres_regles", lambda: {})
     monkeypatch.setattr(db, "cles_acces", lambda: [])
     # Sécurité : journal en mémoire, alertes notées au lieu d'être envoyées ; cloudflared = le client de test
     journal, alertes = [], []
@@ -1617,6 +1619,93 @@ def test_renommer_une_revision(client, monkeypatch):
     assert len(vu) == 1
     assert client.post("/revision/9/renommer", data={"sujet": "x"}).status_code == 404
 
+
+
+# --- Formation par année, réorganisation des matières -------------------------------------
+
+REF_SISR = {"formation": "BTS SIO option SISR", "source": "https://exemple.fr/ref", "resume": "Réseaux et systèmes.",
+            "matieres": [{"nom": "Mathématiques", "officiel": "Mathématiques pour l'informatique", "description": "",
+                          "contenus": ["Logique"], "epreuve": "E2"},
+                         {"nom": "Réseaux", "officiel": "Réseaux", "description": "", "contenus": [], "epreuve": ""}],
+            "correspondances": [{"actuelle": "SISR", "cible": "Réseaux", "raison": "option réseaux"}]}
+
+
+def test_page_matieres_par_annee(client, monkeypatch):
+    monkeypatch.setattr(db, "matieres_par_annee", lambda: [
+        {"niveau": "BTS1", "matiere": "Maths", "n": 2}, {"niveau": "BTS1", "matiere": "SISR", "n": 4},
+        {"niveau": "BTS1", "matiere": "Réseaux", "n": 3}, {"niveau": "Terminale", "matiere": "SES", "n": 1}])
+    monkeypatch.setattr(db, "formations", lambda: [
+        {"niveau": "BTS1", "nom": "BTS SIO SISR", "statut": "pret", "referentiel": REF_SISR, "erreur": None},
+        {"niveau": "BTS2", "nom": "BTS SIO SISR", "statut": "en_cours", "referentiel": None, "erreur": None}])
+    monkeypatch.setattr(db, "matieres_regles", lambda: {("BTS1", "Archi"): "Réseaux"})
+    r = client.get("/organiser/matieres")
+    assert r.status_code == 200
+    t = r.text
+    assert 'id="annee-BTS1"' in t and 'id="annee-BTS2"' in t and 'id="annee-Terminale"' in t
+    assert "Référentiel prêt" in t and "Référentiel en recherche" in t and "texte officiel" in t
+    assert "<option selected>Réseaux</option>" in t and "option réseaux" in t     # SISR → Réseaux proposé
+    assert "<option selected>Mathématiques</option>" in t                         # Maths → Mathématiques
+    assert "« Archi » → <strong>Réseaux</strong>" in t
+    assert 'data-vivant="remplacer"' in t                                          # se met à jour pendant la recherche
+
+
+def test_definir_formation(client, monkeypatch):
+    vu = []
+    monkeypatch.setattr(db, "definir_formation", lambda n, nom: vu.append((n, nom)))
+    r = client.post("/organiser/formation", data={"niveau": "BTS1", "nom": "  BTS SIO   option SISR "},
+                    follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].endswith("#annee-BTS1")
+    assert vu == [("BTS1", "BTS SIO option SISR")] and "scan" in client.appels
+    assert client.post("/organiser/formation", data={"niveau": "CM2", "nom": "x"}).status_code == 400
+
+
+def test_reorganiser_matieres(client, monkeypatch):
+    fusions = []
+    monkeypatch.setattr(db, "fusionner_matieres", lambda n, a, b: fusions.append((n, a, b)) or len(a))
+    r = client.post("/organiser/reorganiser", data={
+        "niveau": "BTS1", "ancienne": ["Maths", "SISR", "Archi", "Anglais", "Bureautique"],
+        "cible": ["Mathématiques", "Réseaux", "Réseaux", main.GARDER, main.AUTRE],
+        "autre": ["", "", "", "", "  Outils  numériques "]}, follow_redirects=False)
+    assert r.status_code == 303
+    assert fusions == [("BTS1", ["Maths"], "Mathématiques"), ("BTS1", ["SISR", "Archi"], "Réseaux"),
+                       ("BTS1", ["Bureautique"], "Outils numériques")]
+    assert "4+documents" in r.headers["location"] and "scan" in client.appels
+    r = client.post("/organiser/reorganiser", data={"niveau": "BTS1", "ancienne": ["Maths"], "cible": [main.GARDER],
+                                                    "autre": [""]}, follow_redirects=False)
+    assert "rien+%C3%A0+changer" in r.headers["location"]
+    assert client.post("/organiser/reorganiser", data={"niveau": "BTS1", "ancienne": ["a", "b"], "cible": ["c"],
+                                                       "autre": [""]}).status_code == 400
+
+
+def test_supprimer_regle(client, monkeypatch):
+    vu = []
+    monkeypatch.setattr(db, "supprimer_regle", lambda n, s: vu.append((n, s)) or 1)
+    r = client.post("/organiser/regles/supprimer", data={"niveau": "BTS1", "source": "Archi"}, follow_redirects=False)
+    assert r.status_code == 303 and vu == [("BTS1", "Archi")]
+
+
+def test_deposer_avec_matiere(client, monkeypatch):
+    faits = []
+
+    class FauxKD:
+        def ensure_path(self, parent, parts):
+            faits.append(parts)
+            return 900
+
+        def upload(self, dir_id, nom, contenu, conflict="version"):
+            return {"id": 1}
+
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: FauxKD()))
+    monkeypatch.setattr(db, "formations", lambda: [{"niveau": "BTS1", "nom": "x", "statut": "pret", "referentiel": REF_SISR}])
+    page = client.get("/deposer").text
+    assert '<option data-niveau="BTS1" hidden>Mathématiques</option>' in page
+    client.post("/deposer?paquet=1", data={"niveau": "BTS1", "matiere": "Réseaux/../x"},
+                files=[("fichiers", ("tp.pdf", b"%PDF-1", "application/pdf"))])
+    assert faits == [["BTS1", "Réseaux .. x"]]
+    faits.clear()
+    client.post("/deposer?paquet=1", data={"niveau": "", "matiere": "Réseaux"},
+                files=[("fichiers", ("tp.pdf", b"%PDF-1", "application/pdf"))])
+    assert faits == [[]]   # sans année, la matière n'est pas gardée
 
 
 def test_archives(client, monkeypatch):

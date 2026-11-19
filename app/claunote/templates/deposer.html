@@ -36,6 +36,12 @@
       <option value="">Laisser l'agent deviner ou lire le nom du dossier</option>
       {% for n in niveaux %}<option>{{ n }}</option>{% endfor %}
     </select></label></p>
+  <p id="choix-matiere" hidden><label>Matière (facultatif)<br>
+    <select name="matiere">
+      <option value="">Laisser l'agent la trouver</option>
+      {% for n, noms in matieres_depot.items() %}{% for m in noms %}<option data-niveau="{{ n }}" hidden>{{ m }}</option>{% endfor %}{% endfor %}
+    </select></label>
+    <br><span class="doux">Les matières de ta formation (<a href="/organiser/matieres">Ranger → Matières</a>) et celles déjà rangées.</span></p>
   <div id="selection" class="selection" hidden>
     <p><strong id="nb-envoi"></strong> <span class="doux" id="taille"></span></p>
     <p class="doux" id="apercu"></p>
@@ -82,6 +88,19 @@
   const SYSTEME = /^(\.ds_store|thumbs\.db|desktop\.ini|~\$.*|\._.*|\.~lock.*)$/i;
   const PAQUET_FICHIERS = 25, PAQUET_OCTETS = 40 * 1024 * 1024;
   const form = document.getElementById('depot'), zone = document.getElementById('zone');
+  // Matière : seulement celles de l'année choisie
+  function matieresDeLAnnee() {
+    const niveau = form.niveau.value, choix = document.getElementById('choix-matiere');
+    let n = 0;
+    form.matiere.querySelectorAll('option[data-niveau]').forEach(o => {
+      o.hidden = o.disabled = o.dataset.niveau !== niveau;
+      if (!o.hidden) n++;
+    });
+    if (form.matiere.selectedOptions[0]?.hidden) form.matiere.value = '';
+    choix.hidden = !niveau || !n;
+  }
+  form.niveau.addEventListener('change', matieresDeLAnnee);
+  matieresDeLAnnee();
   const choixFichiers = document.getElementById('fichiers'), choixDossier = document.getElementById('dossier');
   let selection = [];
 
@@ -164,6 +183,7 @@
     const donnees = new FormData();
     paquet.forEach(s => donnees.append('fichiers', s.fichier, s.chemin));
     donnees.append('niveau', niveau);
+    donnees.append('matiere', form.matiere.value);
     for (let essai = 0; ; essai++) {
       try {
         const r = await fetch('/deposer?paquet=1', { method: 'POST', body: donnees });

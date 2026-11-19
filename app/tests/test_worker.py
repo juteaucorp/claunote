@@ -1110,3 +1110,63 @@ def test_titre_raccourci_remplace_par_celui_du_support(worker, monkeypatch):
     worker.traiter_revision(None, {**rev, "sujet": "Mathématiques : Boole"})   # titre déjà court : gardé
     assert "titre" not in vu
 
+
+
+# --- Formation et règles de rangement (formations.py) ----------------------------------
+
+REF_BTS1 = {"formation": "BTS SIO option SISR", "matieres": [{"nom": "Mathématiques", "officiel": "Maths info",
+                                                              "contenus": []}, {"nom": "Réseaux", "contenus": []}],
+            "correspondances": []}
+
+
+def test_ranger_matiere(worker, monkeypatch):
+    monkeypatch.setattr(worker.db, "matieres_distinctes", lambda: {})
+    refs = {"BTS1": REF_BTS1}
+    a = Analyse("t", niveau="BTS1", matiere="Maths")
+    assert worker.ranger_matiere(a, [], {}, refs) == "Mathématiques"
+    a = Analyse("t", niveau="BTS1", matiere="Bureautique")
+    assert worker.ranger_matiere(a, [], {("BTS1", "Bureautique"): "Réseaux"}, refs) == "Réseaux"
+    a = Analyse("t", niveau="BTS1", matiere="Mathématiques")
+    assert worker.ranger_matiere(a, [], {}, refs, ["BTS1", "Réseaux"]) == "Réseaux"   # matière choisie au dépôt
+    assert "choisie au dépôt" in a.avis
+
+
+def test_reglages_matieres_sans_base(worker, monkeypatch):
+    def panne():
+        raise RuntimeError("pas de base")
+    monkeypatch.setattr(worker.db, "matieres_regles", panne)
+    assert worker.reglages_matieres() == ({}, {}, "")
+    monkeypatch.setattr(worker.db, "matieres_regles", lambda: {("BTS1", "Maths"): "Mathématiques"})
+    monkeypatch.setattr(worker.db, "formations", lambda: [
+        {"niveau": "BTS1", "nom": "SISR", "statut": "pret", "referentiel": REF_BTS1},
+        {"niveau": "BTS2", "nom": "SISR", "statut": "a_chercher", "referentiel": None}])
+    regles, refs, texte = worker.reglages_matieres()
+    assert list(refs) == ["BTS1"] and "« Réseaux »" in texte and regles
+
+
+def test_referentiels_en_attente(worker, monkeypatch):
+    from claunote import agent
+    maj = []
+    monkeypatch.setattr(worker.db, "formations_a_chercher", lambda: [
+        {"compte_id": 1, "niveau": "BTS1", "nom": "BTS SIO option SISR"},
+        {"compte_id": 1, "niveau": "BTS2", "nom": "???"}])
+    monkeypatch.setattr(worker.db, "maj_formation", lambda c, n, **k: maj.append((n, k.get("statut"))))
+    monkeypatch.setattr(worker.db, "matieres_par_annee", lambda: [])
+    monkeypatch.setattr(worker.db, "titres_par_matiere", lambda n=4: {})
+    monkeypatch.setattr(agent, "forfait_autorise", lambda: True)
+
+    def chercher(niveau, nom, comptes, titres):
+        if nom == "???":
+            raise worker.ErreurAgent("inconnue")
+        return REF_BTS1, "opus"
+    monkeypatch.setattr(worker.formations, "chercher", chercher)
+    worker.referentiels_en_attente()
+    assert maj == [("BTS1", "en_cours"), ("BTS1", "pret"), ("BTS2", "en_cours"), ("BTS2", "erreur")]
+    maj.clear()
+
+    def limite(*a):
+        raise worker.LimiteAtteinte("limite")
+    monkeypatch.setattr(worker.formations, "chercher", limite)
+    with pytest.raises(worker.LimiteAtteinte):
+        worker.referentiels_en_attente()
+    assert maj == [("BTS1", "en_cours"), ("BTS1", "a_chercher")]

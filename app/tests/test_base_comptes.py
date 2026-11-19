@@ -122,6 +122,40 @@ def test_fichiers_sur_la_vm_numeros_stables(base):
     assert db.copies_kdrive()["BTS1/x.pdf"]["kdrive_id"] == 9
 
 
+def test_formations_et_regles_par_compte(base):
+    invite = db.creer_compte("camille", "h", "invite", [])
+    with db.pour_compte(1):
+        d = db.creer(100, "a.pdf")
+        db.maj(d, statut="classe", niveau="BTS1", matiere="Maths", type="Cours")
+        db.definir_formation("BTS1", "BTS SIO SISR")
+        db.definir_formation("BTS1", "BTS SIO option SISR")          # nouveau nom : à rechercher
+        assert db.fusionner_matieres("BTS1", ["Maths"], "Mathématiques") == 1
+        assert db.fusionner_matieres("BTS1", ["Mathématiques"], "Mathématiques pour l'informatique") == 1
+        # La règle suit la dernière fusion ; plus de règle qui part du nom gardé
+        assert db.matieres_regles() == {("BTS1", "Maths"): "Mathématiques pour l'informatique",
+                                        ("BTS1", "Mathématiques"): "Mathématiques pour l'informatique"}
+        assert db.supprimer_regle("BTS1", "Maths") == 1
+        db.rendre_matiere("BTS1", "Mathématiques pour l'informatique", True)
+        d2 = db.creer(101, "b.pdf")
+        db.maj(d2, statut="classe", niveau="BTS1", matiere="Maths info", type="Cours")
+        db.fusionner_matieres("BTS1", ["Mathématiques pour l'informatique"], "Maths info")   # reste publique
+        assert db.matieres_publiques() == {("BTS1", "Maths info")}
+    with db.pour_compte(invite):
+        assert db.formations() == [] and db.matieres_regles() == {}
+        db.definir_formation("BTS1", "BTS SIO option SLAM")
+    a_chercher = db.formations_a_chercher()                            # le worker : tous les comptes
+    assert sorted((f["compte_id"], f["nom"]) for f in a_chercher) == [(1, "BTS SIO option SISR"),
+                                                                       (invite, "BTS SIO option SLAM")]
+    db.maj_formation(1, "BTS1", statut="pret", referentiel={"matieres": [{"nom": "Réseaux"}]}, modele="opus")
+    with db.pour_compte(1):
+        f = db.formations()[0]
+        assert f["statut"] == "pret" and f["referentiel"]["matieres"][0]["nom"] == "Réseaux"
+        db.definir_formation("BTS1", "")
+        assert db.formations() == []
+    with db.pour_compte(invite):
+        assert len(db.formations()) == 1
+
+
 def test_anciens_supports_de_la_matiere_par_compte(base):
     """Repères d'une nouvelle fiche : supports prêts de la même matière, du même compte, jamais elle-même."""
     invite = db.creer_compte("camille", "h", "invite", ["bibliotheque"])
