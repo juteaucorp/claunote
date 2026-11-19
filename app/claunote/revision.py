@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 
 import fsrs
 
-from claunote import agent, schemas
+from claunote import agent, coherence, schemas
 from claunote.agent import ErreurAgent, demander
 from claunote.rangement import slug
 
@@ -556,8 +556,12 @@ def _lecteur(genre: str):
 
 def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None = None,
             consigne: str = "", pieces: list[dict] | None = None, memoire=None,
-            progres=lambda texte: None, strict: bool = False) -> tuple[str, dict, list[dict]]:
+            progres=lambda texte: None, strict: bool = False, reperes_perimetre: str = "",
+            recentrer: str = "") -> tuple[str, dict, list[dict]]:
     """Renvoie (contenu, repères des cours, sources web). Contenu : Markdown, ou JSON pour un quiz et des flashcards.
+
+    `reperes_perimetre` (coherence.preparer) : anciens supports et autres cours, à la fin de l'entrée, pour
+    rester dans le sujet ; `recentrer` (coherence.consigne_recentrage) : écarts d'une première version.
 
     L'agent peut chercher sur le web s'il le juge utile ; les cours restent la base. Sauf `strict`, ce que
     les cours ne couvrent pas est complété par l'IA et marqué [IA] (pas de refus faute de cours).
@@ -569,11 +573,15 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
     lire = _lecteur(genre)
     with tempfile.TemporaryDirectory() as dossier:  # les cours sont dans l'entrée, les pièces jointes ici
         a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
-        progres("rédaction")
-        (contenu, web), _ = demander(genre, prompt(genre, sujet, date_eval, consigne=consigne, fichiers=a_lire,
-                                                    strict=strict),
+        progres("recentrage" if recentrer else "rédaction")
+        texte_prompt = prompt(genre, sujet, date_eval, consigne=consigne, fichiers=a_lire, strict=strict)
+        if reperes_perimetre:
+            texte_prompt += "\n" + coherence.CONSIGNE_REPERES
+        texte_prompt += recentrer
+        (contenu, web), _ = demander(genre, texte_prompt,
                                      Path(dossier), lire=lire, outils=OUTILS_WEB + (["Read"] if a_lire else []),
-                                     entree=entree_avec_pieces(texte_cours, texte_pieces), timeout=1200)
+                                     entree=entree_avec_pieces(texte_cours, texte_pieces) + reperes_perimetre,
+                                     timeout=1200)
     return contenu, reperes, web
 
 

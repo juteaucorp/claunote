@@ -256,6 +256,8 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS essais INT NOT NULL DEFAULT 0;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS pdf_essais INT NOT NULL DEFAULT 0; -- copie du PDF dans kDrive
+-- contrôle hors sujet (coherence.py) : {"ok", "ecarts", "anciens", "recentre", "ecarts_avant"}
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS controle JSONB;
 ALTER TABLE import_lots ADD COLUMN IF NOT EXISTS a_comprendre BOOLEAN NOT NULL DEFAULT false;  -- passe IA à faire
 CREATE INDEX IF NOT EXISTS documents_statut ON documents (statut);
 -- Index partiels : seulement les quelques lignes que le worker cherche à chaque tour (pas toute la table)
@@ -1212,11 +1214,25 @@ def revisions_en_attente():
         return c.execute("SELECT * FROM revisions WHERE statut = 'en_attente' ORDER BY essais, cree_le, id").fetchall()
 
 
-def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=None, kdrive_id=None, web=None):
+def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=None, kdrive_id=None, web=None,
+                 controle=None):
     with connect() as c:
         c.execute("UPDATE revisions SET statut = %s, contenu = %s, reperes = %s, erreur = %s, kdrive_id = %s, "
-                  "sources_web = %s WHERE id = %s",
-                  (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, Jsonb(web or []), rev_id))
+                  "sources_web = %s, controle = %s WHERE id = %s",
+                  (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, Jsonb(web or []),
+                   Jsonb(controle) if controle else None, rev_id))
+
+
+def supports_de_la_matiere(matiere: str | None, sauf: int | None, genres=("fiche", "examen", "plan"),
+                           limite: int = 200):
+    """Supports prêts de la matière (tous si elle est inconnue), les plus récents d'abord : repères d'une nouvelle fiche."""
+    with connect() as c:
+        return c.execute(
+            """SELECT id, genre, sujet, left(contenu, 20000) AS contenu, cree_le, niveau, matiere FROM revisions
+               WHERE statut = 'pret' AND genre = ANY(%(g)s) AND id <> %(sauf)s AND contenu IS NOT NULL
+                 AND (%(m)s::text IS NULL OR matiere = %(m)s)
+               ORDER BY cree_le DESC LIMIT %(n)s""",
+            {"g": list(genres), "sauf": sauf or 0, "m": matiere or None, "n": limite}).fetchall()
 
 
 def renommer_revision(rev_id: int, sujet: str):

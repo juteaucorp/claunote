@@ -2029,7 +2029,15 @@ def voir_revision(request: Request, rev_id: int):
         "web": {w["repere"]: w for w in web},
         # Ajouts de l'IA hors des cours ([IA] dans le texte, "source": "IA" dans un quiz ou des flashcards)
         "ajout_ia": rev["statut"] == "pret" and bool(re.search(r'\[IA\]|"source": "IA"', rev["contenu"] or "")),
-        "sans_texte": revision.sans_texte(sources)})
+        "sans_texte": revision.sans_texte(sources), "attente_opus": _attente_opus(rev)})
+
+
+def _attente_opus(rev: dict) -> str | None:
+    """« 19 h 05 » si cette révision attend la reprise d'Opus 5.5 (limite d'usage), sinon None."""
+    if rev["statut"] != "en_attente" or not modeles.obligatoire(rev["genre"]):
+        return None
+    jusqu_a = _instant(((etat_service().get("modeles") or {}).get("opus") or {}).get("jusqu_a"))
+    return _heure_fr(jusqu_a) if jusqu_a and jusqu_a > dt.datetime.now(pronote.PARIS) else None
 
 
 def _pdf(contenu: bytes, nom: str, telecharger: bool) -> Response:

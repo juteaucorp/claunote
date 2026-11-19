@@ -25,17 +25,34 @@ def test_un_modele_par_tache_et_escalade():
 def test_reglages_du_env(monkeypatch):
     monkeypatch.setenv("CLAUDE_MODELES", "examen=sonnet, scan = OPUS,inconnu=opus,fiche=gpt")
     assert modeles.choisir("examen") == "sonnet" and modeles.choisir("scan") == "opus"
-    assert modeles.choisir("fiche") == "sonnet"
+    assert modeles.choisir("fiche") == "opus"  # « gpt » ignoré : création de contenu, Opus 5.5
     monkeypatch.setenv("CLAUDE_MODELE_MAX", "sonnet")  # jamais Opus
     assert modeles.choisir("scan") == "sonnet" and modeles.plus_fort("sonnet") is None
 
 
-def test_modele_indisponible_remplace_par_celui_du_dessous():
+def test_modele_indisponible_remplace_par_celui_du_dessous(monkeypatch):
+    monkeypatch.setenv("CLAUDE_MODELES", "scan=opus")
     modeles.marquer_indisponible("opus", None, "refusé par le forfait")
-    assert modeles.choisir("examen") == "sonnet" and modeles.plus_fort("sonnet") is None
+    assert modeles.choisir("scan") == "sonnet" and modeles.plus_fort("sonnet") is None
     assert "opus" in modeles.indisponibles()
     modeles.marquer_indisponible("opus", dt.datetime.now(UTC) - dt.timedelta(seconds=1), "limite")
-    assert modeles.choisir("examen") == "opus"  # l'heure de reprise est passée
+    assert modeles.choisir("scan") == "opus"  # l'heure de reprise est passée
+
+
+def test_creation_toujours_sur_opus_5_5(monkeypatch):
+    monkeypatch.delenv("CLAUDE_REPLI_CREATION", raising=False)
+    monkeypatch.delenv("CLAUDE_ID_OPUS", raising=False)
+    assert all(modeles.choisir(t) == "opus" and modeles.obligatoire(t) for t in modeles.CREATION)
+    assert not modeles.obligatoire("scan") and not modeles.obligatoire("question")
+    assert modeles.identifiant("opus") == "claude-opus-5-5" and modeles.identifiant("sonnet") == "sonnet"
+    reprise = dt.datetime.now(UTC) + dt.timedelta(hours=2)
+    modeles.marquer_indisponible("opus", reprise, "limite")
+    assert modeles.choisir("fiche") == "opus" and modeles.attente_opus() == reprise  # elle attend, pas de Sonnet
+    monkeypatch.setenv("CLAUDE_REPLI_CREATION", "1")
+    assert modeles.choisir("fiche") == "sonnet"
+    monkeypatch.delenv("CLAUDE_REPLI_CREATION")
+    monkeypatch.setenv("CLAUDE_MODELE_MAX", "sonnet")   # jamais Opus : choix de l'utilisateur
+    assert not modeles.obligatoire("fiche") and modeles.choisir("fiche") == "sonnet"
 
 
 @pytest.mark.parametrize("message,attendu", [

@@ -74,9 +74,18 @@
 {% elif rev.statut == 'pret' and rev.erreur %}
 <div class="carte"><p class="alerte">{{ rev.erreur }}</p><p class="doux">La version d'avant est gardée. Reformule ta demande plus bas pour réessayer.</p></div>
 {% endif %}
+{% if rev.statut == 'pret' and rev.controle and not rev.retouche %}
+{% if not rev.controle.ok %}
+<div class="carte"><p class="alerte"><strong>Peut-être hors sujet</strong> par endroits{% if rev.controle.recentre %}, même après une nouvelle version{% endif %} :</p>
+  <ul>{% for e in rev.controle.ecarts %}<li>{{ e }}</li>{% endfor %}</ul>
+  <p class="doux">Demande une modification plus bas pour corriger ces parties.</p></div>
+{% elif rev.controle.recentre %}
+<p class="doux">Recentrée automatiquement : une première version sortait du sujet ({{ rev.controle.ecarts_avant|join(' ; ')|truncate(200) }}).</p>
+{% endif %}
+{% endif %}
 <style>.rangee-attente { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; } .rangee-attente form { margin: 0; }</style>
 {% if rev.statut == 'en_attente' and not (rev.retouche and contenu) %}
-<div class="carte accent rangee-attente"><span>L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).</span>
+<div class="carte accent rangee-attente"><span>{% if attente_opus %}Ta {{ genres[rev.genre]|lower }} attend Opus 5.5, en pause (limite du forfait) jusqu'à <strong>{{ attente_opus }}</strong>. Elle se fera toute seule ensuite.{% else %}L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).{% endif %}</span>
   <form method="post" action="/revision/{{ rev.id }}/supprimer" onsubmit="return confirm('Annuler cette demande ?')"><button>Annuler</button></form></div>
 {% elif rev.statut == 'erreur' %}
 <div class="carte"><p class="alerte">Erreur : {{ rev.erreur }}</p>

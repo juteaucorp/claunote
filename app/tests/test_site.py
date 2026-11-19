@@ -227,6 +227,29 @@ def test_voir_revision(client, monkeypatch):
     assert client.get("/revision/99").status_code == 404
 
 
+def test_revision_controle_hors_sujet_et_attente_opus(client, monkeypatch):
+    import datetime as dt
+    import json
+    from claunote import modeles
+    base = {"id": 5, "genre": "fiche", "sujet": "VLAN", "date_eval": None, "erreur": None, "reperes": {},
+            "statut": "pret", "contenu": "## VLAN\nTexte"}
+    revs = {5: {**base, "controle": {"ok": False, "ecarts": ["partie OSPF : routage"], "recentre": True}},
+            6: {**base, "id": 6, "controle": {"ok": True, "ecarts": [], "recentre": True,
+                                               "ecarts_avant": ["partie NAT"]}},
+            7: {**base, "id": 7, "statut": "en_attente", "contenu": None}}
+    monkeypatch.setattr(db, "revision", lambda i: revs.get(i))
+    r = client.get("/revision/5").text
+    assert "Peut-être hors sujet" in r and "partie OSPF : routage" in r
+    assert "Recentrée automatiquement" in client.get("/revision/6").text and "partie NAT" in client.get("/revision/6").text
+    assert "attend Opus 5.5" not in client.get("/revision/7").text
+    reprise = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)).isoformat()
+    monkeypatch.delenv("CLAUDE_REPLI_CREATION", raising=False)
+    monkeypatch.setattr(db, "etat_valeur", lambda cle: json.dumps({"modeles": {"opus": {"jusqu_a": reprise}}})
+                        if cle == "service" else None)
+    assert "attend Opus 5.5" in client.get("/revision/7").text
+    assert modeles.obligatoire("fiche")
+
+
 def test_logo_et_page_deposer(client):
     assert client.get("/static/logo.svg").status_code == 200
     r = client.get("/deposer")
