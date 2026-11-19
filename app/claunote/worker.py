@@ -32,13 +32,12 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (actualites, agent, comptes, db, decoupage, disque, importation, index, lecture, local, modeles,
+from claunote import (actualites, agent, comptes, db, decoupage, disque, formations, importation, index, lecture, local, modeles,
                       notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
                       stockage_local)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
                             SansForfait, analyser)
 from claunote.kdrive import KDrive, KDriveIndisponible
-from claunote.matieres import harmoniser
 
 # 0 tant que kDrive n'est pas configuré (installation neuve) : main() attend les réglages du site
 INBOX_ID = int(os.environ.get("KDRIVE_INBOX_ID") or 0)
@@ -269,6 +268,26 @@ def distinctes() -> set[frozenset]:
         return set()
 
 
+def reglages_matieres() -> tuple[dict, dict, str]:
+    """Du compte en cours : règles de rangement, référentiels prêts par année, et leur texte pour le prompt."""
+    try:
+        regles = db.matieres_regles()
+        prets = [f for f in db.formations() if f["statut"] == "pret" and f.get("referentiel")]
+    except Exception:
+        return {}, {}, ""
+    return regles, {f["niveau"]: f["referentiel"] for f in prets}, formations.texte_pour_classer(prets)
+
+
+def ranger_matiere(a, existantes: list[str], regles: dict, refs: dict, dossiers: list[str] | None = None) -> str | None:
+    """Matière finale d'un document : celle choisie au dépôt (dossier), sinon celle de l'IA ; puis les règles
+    de l'année, la matière officielle de sa formation, ou le nom déjà utilisé (« Maths » → « Mathématiques »)."""
+    connues = formations.noms_officiels(refs.get(a.niveau)) + existantes
+    choisie = formations.matiere_depuis_dossier(dossiers or [], a.niveau, connues)
+    if choisie and choisie != a.matiere:
+        a.avis = " ".join(filter(None, [a.avis, f"Matière choisie au dépôt : {choisie} (l'IA proposait {a.matiere or '?'})."]))
+    return formations.ranger(a.niveau, choisie or a.matiere, existantes, regles, refs, distinctes())
+
+
 def arrete() -> bool:
     return STOP.is_set() or ARRET.is_set()
 
@@ -320,6 +339,8 @@ def _traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_do
     doc_id = db.creer(item["id"], item["name"])
     dossier_local = CACHE_DIR / str(item["id"])
     debut = time.monotonic()
+    regles, refs, texte_formations = reglages_matieres()
+    jeton = formations.CONTEXTE.set(texte_formations)   # lu par agent et local pour le prompt
     try:
         chemin = kd.download(item["id"], dossier_local / item["name"])
         telecharge = time.monotonic()
@@ -367,10 +388,11 @@ def _traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_do
             return
         raise
     finally:
+        formations.CONTEXTE.reset(jeton)
         shutil.rmtree(dossier_local, ignore_errors=True)
 
     note = appliquer_dossier(a, dossiers)
-    a.matiere = harmoniser(a.matiere, matieres or [], distinctes())  # « Maths » → « Mathématiques »
+    a.matiere = ranger_matiere(a, matieres or [], regles, refs, dossiers)  # règles, référentiel, « Maths » → « Mathématiques »
     statut, note = statut_et_note(a, note)
     if statut == "a_verifier" and a.avis:
         note = f"{note} {a.avis}"
@@ -656,6 +678,12 @@ def statut_et_note(a, note: str | None) -> tuple[str, str | None]:
 
 def reclasser(doc: dict, matieres: list[str]):
     """Reclassement demandé depuis la page Organiser : relit la transcription, pas le scan."""
+    regles, refs, texte_formations = reglages_matieres()
+    with formations.contexte_pour(texte_formations):
+        _reclasser(doc, matieres, regles, refs)
+
+
+def _reclasser(doc: dict, matieres: list[str], regles: dict, refs: dict):
     try:
         a = None
         if reglages_analyse()["mode"] != "jamais":  # le modèle local d'abord
@@ -668,7 +696,7 @@ def reclasser(doc: dict, matieres: list[str]):
             if not CLAUDE.disponible():
                 return  # ni local ni Claude : il attend
             a = agent.reclasser(doc, matieres)
-        a.matiere = harmoniser(a.matiere, matieres, distinctes())
+        a.matiere = ranger_matiere(a, matieres, regles, refs)
     except ErreurAgent as e:
         db.maj(doc["id"], statut="a_verifier", note=f"Reclassement impossible : {e}")
         db.marquer_a_ranger([doc["id"]])
@@ -1333,6 +1361,30 @@ def revisions_en_attente(kd: KDrive):
             traiter_revision(kd, rev)
 
 
+def referentiels_en_attente():
+    """Référentiels de formation demandés sur la page Matières : Claude les cherche (recherche web), un par un."""
+    for f in db.formations_a_chercher():
+        if ARRET.is_set() or not CLAUDE.disponible():
+            return
+        compte_id, niveau = f["compte_id"], f["niveau"]
+        log(f"référentiel : {niveau} « {f['nom']} »")
+        db.maj_formation(compte_id, niveau, statut="en_cours", erreur=None)
+        with comptes.pour(compte_id):
+            if not agent.forfait_autorise():
+                db.maj_formation(compte_id, niveau, statut="erreur", erreur=SANS_FORFAIT)
+                continue
+            try:
+                ref, modele = formations.chercher(niveau, f["nom"], db.matieres_par_annee(), db.titres_par_matiere(5))
+            except ErreurAgent as e:
+                db.maj_formation(compte_id, niveau, statut="erreur", erreur=f"Référentiel introuvable : {e}")
+                continue
+            except (LimiteAtteinte, ClaudeIndisponible):
+                db.maj_formation(compte_id, niveau, statut="a_chercher")   # repris au retour de Claude
+                raise
+            db.maj_formation(compte_id, niveau, statut="pret", referentiel=ref, modele=modele, erreur=None)
+        log(f"référentiel prêt : {niveau} ({len(ref['matieres'])} matières)")
+
+
 SANS_FORFAIT = ("Ce compte n'utilise pas le forfait Claude de l'admin : les fiches, quiz et programmes demandent "
                 "Claude. Demande à l'admin le droit « Forfait Claude ».")
 
@@ -1429,6 +1481,7 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     # Ce que tu attends sur le site passe d'abord : révisions, puis reclassements, puis les scans.
     if CLAUDE.disponible():
         etape("révisions", revisions_en_attente, kd)
+        etape("référentiels", referentiels_en_attente)
     if (CLAUDE.disponible() or not local.disponible()) and not ARRET.is_set() and not PAUSE.is_set():
         etape("reclassements", reclasser_en_attente)
     if not KDRIVE.disponible() or ARRET.is_set():

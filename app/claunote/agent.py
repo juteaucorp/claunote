@@ -27,7 +27,7 @@ import datetime as dt
 from pathlib import Path
 from xml.etree import ElementTree
 
-from claunote import lecture, modeles
+from claunote import formations, lecture, modeles
 
 SEUIL_CONFIANCE = 0.7
 SOURCES = {".py", ".sql", ".ipynb", ".html", ".htm", ".js", ".php", ".java", ".c", ".cpp", ".cs", ".sh", ".ps1",
@@ -704,6 +704,7 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
     # Sans la liste, l'agent invente parfois un autre nom (« Maths » à côté de « Mathématiques »)
     pour_classer = contexte + (f"\nMatières déjà utilisées dans ses cours : {', '.join(matieres)}. Si le document "
                                "relève de l'une d'elles, reprends exactement ce nom.\n" if matieres else "")
+    pour_classer += formations.CONTEXTE.get()   # matières exactes de sa formation, année par année
 
     prompt, tache = None, "texte"
     if texte is not None:
@@ -764,6 +765,7 @@ def classer(transcription: str, titre: str, matieres: list[str], annee: str = ""
     """Classement d'un texte déjà transcrit (pas de relecture du scan). Analyse sans transcription."""
     prompt = PROMPT_RECLASSER.format(titre=titre, annee=annee, indices=indices, niveaux=", ".join(NIVEAUX),
                                      types=", ".join(TYPES), matieres=", ".join(matieres) or "aucune")
+    prompt += formations.CONTEXTE.get()
     with tempfile.TemporaryDirectory() as vide:
         a, m = demander("classement", prompt, Path(vide), lire=parse_reponse, entree=extrait(transcription),
                         timeout=600, modele=modele)

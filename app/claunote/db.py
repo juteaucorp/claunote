@@ -462,6 +462,27 @@ CREATE TABLE IF NOT EXISTS depots (
     compte_id  INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
     le         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Formation suivie chaque année (« BTS SIO option SISR ») et son référentiel officiel (formations.py)
+CREATE TABLE IF NOT EXISTS formations (
+    compte_id   INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
+    niveau      TEXT NOT NULL,
+    nom         TEXT NOT NULL,
+    statut      TEXT NOT NULL DEFAULT 'a_chercher',   -- a_chercher, en_cours, pret, erreur
+    referentiel JSONB,
+    erreur      TEXT,
+    modele      TEXT,
+    maj_le      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (compte_id, niveau)
+);
+-- Règles de rangement : en <niveau>, une matière nommée <source> par l'IA va dans <cible> (posées par les fusions)
+CREATE TABLE IF NOT EXISTS matieres_regles (
+    compte_id INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
+    niveau    TEXT NOT NULL,
+    source    TEXT NOT NULL,
+    cible     TEXT NOT NULL,
+    le        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (compte_id, niveau, source)
+);
 CREATE OR REPLACE FUNCTION claunote_compte() RETURNS INT LANGUAGE sql STABLE AS
 $$ SELECT NULLIF(current_setting('claunote.compte', true), '')::int $$;
 CREATE OR REPLACE FUNCTION claunote_tout() RETURNS BOOLEAN LANGUAGE sql STABLE AS
@@ -510,7 +531,8 @@ DECLARE
 BEGIN
     FOREACH t IN ARRAY ARRAY['documents', 'passages', 'revisions', 'campagnes', 'cartes', 'revues_cartes',
                              'conversations', 'messages', 'pieces_jointes', 'pronote_evenements', 'pronote_notes',
-                             'pronote_documents', 'cles_acces', 'sensibles', 'decoupages'] LOOP
+                             'pronote_documents', 'cles_acces', 'sensibles', 'decoupages', 'formations',
+                             'matieres_regles'] LOOP
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
                        AND table_name = t AND column_name = 'compte_id') THEN
             EXECUTE format('ALTER TABLE %I ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE', t);
@@ -926,7 +948,73 @@ def fusionner_matieres(niveau: str, anciennes: list[str], nouvelle: str) -> int:
                   (nouvelle, niveau, anciennes))
         c.execute("UPDATE conversations SET matiere = %s WHERE niveau = %s AND matiere = ANY(%s)",
                   (nouvelle, niveau, anciennes))
+        _poser_regles(c, niveau, anciennes, nouvelle)
     return n
+
+
+def _poser_regles(c, niveau: str, anciennes: list[str], nouvelle: str):
+    """Les prochains documents nommés comme une ancienne matière iront dans la nouvelle (et les règles
+    qui menaient à une ancienne mènent maintenant à la nouvelle)."""
+    c.execute("UPDATE matieres_regles SET cible = %s, le = now() WHERE niveau = %s AND cible = ANY(%s)",
+              (nouvelle, niveau, anciennes))
+    for a in anciennes:
+        c.execute("""INSERT INTO matieres_regles (niveau, source, cible) VALUES (%s, %s, %s)
+                     ON CONFLICT (compte_id, niveau, source) DO UPDATE SET cible = EXCLUDED.cible, le = now()""",
+                  (niveau, a, nouvelle))
+    c.execute("DELETE FROM matieres_regles WHERE niveau = %s AND source = %s", (niveau, nouvelle))
+
+
+def matieres_regles() -> dict[tuple, str]:
+    """{(année, nom donné par l'IA): matière où le ranger}."""
+    with connect() as c:
+        return {(r["niveau"], r["source"]): r["cible"]
+                for r in c.execute("SELECT niveau, source, cible FROM matieres_regles").fetchall()}
+
+
+def regles_liste() -> list[dict]:
+    with connect() as c:
+        return c.execute("SELECT niveau, source, cible, le FROM matieres_regles ORDER BY niveau, cible, source").fetchall()
+
+
+def supprimer_regle(niveau: str, source: str) -> int:
+    with connect() as c:
+        return c.execute("DELETE FROM matieres_regles WHERE niveau = %s AND source = %s", (niveau, source)).rowcount
+
+
+# --- Formations et référentiels (formations.py) --------------------------------------
+
+def formations() -> list[dict]:
+    with connect() as c:
+        return c.execute("SELECT * FROM formations ORDER BY niveau").fetchall()
+
+
+def definir_formation(niveau: str, nom: str):
+    """Nouvelle formation (ou nouveau nom) : référentiel à (re)chercher par le worker. Nom vide : oubliée."""
+    with connect() as c:
+        if not nom:
+            c.execute("DELETE FROM formations WHERE niveau = %s", (niveau,))
+            return
+        c.execute("""INSERT INTO formations (niveau, nom) VALUES (%s, %s)
+                     ON CONFLICT (compte_id, niveau) DO UPDATE SET nom = EXCLUDED.nom, statut = 'a_chercher',
+                         erreur = NULL, maj_le = now()""", (niveau, nom))
+
+
+def formations_a_chercher(limite: int = 3) -> list[dict]:
+    """Référentiels demandés (ou interrompus depuis plus de 30 min), tous comptes."""
+    with connect() as c:
+        return c.execute("""SELECT * FROM formations WHERE statut = 'a_chercher'
+                              OR (statut = 'en_cours' AND maj_le < now() - interval '30 minutes')
+                            ORDER BY maj_le LIMIT %s""", (limite,)).fetchall()
+
+
+def maj_formation(compte_id: int, niveau: str, **champs):
+    champs = {k: v for k, v in champs.items() if k in ("statut", "referentiel", "erreur", "modele")}
+    if "referentiel" in champs and champs["referentiel"] is not None:
+        champs["referentiel"] = Jsonb(champs["referentiel"])
+    sets = ", ".join(f"{k} = %s" for k in champs)
+    with connect() as c:
+        c.execute(f"UPDATE formations SET {sets}, maj_le = now() WHERE compte_id = %s AND niveau = %s",
+                  (*champs.values(), compte_id, niveau))
 
 
 def secret_session() -> str:

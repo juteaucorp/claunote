@@ -34,7 +34,7 @@ from pathlib import Path
 
 import httpx
 
-from claunote import agent, db, lecture, ocr, ressources
+from claunote import agent, db, formations, lecture, ocr, ressources
 from claunote.agent import (NIVEAUX, SEUIL_CONFIANCE, TYPES, Analyse, ClaudeIndisponible, ErreurAgent, Interrompu,
                             LimiteAtteinte)
 
@@ -322,6 +322,7 @@ def verifier_par_claude(a: Analyse, texte: str, nom: str, origine: str, matieres
     local = {k: getattr(a, k) for k in ("titre", "niveau", "matiere", "type", "chapitre", "resume", "confiance")}
     entree = (f"Classement du modèle local :\n{json.dumps(local, ensure_ascii=False)}\n\n"
               + (f"Matières déjà utilisées : {', '.join(matieres)}.\n\n" if matieres else "")
+              + formations.CONTEXTE.get()
               + f"Texte du document « {nom} » :\n{agent.extrait(texte)}")
     prompt = PROMPT_CONTROLE.format(origine=origine, raison=raison, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES))
 
@@ -378,6 +379,7 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "", 
             contexte += f"D'après ses dossiers : {indice}.\n"
         if matieres:
             contexte += f"Matières déjà utilisées : {', '.join(matieres)}. Reprends exactement l'un de ces noms s'il convient.\n"
+        contexte += formations.CONTEXTE.get()
         try:
             a, outil = classer_par_ollama(texte, chemin.name, origine, contexte), "ollama"
         except ErreurAgent:
@@ -421,6 +423,7 @@ def reclasser(doc: dict, matieres: list[str], claude: bool = False, claude_echec
     contexte = (f"\nL'élève a indiqué l'année d'étude : {doc['niveau']}. Garde-la.\n" if doc.get("niveau") else "")
     if matieres:
         contexte += f"Matières déjà utilisées : {', '.join(matieres)}. Reprends exactement l'un de ces noms s'il convient.\n"
+    contexte += formations.CONTEXTE.get()
     try:
         a = classer_par_ollama(texte, nom, "transcription déjà faite", contexte)
     except ErreurAgent:

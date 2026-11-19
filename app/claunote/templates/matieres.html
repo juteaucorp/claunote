@@ -1,21 +1,126 @@
 {% extends "base.html" %}
 {% from "_icones.html" import icone %}
 {% from "_fusion.html" import groupe %}
-{% block titre %}Matières en double{% endblock %}
+{% block titre %}Matières{% endblock %}
+{% block vivant %}{% if en_attente %}remplacer{% endif %}{% endblock %}
 {% block contenu %}
 {% from "_onglets.html" import onglets %}
 {{ onglets('ranger', 'matieres') }}
-<h1>Matières en double</h1>
+<h1>Matières</h1>
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
-<p class="doux">Sur une même année, l'IA a parfois donné plusieurs noms à la même matière (« Maths » et « Mathématiques »,
-  « Réseau » et « Réseaux »…). Si ce sont vraiment deux matières, choisis <strong>Laisser tel quel</strong> : la
-  proposition ne reviendra plus. Sinon, fusionne-les : les documents prennent le nom gardé, les révisions aussi, et les fichiers
-  sont déplacés dans le bon dossier kDrive. Les prochains scans reprendront ce nom.</p>
+<p class="doux">Donne <strong>ta formation</strong> pour chaque année : Claude récupère son référentiel officiel et en tire
+  les matières exactes. Range ensuite tes matières dedans : <strong>chaque changement devient une règle</strong>, suivie
+  par les prochains dépôts.</p>
 
-<h2>À fusionner</h2>
+{% macro options_formation(niveau) -%}
+<datalist id="formations-{{ niveau }}">{% for s in suggestions_formation.get(niveau, []) %}<option value="{{ s }}">{% endfor %}</datalist>
+{%- endmacro %}
+
+{% for a in annees %}
+{% set f = a.formation %}
+<section class="carte annee" id="annee-{{ a.niveau }}">
+  <div class="entete-groupe">
+    <span class="etiquette">{{ a.niveau }}</span>
+    {% if f %}<strong>{{ a.ref.formation if a.ref and a.ref.formation else f.nom }}</strong>
+      {% if f.statut in ('a_chercher', 'en_cours') %}<span class="etat attente">Référentiel en recherche…</span>
+      {% elif f.statut == 'pret' %}<span class="etat ok">Référentiel prêt</span>
+      {% elif f.statut == 'erreur' %}<span class="etat">Échec</span>{% endif %}
+    {% else %}<span class="doux">Formation non renseignée</span>{% endif %}
+  </div>
+
+  <form method="post" action="/organiser/formation" class="ligne-formation">
+    <input type="hidden" name="niveau" value="{{ a.niveau }}">
+    <label>Formation<input name="nom" value="{{ f.nom if f }}" list="formations-{{ a.niveau }}"
+           placeholder="ex. {{ (a.propositions or ['BTS SIO option SISR'])[0] }}"></label>
+    {{ options_formation(a.niveau) }}
+    <button {{ 'disabled' if pause and not f }}>{{ 'Chercher à nouveau' if f else 'Chercher le référentiel' }}</button>
+  </form>
+  {% if f and f.statut in ('a_chercher', 'en_cours') %}
+  <p class="doux">Claude lit le référentiel officiel de « {{ f.nom }} » et le compare à tes matières (quelques minutes).
+    {% if pause %}L'IA est en pause ({{ pause }}) : la recherche reprendra à son retour.{% endif %}</p>
+  {% elif f and f.statut == 'erreur' %}
+  <p class="erreur">{{ f.erreur }} Vérifie le nom (ex. « BTS SIO option SISR ») puis relance.</p>
+  {% endif %}
+
+  {% if a.ref %}
+  <details class="referentiel">
+    <summary>{{ a.officielles|length }} matière{{ 's' if a.officielles|length > 1 }} au référentiel
+      {% if a.ref.source %}· <a href="{{ a.ref.source }}" target="_blank" rel="noopener">texte officiel</a>{% endif %}</summary>
+    {% if a.ref.resume %}<p class="doux">{{ a.ref.resume }}</p>{% endif %}
+    <ul class="officielles">
+      {% for m in a.officielles %}
+      <li><strong>{{ m.nom }}</strong>{% if m.officiel != m.nom %} <span class="doux">· {{ m.officiel }}</span>{% endif %}
+        {% if m.epreuve %}<span class="etat">{{ m.epreuve }}</span>{% endif %}
+        <span class="doux">· {{ m.n }} doc.</span>
+        {% if m.contenus %}<div class="doux contenus">{{ m.contenus|join(' · ') }}</div>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+
+  {% if a.rangees %}
+  <form method="post" action="/organiser/reorganiser" class="reorganiser">
+    <input type="hidden" name="niveau" value="{{ a.niveau }}">
+    <h3>Ranger tes matières</h3>
+    {% for r in a.rangees %}
+    {% set sug = a.suggestions.get(r.matiere, {}) %}
+    {% set officielle = r.matiere in a.noms_officiels %}
+    <div class="ligne">
+      <input type="hidden" name="ancienne" value="{{ r.matiere }}">
+      <span class="nom">{{ r.matiere }} <span class="doux">({{ r.n }})</span>
+        {% if officielle %}<span class="etat ok">officielle</span>{% endif %}</span>
+      <span class="fleche doux" aria-hidden="true">→</span>
+      <select name="cible" aria-label="Où ranger {{ r.matiere }}">
+        <option value="{{ GARDER }}" {{ 'selected' if not sug.cible }}>Garder « {{ r.matiere }} »</option>
+        {% if a.noms_officiels %}<optgroup label="Matières du référentiel">
+          {% for o in a.noms_officiels if o != r.matiere %}<option {{ 'selected' if sug.cible == o }}>{{ o }}</option>{% endfor %}
+        </optgroup>{% endif %}
+        {% set autres = a.rangees|map(attribute='matiere')|reject('in', a.noms_officiels + [r.matiere])|list %}
+        {% if autres %}<optgroup label="Autres matières de l'année">
+          {% for o in autres %}<option {{ 'selected' if sug.cible == o }}>{{ o }}</option>{% endfor %}
+        </optgroup>{% endif %}
+        {% if sug.cible and sug.cible not in a.noms_officiels and sug.cible not in autres %}
+        <option selected>{{ sug.cible }}</option>{% endif %}
+        <option value="{{ AUTRE }}">Autre nom…</option>
+      </select>
+      <input name="autre" class="autre" placeholder="Nouveau nom" aria-label="Nouveau nom pour {{ r.matiere }}">
+      {% if sug.cible %}<span class="doux suggestion">Proposé : {{ sug.raison }}</span>{% endif %}
+    </div>
+    {% endfor %}
+    <button class="principal">Appliquer</button>
+  </form>
+  {% else %}
+  <p class="doux">Pas encore de cours rangés cette année : les prochains dépôts iront dans les matières du référentiel.</p>
+  {% endif %}
+
+  {% if a.regles %}
+  <details class="regles">
+    <summary>{{ a.regles|length }} règle{{ 's' if a.regles|length > 1 }} de rangement</summary>
+    <ul>{% for src, cible in a.regles %}
+      <li><form method="post" action="/organiser/regles/supprimer">
+        <input type="hidden" name="niveau" value="{{ a.niveau }}"><input type="hidden" name="source" value="{{ src }}">
+        « {{ src }} » → <strong>{{ cible }}</strong> <button class="lien" title="Ne plus appliquer cette règle">Retirer</button>
+      </form></li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if autres_niveaux %}
+<form method="post" action="/organiser/formation" class="carte ligne-formation">
+  <label>Autre année<select name="niveau">{% for n in autres_niveaux %}<option>{{ n }}</option>{% endfor %}</select></label>
+  <label>Formation<input name="nom" required placeholder="ex. Terminale générale"></label>
+  <button>Ajouter</button>
+</form>
+{% endif %}
+
+<h2>Doublons</h2>
+<p class="doux">Sur une même année, l'IA a parfois donné plusieurs noms à la même matière. Si ce sont vraiment deux
+  matières, choisis <strong>Laisser tel quel</strong>.</p>
 {% for g in groupes %}{{ groupe(g, loop.index) }}
 {% else %}
-<div class="carte">Aucun doublon évident : chaque année a des noms de matières distincts.</div>
+<div class="carte">Aucun doublon évident.</div>
 {% endfor %}
 {% if nb_distinctes %}
 <form method="post" action="/organiser/matieres/reproposer" class="doux reproposer">
@@ -30,31 +135,8 @@
   {% if pause %}<p class="doux">L'IA est en pause ({{ pause }}).</p>{% endif %}
 </div>
 
-<h2>Fusionner à la main</h2>
-<p class="doux">Coche au moins deux matières d'une même année, puis écris le nom à garder.</p>
-{% for niveau in niveaux %}
-<form method="post" action="/organiser/matieres/fusionner" class="carte groupe">
-  <input type="hidden" name="niveau" value="{{ niveau }}">
-  <div class="entete-groupe"><span class="etiquette">{{ niveau }}</span>
-    <span class="doux">{{ par_niveau[niveau]|length }} matière{{ 's' if par_niveau[niveau]|length > 1 }}</span></div>
-  <div class="noms">
-    {% for r in par_niveau[niveau] %}
-    <label><input type="checkbox" name="noms" value="{{ r.matiere }}"> {{ r.matiere }} <span class="doux">({{ r.n }})</span></label>
-    {% endfor %}
-  </div>
-  {% if par_niveau[niveau]|length > 1 %}
-  <div class="garder">
-    <label>Nom à garder<input name="nom" list="main-{{ loop.index }}" required placeholder="ex. Mathématiques"></label>
-    <datalist id="main-{{ loop.index }}">{% for r in par_niveau[niveau] %}<option value="{{ r.matiere }}">{% endfor %}</datalist>
-    <button>Fusionner la sélection</button>
-  </div>
-  {% endif %}
-</form>
-{% else %}
-<div class="carte">Pas encore de cours classés.</div>
-{% endfor %}
-
 <style>
+  .annee { display: grid; gap: 12px; scroll-margin-top: 80px; }
   .groupe { display: grid; gap: 10px; }
   .entete-groupe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .entete-groupe .raison { font-size: .85rem; }
@@ -62,15 +144,35 @@
   .etat { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: .78rem; font-weight: 600; border: 1px solid var(--bord); color: var(--doux); }
   .etat.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
   .etat.attente { color: var(--accent-fonce); border-color: var(--accent); background: var(--accent-pale); }
+  .ligne-formation { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .ligne-formation label { display: flex; flex-direction: column; flex: 1 1 220px; font-size: .9rem; }
+  .referentiel summary, .regles summary { cursor: pointer; font-weight: 500; }
+  .officielles { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+  .contenus { font-size: .85rem; }
+  .reorganiser { display: grid; gap: 8px; }
+  .reorganiser h3 { margin: 4px 0 0; font-size: 1rem; }
+  .ligne { display: grid; grid-template-columns: minmax(120px, 1fr) auto minmax(150px, 1.3fr); gap: 4px 8px; align-items: center; }
+  .ligne .nom { overflow-wrap: anywhere; }
+  .ligne .autre { display: none; grid-column: 3; }
+  .ligne:has(option[value="{{ AUTRE }}"]:checked) .autre { display: block; }
+  .ligne .suggestion { grid-column: 1 / -1; font-size: .82rem; }
+  .reorganiser > button { justify-self: start; }
+  .regles ul { margin: 6px 0 0; padding-left: 18px; }
+  .regles form { display: inline; }
+  .lien, .reproposer button { padding: 0; border: 0; background: none; color: var(--accent-fonce); text-decoration: underline; min-height: 0; }
+  .reproposer { margin: 4px 0 0; font-size: .9rem; }
   .noms { display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .noms label { display: inline-flex; align-items: center; gap: 6px; }
-  .reproposer { margin: 4px 0 0; font-size: .9rem; }
-  .reproposer button { padding: 0; border: 0; background: none; color: var(--accent-fonce); text-decoration: underline; min-height: 0; }
   .garder { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
   .garder label { display: flex; flex-direction: column; flex: 1 1 220px; font-size: .9rem; }
   #ia { margin: 14px 0; }
   .bouton-ia { display: inline-flex; align-items: center; gap: 8px; }
   #ia .htmx-indicator { display: none; margin-left: 8px; }
   #ia .htmx-request ~ .htmx-indicator, #ia .htmx-request.htmx-indicator { display: inline; }
+  @media (max-width: 560px) {
+    .ligne { grid-template-columns: 1fr; }
+    .ligne .fleche { display: none; }
+    .ligne .autre { grid-column: 1; }
+  }
 </style>
 {% endblock %}
