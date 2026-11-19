@@ -298,7 +298,7 @@
 {% set evals = nb_evaluations_proches() if peut('agenda') else 0 %}
 {% set a_importer = nb_import_a_confirmer() if est_admin() else 0 %}
 {% set attente = nb_a_verifier() + a_importer %}
-{% set rubrique = 'actualites' if chemin.startswith('/actualites') else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander', '/progression')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
+{% set rubrique = 'actualites' if chemin.startswith('/actualites') else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours', '/partages')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander', '/progression')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
 {% set admin = est_admin() %}
 {% set actus = nb_actualites() if peut('actualites') else 0 %}
 {% set nb_cours = nb_cours_total() if peut('bibliotheque') else 0 %}

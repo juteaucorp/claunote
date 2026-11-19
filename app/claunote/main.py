@@ -333,6 +333,9 @@ templates.env.globals["installation_a_faire"] = installation.a_faire
 templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_defaut"))
 templates.env.globals["moi"] = moi
 templates.env.globals["peut"] = lambda droit: comptes.peut(moi(), droit)
+# Boutons Public / Privé : seulement s'il y a d'autres comptes, et sur ses propres éléments
+templates.env.globals["partage_possible"] = lambda: bool(moi()) and db.plusieurs_comptes()
+templates.env.globals["a_moi"] = lambda element: bool(moi()) and element.get("compte_id", moi()["id"]) == moi()["id"]
 templates.env.globals["est_admin"] = lambda: comptes.est_admin(moi())
 templates.env.globals["paris_tz"] = pronote.PARIS
 templates.env.globals["contact"] = (os.environ.get("CLAUNOTE_CONTACT") or "").strip()   # mentions légales
@@ -1299,8 +1302,11 @@ def bibliotheque(request: Request):
     for r in db.bibliotheque():
         arbre[r["niveau"]][r["matiere"]].append(r)
     niveaux = [n for n in reversed(NIVEAUX) if n in arbre]  # le plus récent (BTS2) en haut, le collège en bas
+    # « Tout voir » mélange les comptes : les boutons Public / Privé des matières restent sur ses propres données
+    partage = db.plusieurs_comptes() and not (moi() or {}).get("tout_voir")
     return templates.TemplateResponse(request, "bibliotheque.html", {
-        "arbre": arbre, "niveaux": niveaux, "nb_hors_cours": db.nb_hors_cours()})
+        "arbre": arbre, "niveaux": niveaux, "nb_hors_cours": db.nb_hors_cours(),
+        "partage": partage, "publiques": db.matieres_publiques() if partage else set()})
 
 
 @app.get("/liste", response_class=HTMLResponse)
@@ -1322,7 +1328,9 @@ def document(request: Request, doc_id: int):
     return templates.TemplateResponse(request, "document.html", {
         "doc": doc, "transcription": rendu_markdown(doc["transcription"]), "apercu": apercu, "variante": variante,
         "format": PurePosixPath(doc["nom"]).suffix.lstrip(".").upper(),
-        "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
+        "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres(),
+        "matiere_publique": (doc["niveau"], doc["matiere"]) in db.matieres_publiques()
+        if doc["statut"] == "classe" and db.plusieurs_comptes() else False})
 
 
 def _page_carte_mentale(request: Request, texte: str, titre: str, retour: str) -> HTMLResponse:
@@ -3149,3 +3157,100 @@ def health():
 def inbox():
     items = KDrive.from_env().list_dir(INBOX_ID)
     return {"fichiers": sorted(i["name"] for i in items if i["type"] == "file")}
+
+
+# --- Public ou privé : chacun choisit pour ses cours, matières, révisions, campagnes -----------
+# Privé par défaut. Public : les autres comptes le lisent sur « Partagés », en lecture seule. « Tout voir » de
+# l'admin ne change pas (il voit tout, privé compris) ; seul le propriétaire choisit, même pour l'admin.
+
+VALEURS_VISIBILITE = {"public": True, "prive": False, "matiere": None}
+
+
+def _visibilite(table: str, element_id: int, valeur: str, suite: str) -> RedirectResponse:
+    if valeur not in VALEURS_VISIBILITE or (valeur == "matiere" and table != "documents"):
+        raise HTTPException(400)
+    if not db.changer_visibilite(table, element_id, VALEURS_VISIBILITE[valeur]):
+        raise HTTPException(404)   # pas à ce compte (ou n'existe pas)
+    return RedirectResponse(_suite_sure(suite), status_code=303)
+
+
+@app.post("/doc/{doc_id}/visibilite")
+def visibilite_document(doc_id: int, valeur: str = Form(...)):
+    return _visibilite("documents", doc_id, valeur, f"/doc/{doc_id}")
+
+
+@app.post("/revision/{rev_id}/visibilite")
+def visibilite_revision(rev_id: int, valeur: str = Form(...)):
+    return _visibilite("revisions", rev_id, valeur, f"/revision/{rev_id}")
+
+
+@app.post("/campagne/{campagne_id}/visibilite")
+def visibilite_campagne(campagne_id: int, valeur: str = Form(...)):
+    return _visibilite("campagnes", campagne_id, valeur, f"/campagne/{campagne_id}")
+
+
+@app.post("/bibliotheque/visibilite")
+def visibilite_matiere(niveau: str = Form(...), matiere: str = Form(...), valeur: str = Form(...)):
+    if valeur not in ("public", "prive"):
+        raise HTTPException(400)
+    db.rendre_matiere(niveau, matiere, valeur == "public")
+    return RedirectResponse("/bibliotheque", status_code=303)
+
+
+@app.get("/partages", response_class=HTMLResponse)
+def page_partages(request: Request):
+    docs = db.partages_documents()
+    par_auteur = defaultdict(lambda: defaultdict(list))
+    for d in docs:
+        par_auteur[d["auteur"]][(d["niveau"], d["matiere"])].append(d)
+    return templates.TemplateResponse(request, "partages.html", {
+        "par_auteur": par_auteur, "nb_docs": len(docs), "revisions": db.partages_revisions(),
+        "campagnes": db.partages_campagnes(), "genres": revision.GENRES})
+
+
+@app.get("/partages/doc/{doc_id}", response_class=HTMLResponse)
+def partage_document(request: Request, doc_id: int):
+    doc = db.document_partage(doc_id)
+    if doc is None:
+        raise HTTPException(404)
+    return templates.TemplateResponse(request, "partage_doc.html", {
+        "doc": doc, "transcription": rendu_markdown(doc["transcription"])})
+
+
+@app.get("/partages/doc/{doc_id}/fichier")
+def partage_fichier(doc_id: int):
+    doc = db.document_partage(doc_id)
+    if doc is None:
+        raise HTTPException(404)
+    return _servir(doc["kdrive_id"], doc["nom"])
+
+
+@app.get("/partages/revision/{rev_id}", response_class=HTMLResponse)
+def partage_revision(request: Request, rev_id: int):
+    rev = db.revision_partagee(rev_id)
+    if rev is None:
+        raise HTTPException(404)
+    reperes = rev["reperes"] or {}
+    sources = db.documents_partages(list(reperes.values()))   # seulement les cours publics eux aussi
+    visibles = {r: i for r, i in reperes.items() if i in {d["id"] for d in sources}}
+    web = rev.get("sources_web") or []
+    contenu, questions, cartes = None, [], []
+    if rev["genre"] == "quiz":
+        questions = json.loads(rev["contenu"] or "[]")
+    elif rev["genre"] == "cartes":
+        cartes = db.cartes_partagees(rev_id)
+    else:
+        contenu = Markup(str(avec_sources(rendu_markdown(rev["contenu"]), visibles, web))
+                         .replace('href="/doc/', 'href="/partages/doc/'))
+    return templates.TemplateResponse(request, "partage_revision.html", {
+        "rev": rev, "genres": revision.GENRES, "contenu": contenu, "questions": questions, "cartes": cartes,
+        "sources": sources, "reperes": visibles})
+
+
+@app.get("/partages/campagne/{campagne_id}", response_class=HTMLResponse)
+def partage_campagne(request: Request, campagne_id: int):
+    campagne, revs = db.campagne_partagee(campagne_id)
+    if campagne is None:
+        raise HTTPException(404)
+    return templates.TemplateResponse(request, "partage_campagne.html", {
+        "campagne": campagne, "revs": revs, "genres": revision.GENRES})
