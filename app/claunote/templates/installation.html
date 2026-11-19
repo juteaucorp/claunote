@@ -99,11 +99,18 @@
   <form method="post" action="/installation/stockage">
     <fieldset class="choix-stockage"><legend>Stockage</legend>
       {% for s, nom in stockages.items() %}
-      <label><input type="radio" name="stockage" value="{{ s }}" {{ 'checked' if s == stockage }} {{ 'disabled' if s != 'kdrive' }}>
-        <span><strong>{{ nom }}</strong>{% if s != 'kdrive' %} <span class="doux">(bientôt)</span>{% endif %}</span></label>
+      <label><input type="radio" name="stockage" value="{{ s }}" {{ 'checked' if s == stockage }}>
+        <span><strong>{{ nom }}</strong><br><span class="doux">{% if s == 'kdrive' %}Tes scans et cours rangés sur kDrive (Infomaniak, Suisse) ; la VM n'en garde qu'une copie le temps de les lire.
+          {% elif s == 'local' %}Tout reste sur la VM, dans <code>{{ fichiers_dir }}</code>. Rien à créer ailleurs, mais <strong>pense à la sauvegarde</strong> et à la place disque.
+          {% else %}Tout est sur la VM, et le worker <strong>copie les cours rangés sur kDrive</strong> toutes les heures (copie de sauvegarde : rien n'y est effacé).{% endif %}</span></span></label>
       {% endfor %}
     </fieldset>
-    <p class="doux">kDrive (Infomaniak, Suisse) garde tes scans et les cours rangés ; la VM n'en garde qu'une copie le temps de les lire.</p>
+    {% if not a_faire %}<p class="doux">Changer de stockage ne déplace pas les fichiers déjà rangés : c'est refusé s'il y a déjà des documents.</p>{% endif %}
+    <div class="bloc-local">
+      <p class="doux">Pour déposer des scans sans le site : copie-les dans <code>{{ fichiers_dir }}/Inbox</code> sur la VM.</p>
+      <div class="actions"><button name="action" value="tester">Voir la place libre</button></div>
+    </div>
+    <div class="bloc-kdrive">
     {{ secret('KDRIVE_TOKEN', 'kdrive_token') }}
     {{ champ('KDRIVE_ID', 'kdrive_id', (saisi or {}).get('KDRIVE_ID')) }}
     <div class="actions"><button name="action" value="tester">Tester la connexion</button>
@@ -111,8 +118,13 @@
     {% if racine %}<p class="doux">Dossiers à la racine : {% for d in racine %}<code>{{ d.name }}</code> ({{ d.id }}){{ ', ' if not loop.last }}{% endfor %}.
       Le numéro d'un dossier est aussi à la fin de son adresse dans kDrive.</p>{% endif %}
     {{ champ('KDRIVE_ETUDES_ID', 'kdrive_etudes_id', (saisi or {}).get('KDRIVE_ETUDES_ID')) }}
+    <p class="doux seul-les-deux">« Les deux » : c'est le dossier kDrive qui reçoit la copie des cours rangés.</p>
+    <div class="seul-kdrive">
     {{ champ('KDRIVE_INBOX_ID', 'kdrive_inbox_id', (saisi or {}).get('KDRIVE_INBOX_ID')) }}
     <p class="doux">Inbox : là où tu déposes les scans (le site les y met aussi). Cours rangés : là où Claunote les classe par année et matière.</p>
+    </div>
+    {% if copie_kdrive %}<p class="doux">Dernière copie vers kDrive : {{ copie_kdrive.le }}{% if copie_kdrive.erreur %} · <span class="alerte">{{ copie_kdrive.erreur }}</span>{% else %} · {{ copie_kdrive.copies }} fichier(s) copié(s){% endif %}</p>{% endif %}
+    </div>
     {% call boutons('stockage') %}{% endcall %}
   </form>
 </section>
@@ -215,6 +227,10 @@
   .choix-stockage label, .case { display: flex; gap: 8px; align-items: flex-start; }
   .choix-stockage input, .case input { width: auto; flex: none; margin-top: 4px; }
   #stockage input[type=password], #claude input[type=password], #cloudflare input[type=password] { width: 100%; }
+  #stockage form:has(input[value=local]:checked) .bloc-kdrive,
+  #stockage form:not(:has(input[value=local]:checked)) .bloc-local,
+  #stockage form:has(input[value=les_deux]:checked) .seul-kdrive,
+  #stockage form:not(:has(input[value=les_deux]:checked)) .seul-les-deux { display: none; }
   .bilan { list-style: none; padding: 0; display: grid; gap: 6px; }
   .actions.bas { max-width: 680px; justify-content: space-between; }
   .actions.bas form { margin: 0; }

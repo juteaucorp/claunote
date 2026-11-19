@@ -36,7 +36,7 @@ def detecter():
     """Au démarrage du site, une seule fois : installation neuve (assistant) ou installation existante."""
     if db.etat_valeur("installation"):
         return
-    neuve = db.nb_documents() == 0 and (bool((db.compte(1) or {}).get("mdp_defaut")) or not reglages.kdrive_configure())
+    neuve = db.nb_documents() == 0 and (bool((db.compte(1) or {}).get("mdp_defaut")) or not reglages.stockage_pret())
     db.etat_ecrire("installation", "a_faire" if neuve else "faite")
 
 

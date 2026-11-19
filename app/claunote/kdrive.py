@@ -45,7 +45,16 @@ class KDrive:
         )
 
     @classmethod
-    def from_env(cls) -> "KDrive":
+    def from_env(cls):
+        """Le stockage choisi : kDrive, ou les fichiers de la VM (STOCKAGE=local ou les_deux, même interface)."""
+        if (os.environ.get("STOCKAGE") or "").strip() in ("local", "les_deux"):
+            from claunote.stockage_local import Local
+            return Local.from_env()
+        return cls.distant()
+
+    @classmethod
+    def distant(cls) -> "KDrive":
+        """Toujours kDrive (« les deux » : la copie de sauvegarde)."""
         return cls(os.environ["KDRIVE_TOKEN"], os.environ["KDRIVE_ID"])
 
     def _url(self, path: str, upload: bool = False) -> str:
