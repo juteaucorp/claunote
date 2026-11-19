@@ -10,6 +10,8 @@ en plus, même titre + même texte en moins de 20 h = pas renvoyé, et plus de 3
 - une fois par jour à l'heure choisie, le rappel le plus utile : évaluation proche sans fiche,
   flashcards à revoir, fiche à relire, ou nouveaux cours sans révision ;
 - le matin d'une évaluation, un dernier rappel ;
+- le dimanche, s'il y a du ménage à faire : révisions, flashcards et campagnes qui ne servent plus,
+  à archiver (archivage.py ; jamais archivé sans toi) ;
 - tout de suite : révision prête, nouveau contrôle annoncé sur Pronote, documents des profs,
   actualités importantes des sujets suivis (actualites.py).
 Rien ne part pendant les heures de silence : la file attend le matin.
@@ -25,7 +27,7 @@ from py_vapid.utils import b64urlencode
 from cryptography.hazmat.primitives import serialization
 from pywebpush import WebPushException, webpush
 
-from claunote import db, pronote, revision
+from claunote import archivage, db, pronote, revision
 
 PARIS = pronote.PARIS
 CONTACT = os.environ.get("CLAUNOTE_PUSH_CONTACT") or "mailto:claunote@example.com"
@@ -219,6 +221,8 @@ def planifier(maintenant: dt.datetime):
             db.notifier(f"rappel:{jour}", *r)
         else:
             db.notifier(f"rappel:{jour}", "Rien à proposer aujourd'hui", statut="ignore")
+    if p["rappel"] and maintenant.weekday() == DIMANCHE and maintenant.time() >= _heure(p["heure"]):
+        proposer_archivage(maintenant)
     if p["rappel"] and maintenant.time() >= _heure(p["silence_fin"]):
         for e in db.evenements_a_venir("evaluation", 1):
             if e["le"].astimezone(PARIS).date() == jour and e["le"] > maintenant:
@@ -226,6 +230,32 @@ def planifier(maintenant: dt.datetime):
                 heure = e["le"].astimezone(PARIS)
                 db.notifier(f"jour:{e['matiere']}:{heure:%Y-%m-%dT%H:%M}", f"{e['matiere']} aujourd'hui à {heure:%H:%M}",
                             "Un dernier coup d'œil à ta fiche ?" if e["revision_id"] else e["titre"], url)
+
+
+DIMANCHE = 6
+
+
+def proposer_archivage(maintenant: dt.datetime):
+    """Une fois par semaine et par compte : le ménage proposé, s'il y a assez à ranger pour déranger."""
+    annee, semaine, _ = maintenant.isocalendar()
+    for compte in db.comptes():
+        if not compte.get("actif", True):
+            continue
+        cle = f"archivage:{compte['id']}:{annee}-S{semaine:02d}"
+        if db.notification_connue(cle):
+            continue
+        try:
+            with db.pour_compte(compte["id"]):   # ses révisions seulement
+                props = archivage.propositions(maintenant)
+        except Exception as e:
+            log(f"propositions d'archivage impossibles : {e}")
+            continue
+        # L'admin d'origine : appareils d'avant les comptes (sans compte), comme le rappel du jour
+        with db.pour_compte(None if compte["id"] == 1 else compte["id"]):
+            if len(props) >= archivage.MIN_NOTIFICATION:
+                db.notifier(cle, "Un peu de ménage ?", archivage.resume(props), "/archives")
+            else:
+                db.notifier(cle, "Rien à archiver cette semaine", statut="ignore")
 
 
 def revision_prete(rev: dict):

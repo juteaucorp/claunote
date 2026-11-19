@@ -253,3 +253,19 @@ def test_campagne_prete_une_seule_fois(base, monkeypatch):
     nt.campagne_prete(3)
     nt.campagne_prete(3)
     assert list(base.file) == ["campagne:3"] and "1 en erreur" in base.file["campagne:3"]["corps"]
+
+
+def test_menage_propose_le_dimanche(base, monkeypatch):
+    from claunote import archivage
+    dimanche = dt.datetime(2026, 11, 22, 18, 30, tzinfo=PARIS)
+    props = [{"type": "revision", "id": i, "genre": "fiche", "titre": "x", "raison": "r"} for i in range(3)]
+    monkeypatch.setattr(archivage, "propositions", lambda maintenant=None: props)
+    nt.planifier(dimanche - dt.timedelta(days=6))           # lundi : rien
+    assert not any(c.startswith("archivage:") for c in base.file)
+    nt.planifier(dimanche)
+    nt.planifier(dimanche + dt.timedelta(minutes=30))       # une fois par semaine
+    menage = [n for c, n in base.file.items() if c.startswith("archivage:")]
+    assert len(menage) == 1 and menage[0]["url"] == "/archives" and menage[0]["statut"] == "attente"
+    props.pop()                                              # trop peu la semaine suivante : rien n'est envoyé
+    nt.planifier(dimanche + dt.timedelta(days=7))
+    assert [n["statut"] for c, n in base.file.items() if c.startswith("archivage:")] == ["attente", "ignore"]

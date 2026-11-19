@@ -26,7 +26,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
-from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, comptes, db, decoupage, demande,
+from claunote import (actualites, agent, anki, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande,
                       disque, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local)
@@ -1795,7 +1795,7 @@ def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str
     return templates.TemplateResponse(request, "reviser.html", {
         **contexte, "campagnes": campagnes, "du_jour": du_jour, "jour": jour, "compte": db.compte_revisions(),
         "evaluations": evaluations, "paris": pronote.PARIS,
-        "a_choisir": bool(db.niveaux_matieres())})
+        "a_choisir": bool(db.niveaux_matieres()), "a_archiver": archivage.nb_propositions()})
 
 
 @app.get("/reviser/nouvelle", response_class=HTMLResponse)
@@ -1945,6 +1945,8 @@ def voir_revision(request: Request, rev_id: int):
     rev = db.revision(rev_id)
     if rev is None:
         raise HTTPException(404)
+    if rev["statut"] == "pret":
+        db.noter_ouverture(rev_id)   # « pas ouverte depuis… » : base des propositions d'archivage
     reperes = rev["reperes"] or {}
     web = rev.get("sources_web") or []
     contenu, corrige, questions, cartes = None, None, [], []
@@ -2071,6 +2073,47 @@ def supprimer_revision(rev_id: int):
     db.supprimer_revision(rev_id)
     suite = f"/campagne/{rev['campagne_id']}" if rev["campagne_id"] else "/reviser"
     return RedirectResponse(suite, status_code=303)
+
+
+@app.post("/revision/{rev_id}/archiver")
+def archiver_revision(rev_id: int):
+    rev = db.revision(rev_id)
+    if rev is None:
+        raise HTTPException(404)
+    db.archiver(revisions=[rev_id])
+    return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+# --- Archives : ménage proposé au fil du temps (archivage.py) --------------------
+
+@app.get("/archives", response_class=HTMLResponse)
+def page_archives(request: Request):
+    campagnes, revisions = db.archives()
+    return templates.TemplateResponse(request, "archives.html", {
+        "propositions": archivage.propositions(), "campagnes": campagnes, "revisions": revisions,
+        "genres": revision.GENRES, "courts": revision.COURTS, "garder_jours": archivage.GARDER_JOURS})
+
+
+def _retour(retour: str) -> str:
+    return retour if retour.startswith("/") and not retour.startswith("//") else "/archives"
+
+
+@app.post("/archives/{action}")
+async def action_archives(request: Request, action: str):
+    """Cases cochées (« revision:12 », « campagne:3 ») : archiver, garder, restaurer ou supprimer pour de bon."""
+    f = await request.form()
+    revs, camps = archivage.separer(f.getlist("cle"))
+    if action == "archiver":
+        db.archiver(revs, camps)
+    elif action == "garder":
+        db.garder(revs, camps, archivage.GARDER_JOURS)
+    elif action == "restaurer":
+        db.restaurer(revs, camps, archivage.GARDER_JOURS)
+    elif action == "supprimer":
+        db.supprimer_archives(revs, camps)
+    else:
+        raise HTTPException(404)
+    return RedirectResponse(_retour(str(f.get("retour") or "")), status_code=303)
 
 
 # --- Campagnes ----------------------------------------------------------------
@@ -2201,6 +2244,14 @@ def relancer_campagne(campagne_id: int):
         raise HTTPException(404)
     db.relancer_campagne(campagne_id)
     db.demander_scan()
+    return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
+
+
+@app.post("/campagne/{campagne_id}/archiver")
+def archiver_campagne(campagne_id: int):
+    if db.campagne(campagne_id) is None:
+        raise HTTPException(404)
+    db.archiver(campagnes=[campagne_id])
     return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
 
 
@@ -2629,7 +2680,11 @@ async def fusionner_matieres(request: Request):
 
 @app.get("/cartes", response_class=HTMLResponse)
 def page_cartes(request: Request):
-    return templates.TemplateResponse(request, "cartes.html", {"paquets": db.paquets()})
+    try:
+        delaisses = [p for p in archivage.propositions() if p["genre"] == "cartes"]
+    except Exception:
+        delaisses = []
+    return templates.TemplateResponse(request, "cartes.html", {"paquets": db.paquets(), "delaisses": delaisses})
 
 
 @app.get("/cartes/session", response_class=HTMLResponse)

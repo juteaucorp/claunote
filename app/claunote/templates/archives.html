@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Archives{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/reviser">Réviser</a> › Archives</p>
+<h1>Archives</h1>
+<p class="doux">Ce qui ne sert plus sort de l'historique et des flashcards du jour, sans être supprimé.
+  Claunote te propose le ménage au fil du temps ; <strong>rien n'est archivé sans toi</strong>.</p>
+
+<h2>À ranger ? {% if propositions %}<span class="doux">· {{ propositions|length }}</span>{% endif %}</h2>
+{% if propositions %}
+<form method="post" class="liste-archives">
+  <input type="hidden" name="retour" value="/archives">
+  <p class="actions">
+    <button type="button" class="lien" onclick="const l = this.form.querySelectorAll('input[name=cle]'); const tout = [...l].some((c) => !c.checked); l.forEach((c) => { c.checked = tout; }); this.textContent = tout ? 'Tout décocher' : 'Tout cocher'">Tout décocher</button>
+  </p>
+  <ul class="carte lignes">
+    {% for p in propositions %}
+    <li class="g-{{ p.genre }}">
+      <label class="choix"><input type="checkbox" name="cle" value="{{ p.type }}:{{ p.id }}" checked aria-label="Choisir {{ p.titre }}"></label>
+      <span class="pastille-genre">{{ icone(p.genre, 20) }}</span>
+      <div class="corps">
+        <a href="/{{ p.type }}/{{ p.id }}"><strong>{{ p.titre|truncate(90) }}</strong></a>
+        <div class="doux meta">
+          <span>{{ 'Campagne · ' ~ p.nb ~ ' support' ~ ('s' if p.nb > 1) if p.type == 'campagne' else courts[p.genre] }}</span>
+          {% if p.matiere %}<span>{{ p.matiere }}</span>{% endif %}
+          <span>{{ p.raison }}</span>
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <div class="actions">
+    <button class="principal" formaction="/archives/archiver">{{ icone('archive', 18) }} Archiver la sélection</button>
+    <button formaction="/archives/garder" title="Plus proposé pendant {{ garder_jours }} jours">Garder</button>
+  </div>
+  <p class="doux">« Garder » : plus proposé pendant {{ garder_jours // 30 }} mois.</p>
+</form>
+{% else %}
+<div class="carte doux">Rien à ranger : tout ce que tu as sert encore. {{ icone('check', 16) }}</div>
+{% endif %}
+
+<h2>Archivé {% if campagnes or revisions %}<span class="doux">· {{ campagnes|length + revisions|length }}</span>{% endif %}</h2>
+{% if campagnes or revisions %}
+<form method="post">
+  <input type="hidden" name="retour" value="/archives">
+  <ul class="carte lignes">
+    {% for k in campagnes %}
+    <li class="g-campagne">
+      <label class="choix"><input type="checkbox" name="cle" value="campagne:{{ k.id }}" aria-label="Choisir {{ k.titre }}"></label>
+      <span class="pastille-genre">{{ icone('campagne', 20) }}</span>
+      <div class="corps">
+        <a href="/campagne/{{ k.id }}"><strong>{{ k.titre }}</strong></a>
+        <div class="doux meta"><span>Campagne · {{ k.nb }} support{{ 's' if k.nb > 1 }}</span>
+          <span>{{ k.debut.strftime('%d/%m') }} → {{ k.fin.strftime('%d/%m/%Y') }}</span>
+          <span>archivée le {{ (k.archive_le|paris)[:10] }}</span></div>
+      </div>
+    </li>
+    {% endfor %}
+    {% for r in revisions %}
+    <li class="g-{{ r.genre }}">
+      <label class="choix"><input type="checkbox" name="cle" value="revision:{{ r.id }}" aria-label="Choisir {{ r.sujet }}"></label>
+      <span class="pastille-genre">{{ icone(r.genre, 20) }}</span>
+      <div class="corps">
+        <a href="/revision/{{ r.id }}"><strong>{{ r.sujet|truncate(90) }}</strong></a>
+        <div class="doux meta"><span>{{ courts[r.genre] }}{% if r.nb_cartes %} · {{ r.nb_cartes }} cartes{% endif %}</span>
+          {% if r.matiere %}<span>{{ r.matiere }}</span>{% endif %}
+          <span>archivée le {{ (r.archive_le|paris)[:10] }}</span></div>
+      </div>
+      <div class="fin">{% if r.score %}<span class="etat ok">{{ r.score.bonnes }}/{{ r.score.total }}</span>{% elif r.fait_le %}<span class="etat ok">Fait ✓</span>{% endif %}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  <div class="actions">
+    <button formaction="/archives/restaurer">{{ icone('relancer', 18) }} Restaurer</button>
+    <button class="danger" formaction="/archives/supprimer"
+            onclick="return confirm('Supprimer pour de bon la sélection ? Une campagne part avec ses supports. Impossible à annuler.')">{{ icone('corbeille', 18) }} Supprimer pour de bon</button>
+  </div>
+</form>
+{% else %}
+<div class="carte doux">Rien d'archivé pour l'instant.</div>
+{% endif %}
+<style>
+  .liste-archives .actions:first-child { justify-content: flex-end; margin: 0 0 6px; }
+  .lignes .choix { display: flex; align-items: center; padding-top: 6px; position: relative; }
+  .lignes .choix input { width: 20px; height: 20px; margin: 0; }
+</style>
+{% endblock %}

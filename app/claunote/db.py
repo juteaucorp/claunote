@@ -112,6 +112,13 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS strict BOOLEAN NOT NULL DEFAULT f
 -- Modification demandée par l'élève (« ajoute un exemple sur… ») en attente, et l'historique de celles faites
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS retouche TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS retouches JSONB NOT NULL DEFAULT '[]';
+-- Archivage (archivage.py) : ce qui ne sert plus sort des listes et des flashcards du jour, sans être supprimé.
+-- garder_jusqu_au : « Garder » sur une proposition, pas reproposé avant cette date.
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS ouverte_le TIMESTAMPTZ;       -- dernière ouverture de la page
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS archive_le TIMESTAMPTZ;
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS garder_jusqu_au TIMESTAMPTZ;
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS archive_le TIMESTAMPTZ;
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS garder_jusqu_au TIMESTAMPTZ;
 -- Révisions d'avant l'historique : matière du premier cours utilisé
 UPDATE revisions r SET niveau = d.niveau, matiere = d.matiere FROM documents d
  WHERE r.matiere IS NULL AND d.id = r.doc_ids[1] AND d.matiere IS NOT NULL;
@@ -1018,12 +1025,13 @@ def revision(rev_id: int):
 def revisions(limite: int = 30):
     with connect() as c:
         return c.execute("SELECT id, genre, sujet, statut, date_eval, cree_le FROM revisions "
-                         "ORDER BY cree_le DESC LIMIT %s", (limite,)).fetchall()
+                         "WHERE archive_le IS NULL ORDER BY cree_le DESC LIMIT %s", (limite,)).fetchall()
 
 
 def historique(genre: str = "", matiere: str = "", q: str = "", limite: int = 20, decalage: int = 0):
     """Révisions déjà générées, filtrées ; renvoie (lignes, total)."""
-    where = "WHERE (%(genre)s = '' OR r.genre = %(genre)s) AND (%(matiere)s = '' OR r.matiere = %(matiere)s) " \
+    where = "WHERE r.archive_le IS NULL " \
+            "AND (%(genre)s = '' OR r.genre = %(genre)s) AND (%(matiere)s = '' OR r.matiere = %(matiere)s) " \
             "AND (%(q)s = '' OR r.sujet ILIKE '%%' || %(q)s || '%%' OR k.titre ILIKE '%%' || %(q)s || '%%')"
     p = {"genre": genre, "matiere": matiere, "q": q.strip(), "limite": limite, "decalage": decalage}
     with connect() as c:
@@ -1041,7 +1049,7 @@ def compte_revisions() -> dict:
     """Nombre de révisions par genre, et combien sont en préparation."""
     with connect() as c:
         rows = c.execute("SELECT genre, count(*) AS n, count(*) FILTER (WHERE statut = 'en_attente') AS attente "
-                         "FROM revisions GROUP BY genre").fetchall()
+                         "FROM revisions WHERE archive_le IS NULL GROUP BY genre").fetchall()
     return {"genres": {r["genre"]: r["n"] for r in rows}, "attente": sum(r["attente"] for r in rows),
             "total": sum(r["n"] for r in rows)}
 
@@ -1178,14 +1186,14 @@ def campagnes(limite: int = 20):
             """SELECT k.*, count(r.id) AS nb, count(r.id) FILTER (WHERE r.statut = 'pret') AS pretes,
                       count(r.id) FILTER (WHERE r.fait_le IS NOT NULL) AS faites
                FROM campagnes k LEFT JOIN revisions r ON r.campagne_id = k.id
-               GROUP BY k.id ORDER BY k.fin >= current_date DESC, k.debut DESC, k.id DESC LIMIT %s""",
+               WHERE k.archive_le IS NULL GROUP BY k.id ORDER BY k.fin >= current_date DESC, k.debut DESC, k.id DESC LIMIT %s""",
             (limite,)).fetchall()
 
 
 def campagne_du_jour(jour):
     """Campagne en cours (ou qui commence bientôt) dont le programme est prêt."""
     with connect() as c:
-        return c.execute("SELECT * FROM campagnes WHERE statut = 'pret' AND fin >= %s AND debut <= %s + 7 "
+        return c.execute("SELECT * FROM campagnes WHERE statut = 'pret' AND archive_le IS NULL AND fin >= %s AND debut <= %s + 7 "
                          "ORDER BY debut, id LIMIT 1", (jour, jour)).fetchone()
 
 
@@ -1235,6 +1243,8 @@ def supprimer_campagne(campagne_id: int, avec_revisions: bool = True):
 # Carte à revoir : son échéance FSRS est passée (ou dans moins de 20 min, comme Anki), sinon sa date SM-2
 A_REVOIR = ("COALESCE(k.echeance, k.prochaine::timestamp AT TIME ZONE 'Europe/Paris') "
             "<= now() + interval '20 minutes'")
+# Paquet archivé : ses cartes ne reviennent plus (ni dans « à revoir », ni dans les rappels)
+ACTIVE = "k.revision_id IN (SELECT id FROM revisions WHERE archive_le IS NULL)"
 
 def creer_cartes(rev_id: int, cartes: list[dict]):
     with connect() as c, c.transaction():
@@ -1252,14 +1262,15 @@ def paquets():
                       count(k.id) FILTER (WHERE {A_REVOIR}) AS a_revoir,
                       count(k.id) FILTER (WHERE k.vue_le IS NULL) AS nouvelles
                FROM revisions r JOIN cartes k ON k.revision_id = r.id
-               GROUP BY r.id ORDER BY a_revoir DESC, r.cree_le DESC""").fetchall()
+               WHERE r.archive_le IS NULL GROUP BY r.id ORDER BY a_revoir DESC, r.cree_le DESC""").fetchall()
 
 
 def cartes(rev_id: int | None = None):
     with connect() as c:
         return c.execute(
             """SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
-               WHERE %s::int IS NULL OR k.revision_id = %s ORDER BY r.id, k.id""", (rev_id, rev_id)).fetchall()
+               WHERE (%s::int IS NULL AND r.archive_le IS NULL) OR k.revision_id = %s ORDER BY r.id, k.id""",
+            (rev_id, rev_id)).fetchall()
 
 
 def prochaine_carte(rev_id: int | None = None):
@@ -1267,7 +1278,7 @@ def prochaine_carte(rev_id: int | None = None):
     with connect() as c:
         return c.execute(
             f"""SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
-               WHERE {A_REVOIR} AND (%s::int IS NULL OR k.revision_id = %s)
+               WHERE {A_REVOIR} AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s)
                ORDER BY COALESCE(k.echeance, k.prochaine::timestamptz) > now(), k.vue_le IS NULL,
                         COALESCE(k.echeance, k.prochaine::timestamptz), k.vue_le NULLS FIRST, k.id
                LIMIT 1""",
@@ -1292,7 +1303,96 @@ def maj_carte(carte_id: int, note: int, m: dict):
 def nb_cartes_a_revoir(rev_id: int | None = None) -> int:
     with connect() as c:
         return c.execute(f"SELECT count(*) AS n FROM cartes k WHERE {A_REVOIR} "
-                         "AND (%s::int IS NULL OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
+                         f"AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
+
+
+# --- Archivage (archivage.py décide quoi proposer) -----------------------------
+
+def noter_ouverture(rev_id: int):
+    with connect() as c:
+        c.execute("UPDATE revisions SET ouverte_le = now() WHERE id = %s", (rev_id,))
+
+
+def candidats_archivage():
+    """Révisions et campagnes pas archivées, avec ce qu'il faut pour juger si elles servent encore.
+
+    Une révision d'une campagne pas archivée n'est pas candidate seule : elle part avec sa campagne."""
+    with connect() as c:
+        revisions = c.execute(
+            """SELECT r.id, r.genre, r.sujet, r.matiere, r.statut, r.date_eval, r.cree_le, r.ouverte_le, r.fait_le,
+                      r.garder_jusqu_au,
+                      count(k.id) AS nb_cartes, count(k.id) FILTER (WHERE """ + A_REVOIR + """) AS cartes_dues,
+                      max(k.vue_le) AS derniere_revue,
+                      EXISTS (SELECT 1 FROM pronote_evenements e WHERE e.revision_id = r.id AND e.le >= now())
+                        AS evaluation_a_venir
+               FROM revisions r LEFT JOIN cartes k ON k.revision_id = r.id
+               WHERE r.archive_le IS NULL AND r.statut <> 'en_attente'
+                 AND (r.campagne_id IS NULL OR EXISTS (SELECT 1 FROM campagnes x WHERE x.id = r.campagne_id
+                                                       AND x.archive_le IS NOT NULL))
+               GROUP BY r.id ORDER BY r.cree_le""").fetchall()
+        campagnes = c.execute(
+            """SELECT k.id, k.titre, k.debut, k.fin, k.statut, k.garder_jusqu_au, k.cree_le, count(r.id) AS nb,
+                      count(r.id) FILTER (WHERE r.fait_le IS NOT NULL) AS faites
+               FROM campagnes k LEFT JOIN revisions r ON r.campagne_id = k.id
+               WHERE k.archive_le IS NULL AND k.statut <> 'en_attente' GROUP BY k.id ORDER BY k.fin""").fetchall()
+    return revisions, campagnes
+
+
+def archiver(revisions: list[int] = (), campagnes: list[int] = ()) -> int:
+    """Archive (une campagne emporte ses supports) ; renvoie le nombre d'éléments archivés."""
+    with connect() as c, c.transaction():
+        n = c.execute("UPDATE campagnes SET archive_le = now() WHERE id = ANY(%s) AND archive_le IS NULL",
+                      (list(campagnes),)).rowcount
+        c.execute("UPDATE revisions SET archive_le = now() WHERE campagne_id = ANY(%s) AND archive_le IS NULL",
+                  (list(campagnes),))
+        n += c.execute("UPDATE revisions SET archive_le = now() WHERE id = ANY(%s) AND archive_le IS NULL",
+                       (list(revisions),)).rowcount
+    return n
+
+
+def restaurer(revisions: list[int] = (), campagnes: list[int] = (), garder_jours: int = 60):
+    """Sort des archives (une campagne avec ses supports), sans reproposer avant `garder_jours`."""
+    with connect() as c, c.transaction():
+        c.execute("UPDATE campagnes SET archive_le = NULL, garder_jusqu_au = now() + make_interval(days => %s) "
+                  "WHERE id = ANY(%s)", (garder_jours, list(campagnes)))
+        c.execute("UPDATE revisions SET archive_le = NULL, garder_jusqu_au = now() + make_interval(days => %s) "
+                  "WHERE id = ANY(%s) OR campagne_id = ANY(%s)", (garder_jours, list(revisions), list(campagnes)))
+
+
+def garder(revisions: list[int] = (), campagnes: list[int] = (), jours: int = 60):
+    """« Garder » sur une proposition d'archivage : plus reproposé avant `jours`."""
+    with connect() as c:
+        c.execute("UPDATE revisions SET garder_jusqu_au = now() + make_interval(days => %s) WHERE id = ANY(%s)",
+                  (jours, list(revisions)))
+        c.execute("UPDATE campagnes SET garder_jusqu_au = now() + make_interval(days => %s) WHERE id = ANY(%s)",
+                  (jours, list(campagnes)))
+
+
+def archives():
+    """Ce qui est archivé : campagnes (avec leur nombre de supports) et révisions hors campagne archivée."""
+    with connect() as c:
+        campagnes = c.execute(
+            """SELECT k.id, k.titre, k.debut, k.fin, k.archive_le, count(r.id) AS nb
+               FROM campagnes k LEFT JOIN revisions r ON r.campagne_id = k.id
+               WHERE k.archive_le IS NOT NULL GROUP BY k.id ORDER BY k.archive_le DESC, k.id DESC""").fetchall()
+        revisions = c.execute(
+            """SELECT r.id, r.genre, r.sujet, r.matiere, r.niveau, r.cree_le, r.archive_le, r.score, r.fait_le,
+                      (SELECT count(*) FROM cartes k WHERE k.revision_id = r.id) AS nb_cartes
+               FROM revisions r
+               WHERE r.archive_le IS NOT NULL AND (r.campagne_id IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM campagnes x WHERE x.id = r.campagne_id AND x.archive_le IS NOT NULL))
+               ORDER BY r.archive_le DESC, r.id DESC""").fetchall()
+    return campagnes, revisions
+
+
+def supprimer_archives(revisions: list[int] = (), campagnes: list[int] = ()) -> int:
+    """Suppression définitive, seulement de ce qui est déjà archivé (rien d'actif par erreur)."""
+    with connect() as c, c.transaction():
+        n = c.execute("DELETE FROM revisions WHERE archive_le IS NOT NULL AND (id = ANY(%s) OR campagne_id = ANY(%s))",
+                      (list(revisions), list(campagnes))).rowcount
+        n += c.execute("DELETE FROM campagnes WHERE archive_le IS NOT NULL AND id = ANY(%s)",
+                       (list(campagnes),)).rowcount
+    return n
 
 
 # --- Clés d'accès (Face ID) ---------------------------------------------------

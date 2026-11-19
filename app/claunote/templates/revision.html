@@ -30,6 +30,15 @@
   <ul>{% for d in sans_texte %}<li><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a></li>{% endfor %}</ul>
 </details>{% endif %}
 
+{% if rev.archive_le %}
+<form class="carte accent rangee" method="post" action="/archives/restaurer">
+  <span class="pastille-genre">{{ icone('archive') }}</span>
+  <div class="corps"><strong>Archivée le {{ (rev.archive_le|paris)[:10] }}</strong>
+    <div class="doux">Hors de l'historique{{ ' et des flashcards à revoir' if rev.genre == 'cartes' }}.</div></div>
+  <input type="hidden" name="cle" value="revision:{{ rev.id }}"><input type="hidden" name="retour" value="/revision/{{ rev.id }}">
+  <button class="principal">Restaurer</button>
+</form>
+{% endif %}
 {% if rev.statut == 'pret' %}
 {% set nom_pdf = (genres[rev.genre] ~ ' ' ~ rev.sujet)|replace('/', '-') ~ '.pdf' %}
 <div class="barre-actions">
@@ -50,6 +59,7 @@
       {% endif %}
       {% if rev.genre == 'cartes' %}<a href="/cartes/anki?paquet={{ rev.id }}" download>{{ icone('cartes', 18) }} Exporter vers Anki</a>{% endif %}
       <form method="post" action="/revision/{{ rev.id }}/relancer" onsubmit="return confirm('Refaire ce support ? L\'actuel sera remplacé.')"><button>{{ icone('relancer', 18) }} Régénérer</button></form>
+      {% if not rev.archive_le %}<form method="post" action="/revision/{{ rev.id }}/archiver"><button>{{ icone('archive', 18) }} Archiver</button></form>{% endif %}
       <form method="post" action="/revision/{{ rev.id }}/supprimer" onsubmit="return confirm('Supprimer ce support ?')"><button class="danger">{{ icone('corbeille', 18) }} Supprimer</button></form>
     </div>
   </details>
