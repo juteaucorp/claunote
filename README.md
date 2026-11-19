@@ -11,7 +11,7 @@ Tu scannes tes cahiers et tes TP, ou tu les déposes depuis ton téléphone. Cla
 matière et type, puis te prépare des fiches, des quiz, des flashcards et des épreuves blanches qui citent tes
 propres cours. Il récupère aussi tes évaluations sur Pronote et te dit quoi réviser aujourd'hui.
 
-<img src="docs/captures/apercu-telephone.png" alt="Accueil « Aujourd'hui », fiche de révision et chat « Une question » sur téléphone" width="820">
+<img src="docs/captures/apercu-telephone.png" alt="Fiche de révision et chat « Une question » sur téléphone" width="820">
 
 </div>
 
@@ -95,9 +95,9 @@ flowchart TD
   <img src="docs/captures/reviser-telephone.png" alt="Campagne, quiz, agenda Pronote et fiche en thème sombre" width="900">
 </p>
 
-| Aujourd'hui | Réviser |
+| Réglages | Réviser |
 | --- | --- |
-| <img src="docs/captures/accueil.jpg" alt="Page Aujourd'hui sur ordinateur"> | <img src="docs/captures/reviser.jpg" alt="Page Réviser"> |
+| <img src="docs/captures/reglages.jpg" alt="Page Réglages : Moi et Administration"> | <img src="docs/captures/reviser.jpg" alt="Page Réviser"> |
 | **Activité** : pause, arrêt, qui fait le travail, fiabilité du local | **Ranger → Matières** |
 | <img src="docs/captures/analyses.jpg" alt="Page Analyses"> | <img src="docs/captures/matieres.jpg" alt="Page Matières en double"> |
 

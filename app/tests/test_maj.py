@@ -50,7 +50,7 @@ def test_page_mise_a_jour(client, dossier):
     assert r.status_code == 200
     assert "abc1234" in r.text and "1 nouveauté(s) disponible(s)" in r.text and "Nouvelle page" in r.text
     assert "Tout mettre à jour" in r.text and "ne tourne pas encore" not in r.text
-    assert "Mise à jour<span class=\"badge\">1</span>" in r.text   # onglet Réglages
+    assert "1 nouveauté" in client.get("/reglages").text   # page Réglages
 
 
 def test_mise_a_jour_sans_mot_de_passe(client, dossier):

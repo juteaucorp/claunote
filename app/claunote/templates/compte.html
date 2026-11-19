@@ -4,19 +4,10 @@
 {% block contenu %}
 {% from "_onglets.html" import onglets %}
 {{ onglets('reglages', 'compte') }}
-<h1>Compte</h1>
-<p class="doux">Connecté en tant que <strong>{{ utilisateur }}</strong>{% if moi() %} ·
-  {% if est_admin() %}admin (tous les droits) · <a href="/comptes">gérer les comptes</a>{% else %}droits :
-  {% for d in moi().droits or [] %}{{ droits_noms.get(d, d) }}{{ ', ' if not loop.last }}{% else %}aucun{% endfor %}{% endif %}{% endif %}.
-  <a href="/tes-donnees">Tes données</a> · <a href="/conditions">Conditions</a></p>
-<div class="actions" style="margin-bottom: 16px">
-  <a class="bouton" href="/installer">{{ icone('telephone', 18) }}Installer sur l'iPhone</a>
-  <form method="post" action="/deconnexion" style="margin: 0"><button style="display: inline-flex; align-items: center; gap: 6px">{{ icone('sortie', 18) }}Déconnexion</button></form>
-</div>
+<h1>Mon compte</h1>
 <div class="carte" id="cles" style="max-width: 560px">
   <strong>Face ID, Touch ID</strong>
-  <p class="doux">Connexion sans mot de passe, avec le déverrouillage de ton appareil. Le secret reste dans
-    l'appareil : le site ne garde qu'une clé publique.</p>
+  <p class="doux">Connexion sans mot de passe, avec le déverrouillage de ton appareil.</p>
   {% if cles %}
   <ul class="liste-cles">
     {% for k in cles %}
@@ -28,9 +19,9 @@
   {% endif %}
   {% if cles_impossible == 'ip' %}
   <p class="alerte">Le site est ouvert par une adresse IP : Face ID demande un nom.</p>
-  <p class="doux">Sans DNS à configurer :{% if nom_sslip %} dans <code>.env</code>, mets <code>CLAUNOTE_HOTE={{ nom_sslip }}</code>
+  <details class="aide-repliee"><summary>Comment faire ?</summary><p class="doux">Sans DNS à configurer :{% if nom_sslip %} dans <code>.env</code>, mets <code>CLAUNOTE_HOTE={{ nom_sslip }}</code>
     (sslip.io renvoie l'IP écrite dans le nom){% else %} utilise un nom en <code>.sslip.io</code>{% endif %},
-    puis <code>docker compose up -d</code> et ouvre <code>https://{{ nom_sslip or 'ce-nom' }}</code>. Voir <em>infra/SETUP.md</em>, section 13.</p>
+    puis <code>docker compose up -d</code> et ouvre <code>https://{{ nom_sslip or 'ce-nom' }}</code>. Voir <em>infra/SETUP.md</em>, section 13.</p></details>
   {% elif cles_impossible == 'http' %}
   <p class="alerte">Face ID ne marche qu'en HTTPS : ouvre le site par son adresse <code>https://</code> (page <a href="/installer">Installer</a>).</p>
   {% else %}
@@ -59,7 +50,7 @@
 {% if est_admin() %}
 <div class="carte" id="appareils" style="max-width: 560px">
   <strong>Appareils par Internet</strong>
-  <p class="doux">Par l'adresse Cloudflare (hors VPN), le site ne s'ouvre que sur ces appareils. Par le VPN, rien ne change.
+  <p class="doux">Hors VPN (adresse Cloudflare), le site ne s'ouvre que sur ces appareils.
     {% if par_tunnel %}{% if appareil_ici %}Tu es connecté par Internet depuis <strong>{{ appareil_ici.nom }}</strong>.{% endif %}{% endif %}</p>
   {% if appareils %}
   <ul class="liste-cles">
@@ -99,8 +90,9 @@
   <p><label>Nouveau mot de passe (8 caractères minimum)<br><input type="password" name="nouveau" minlength="8" autocomplete="new-password" required style="width: 100%"></label></p>
   <p><label>Encore une fois<br><input type="password" name="confirmation" minlength="8" autocomplete="new-password" required style="width: 100%"></label></p>
   <button class="principal">Changer</button>
-  <p class="doux">Les autres appareils seront déconnectés. Mot de passe oublié :
+  <p class="doux">Les autres appareils seront déconnectés.</p>
+  <details class="aide-repliee"><summary>Mot de passe oublié ?</summary><p class="doux">
     <code>docker compose exec web python -m claunote.auth reinitialiser</code> puis
-    <code>docker compose restart web</code> (le mot de passe du <code>.env</code> revient).</p>
+    <code>docker compose restart web</code> (le mot de passe du <code>.env</code> revient).</p></details>
 </form>
 {% endblock %}

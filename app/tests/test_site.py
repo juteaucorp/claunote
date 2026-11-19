@@ -548,7 +548,7 @@ def test_connexion_et_deconnexion(anonyme):
     assert r.status_code == 303 and r.headers["location"] == "/cartes"
     cookie = r.headers["set-cookie"]
     assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Max-Age=2592000" in cookie
-    assert "Tu utilises le mot de passe par défaut" in anonyme.get("/", follow_redirects=False).text
+    assert "Mot de passe par défaut" in anonyme.get("/bibliotheque", follow_redirects=False).text
     anonyme.post("/deconnexion")
     assert anonyme.get("/", follow_redirects=False).status_code == 303
 
@@ -654,7 +654,7 @@ def test_pwa(anonyme):
 # --- Compte, reclassement, hors cours, actions de masse -------------------------
 
 def test_changer_mot_de_passe(client, faux_comptes):
-    assert "Change-le maintenant" in client.get("/").text
+    assert "Mot de passe par défaut" in client.get("/bibliotheque").text
     r = client.post("/compte", data={"actuel": "faux", "nouveau": "nouveau-mdp", "confirmation": "nouveau-mdp"})
     assert r.status_code == 400 and "actuel incorrect" in r.text
     r = client.post("/compte", data={"actuel": "claunote", "nouveau": "court", "confirmation": "court"})
@@ -665,8 +665,8 @@ def test_changer_mot_de_passe(client, faux_comptes):
     assert r.status_code == 200 and "Mot de passe changé" in r.text
     assert faux_comptes.comptes[1]["hash"].startswith("scrypt:") and not faux_comptes.comptes[1]["mdp_defaut"]
     # Cet appareil reste connecté, l'ancien mot de passe ne marche plus
-    page = client.get("/", follow_redirects=False)
-    assert page.status_code == 200 and "Change-le maintenant" not in page.text
+    page = client.get("/bibliotheque", follow_redirects=False)
+    assert page.status_code == 200 and "Mot de passe par défaut" not in page.text
     client.post("/deconnexion")
     assert client.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}).status_code == 401
     r = client.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "nouveau-mdp"}, follow_redirects=False)
@@ -804,27 +804,44 @@ def test_actions_de_masse(organiser):
     assert organiser.post("/organiser", data={"ids": ["1"], "action": "effacer"}).status_code == 400
 
 
-def test_accueil_aujourd_hui(client, monkeypatch):
-    import datetime as dt
-    maintenant = dt.datetime.now(dt.timezone.utc)
-    evs = {"evaluation": [{"id": "cours:1", "genre": "evaluation", "matiere": "SISR - RESEAUX", "titre": "DS VLAN",
-                           "description": "", "le": maintenant + dt.timedelta(days=2), "fait": False,
-                           "revision_id": None, "revision_statut": None}],
-           "devoir": [{"id": "devoir:1", "genre": "devoir", "matiere": "ANGLAIS", "titre": "", "description": "Oral",
-                       "le": maintenant + dt.timedelta(days=1), "fait": False},
-                      {"id": "devoir:2", "genre": "devoir", "matiere": "MATHS", "titre": "", "description": "Déjà fait",
-                       "le": maintenant + dt.timedelta(days=1), "fait": True}]}
-    monkeypatch.setattr(db, "evenements_a_venir", lambda genre=None, jours=60: evs[genre])
-    monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: 4)
-    r = client.get("/")
-    assert "Relie Pronote" in r.text and "4</strong> flashcards" in r.text and "/cartes/session" in r.text
-    client.etat["pronote_synchro"] = "2026-10-23T15:00"
-    r = client.get("/")
-    assert "DS VLAN" in r.text and "J-2" in r.text and "Réseaux" in r.text and 'value="cours:1"' in r.text
-    assert "Oral" in r.text and "Déjà fait" not in r.text and "8 documents" in r.text
-    assert "1 document à vérifier" in r.text
-    # Navigation mobile : onglets en bas et menu Plus
-    assert 'class="onglets verre"' in r.text and 'id="plus"' in r.text and "Ranger<small>" in r.text and "Activité<small>" in r.text
+def test_plus_de_page_aujourd_hui_actualites_dans_les_onglets(client):
+    """« Aujourd'hui » a disparu : l'accueil mène aux Actualités, qui prennent sa place dans les onglets."""
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/actualites"
+    r = client.get("/bibliotheque")
+    assert "Aujourd'hui" not in r.text
+    nav = r.text.split('class="onglets verre"')[1].split("</nav>")[0]
+    assert nav.index("/actualites") < nav.index("/bibliotheque") < nav.index("/reviser") < nav.index("/agenda")
+    assert '<span class="compteur">8</span>' in nav           # nombre total de cours sur l'onglet Cours
+    # Menu Plus réduit : Ajouter, Ranger, Réglages (Activité et Tout voir sont dans Réglages)
+    plus = nav.split('id="plus"')[1]
+    assert "Ajouter<small>" in plus and "Ranger<small>" in plus and 'href="/reglages"' in plus
+    assert "Activité<small>" not in plus and "tout-voir" not in plus
+
+
+def test_page_reglages_mene_a_tout(client):
+    r = client.get("/reglages")
+    assert r.status_code == 200
+    for url in ("/compte", "/notifications", "/tes-donnees", "/installer", "/comptes", "/securite", "/analyses", "/etat",
+                "/mise-a-jour", "/reglages/installation", "/comptes/tout-voir", "/deconnexion"):
+        assert f'"{url}"' in r.text, url
+    # Les pages de réglages ont un retour vers Réglages au lieu d'une rangée d'onglets
+    page = client.get("/compte").text
+    assert 'href="/reglages">‹ Réglages' in page and 'class="onglets-page"' not in page
+
+
+def test_reglages_sans_administration_pour_un_invite(client, faux_comptes):
+    from claunote import auth
+    from claunote import comptes
+    i = faux_comptes.creer_compte("camille", auth.hacher("motdepasse-camille"), "invite", ["bibliotheque"])
+    faux_comptes.comptes[i]["conditions_version"] = comptes.CONDITIONS_VERSION
+    client.post("/deconnexion")
+    client.post("/connexion", data={"utilisateur": "camille", "mot_de_passe": "motdepasse-camille"})
+    r = client.get("/reglages")
+    assert r.status_code == 200 and "/notifications" in r.text and "Administration" not in r.text and "/comptes" not in r.text
+    assert client.get("/", follow_redirects=False).headers["location"] == "/bibliotheque"
+    assert client.get("/reglages/installation").status_code == 403
+    assert i
 
 
 def test_documents_en_erreur(client, monkeypatch):
@@ -1120,11 +1137,11 @@ def test_powerpoint_jamais_dans_la_page(client, monkeypatch, tmp_path):
 
 
 def test_rafraichissement_invisible(client, monkeypatch):
-    page = client.get("/").text
+    page = client.get("/bibliotheque").text
     assert 'id="contenu" data-vivant="remplacer" data-empreinte="' in page and "X-Rafraichir" in page
     assert 'id="maj-o-plus"' in page and 'id="maj-bandeau"' in page
     empreinte = page.split('data-empreinte="')[1][:16]
-    assert client.get("/").text.split('data-empreinte="')[1][:16] == empreinte  # même contenu, même empreinte
+    assert client.get("/bibliotheque").text.split('data-empreinte="')[1][:16] == empreinte  # même contenu, même empreinte
     page = client.get("/deposer").text
     assert 'id="contenu">' in page and "data-vivant" not in page.split('id="contenu"')[1][:5]  # formulaire : jamais touché
 
@@ -1314,7 +1331,7 @@ def test_page_analyses(client, monkeypatch):
 def test_pause_arret_et_reprise(client):
     r = client.post("/analyses/controle", data={"action": "arreter"}, follow_redirects=False)
     assert r.status_code == 303 and client.etat["analyses_pause"] == "oui" and client.etat["analyses_arreter"] == "oui"
-    assert '<span class="badge">pause</span>' in client.get("/bibliotheque").text
+    assert '<span class="badge">pause</span>' in client.get("/reglages").text
     client.post("/analyses/controle", data={"action": "reprendre"})
     assert client.etat.get("analyses_pause") is None
     assert client.post("/analyses/controle", data={"action": "autre"}).status_code == 400

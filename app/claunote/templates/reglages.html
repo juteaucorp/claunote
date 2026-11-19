@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block titre %}Réglages{% endblock %}
+{% block vivant %}remplacer{% endblock %}
+{% from "_icones.html" import icone %}
+{% macro ligne(url, ic, titre, etat='', badge=0, alerte=False) -%}
+<a href="{{ url }}" class="ligne-reglage">
+  <span class="pastille-icone">{{ icone(ic, 20) }}</span>
+  <span class="texte"><strong>{{ titre }}</strong>{% if etat %}<small class="{{ 'alerte' if alerte }}">{{ etat }}</small>{% endif %}</span>
+  {% if badge %}<span class="badge">{{ badge }}</span>{% endif %}
+  <span class="chevron">{{ icone('fleche', 16) }}</span>
+</a>
+{%- endmacro %}
+{% block contenu %}
+<h1>Réglages</h1>
+<p class="doux">Connecté en tant que <strong>{{ moi().nom or moi().identifiant if moi() else 'admin' }}</strong>{% if admin %} · administrateur{% endif %}</p>
+
+<h2 class="titre-groupe">Moi</h2>
+<div class="carte liste-reglages">
+  {{ ligne('/compte', 'compte', 'Mon compte', 'Mot de passe par défaut : à changer' if mdp_par_defaut() else 'Mot de passe, Face ID' + (', appareils par Internet' if admin else ''), alerte=mdp_par_defaut()) }}
+  {{ ligne('/notifications', 'cloche', 'Notifications', (abonnes ~ ' appareil' ~ ('s' if abonnes > 1 else '') ~ ' abonné' ~ ('s' if abonnes > 1 else '')) if abonnes else 'Aucun appareil abonné') }}
+  {{ ligne('/tes-donnees', 'document', 'Mes données', 'Ce qui est gardé, conditions') }}
+  {{ ligne('/installer', 'telephone', "Installer sur l'iPhone", "L'appli sur l'écran d'accueil") }}
+</div>
+
+{% if admin %}
+<h2 class="titre-groupe">Administration</h2>
+<div class="carte liste-reglages">
+  {{ ligne('/comptes', 'partager', 'Comptes et invitations', nb_comptes ~ ' compte' ~ ('s' if nb_comptes > 1 else '') ~ ', droits, jetons') }}
+  {{ ligne('/securite', 'verifier', 'Sécurité', (alertes ~ ' alerte' ~ ('s' if alertes > 1 else '') ~ ' à lire') if alertes else 'Rien de nouveau', alertes, alerte=alertes) }}
+  {{ ligne('/analyses', 'etat', 'Activité', 'Analyses en pause' if pause else 'Analyses en cours, modèles, pause', 'pause' if pause else 0, alerte=pause) }}
+  {{ ligne('/etat', 'check', 'État du service et disque', disque.phrase if disque else 'Claude, Pronote, kDrive, disque',
+           alerte=disque and disque.niveau in ('attention', 'critique')) }}
+  {{ ligne('/mise-a-jour', 'relancer', 'Mise à jour', (maj_n ~ ' nouveauté' ~ ('s' if maj_n > 1 else '')) if maj_n else 'À jour', maj_n) }}
+  {{ ligne('/reglages/installation', 'nouveau', 'Installation du site', 'À terminer' if inst_a_faire else 'Claude, stockage, Pronote, Cloudflare', alerte=inst_a_faire) }}
+  <form method="post" action="/comptes/tout-voir" class="ligne-reglage">
+    <input type="hidden" name="actif" value="{{ '' if moi().tout_voir else '1' }}"><input type="hidden" name="suite" value="/reglages">
+    <span class="pastille-icone">{{ icone('cours', 20) }}</span>
+    <span class="texte"><strong>Tout voir</strong><small>{% if moi().tout_voir %}Actif : tu vois les données de tous les comptes{% else %}Voir et utiliser les données de tous les comptes{% endif %}</small></span>
+    <button class="{{ 'principal' if moi().tout_voir }} petit">{{ 'Désactiver' if moi().tout_voir else 'Activer' }}</button>
+  </form>
+</div>
+{% endif %}
+
+<form method="post" action="/deconnexion" class="deconnexion"><button>{{ icone('sortie', 18) }}Déconnexion</button></form>
+
+<style>
+  .titre-groupe { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--doux); margin: 22px 0 8px 4px; font-family: inherit; }
+  .liste-reglages { padding: 2px 0; max-width: 640px; }
+  .ligne-reglage { display: flex; align-items: center; gap: 12px; padding: 11px 16px; margin: 0; color: var(--texte); text-decoration: none; }
+  .ligne-reglage + .ligne-reglage { border-top: 1px solid var(--bord); }
+  a.ligne-reglage:hover { background: var(--fond-doux); }
+  .ligne-reglage .pastille-icone { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+    border-radius: 10px; background: var(--accent-pale); color: var(--accent-fonce); }
+  .ligne-reglage .texte { flex: 1; min-width: 0; }
+  .ligne-reglage .texte small { display: block; color: var(--doux); font-size: .84rem; line-height: 1.3; }
+  .ligne-reglage .texte small.alerte { color: var(--alerte); }
+  .ligne-reglage .badge { margin: 0; }
+  .ligne-reglage .chevron { color: var(--doux); display: inline-flex; }
+  .ligne-reglage button { min-height: 36px; }
+  .deconnexion { margin-top: 22px; }
+  .deconnexion button { display: inline-flex; align-items: center; gap: 6px; }
+</style>
+{% endblock %}
