@@ -30,6 +30,9 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "evenements_a_venir", lambda genre=None, jours=60: [])
     monkeypatch.setattr(db, "documents_pronote", lambda limite=30: [])
     monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: 0)
+    monkeypatch.setattr(db, "noter_ouverture", lambda rev_id: None)
+    monkeypatch.setattr(db, "candidats_archivage", lambda: ([], []))
+    monkeypatch.setattr(db, "archives", lambda: ([], []))
     monkeypatch.setattr(db, "bibliotheque", lambda: [{"niveau": "BTS1", "matiere": "Réseaux", "type": "TP", "n": 3}])
     monkeypatch.setattr(db, "a_verifier", lambda: [{**DOC, "id": 2, "statut": "a_verifier", "confiance": 0.4,
                                                     "note": "Le dossier « BTS1 » indique BTS1", "origine": "BTS1"}])
@@ -1574,3 +1577,27 @@ def test_renommer_une_revision(client, monkeypatch):
     assert len(vu) == 1
     assert client.post("/revision/9/renommer", data={"sujet": "x"}).status_code == 404
 
+
+
+def test_archives(client, monkeypatch):
+    import datetime as dt
+    appels = []
+    monkeypatch.setattr(db, "candidats_archivage", lambda: ([{
+        "id": 4, "genre": "cartes", "sujet": "Ports TCP", "matiere": "Réseaux", "statut": "pret", "date_eval": None,
+        "cree_le": dt.datetime(2026, 1, 5, tzinfo=dt.timezone.utc), "ouverte_le": None, "fait_le": None,
+        "garder_jusqu_au": None, "nb_cartes": 12, "cartes_dues": 12, "derniere_revue": None,
+        "evaluation_a_venir": False}], []))
+    monkeypatch.setattr(db, "archiver", lambda r=(), k=(): appels.append(("archiver", r, k)))
+    monkeypatch.setattr(db, "garder", lambda r=(), k=(), j=60: appels.append(("garder", r, k)))
+    monkeypatch.setattr(db, "restaurer", lambda r=(), k=(), j=60: appels.append(("restaurer", r, k)))
+    monkeypatch.setattr(db, "supprimer_archives", lambda r=(), k=(): appels.append(("supprimer", r, k)))
+    page = client.get("/archives")
+    assert page.status_code == 200 and "Ports TCP" in page.text and "Jamais commencé" in page.text
+    assert "1 support ne sert plus" in client.get("/reviser").text      # proposé sur Réviser
+    r = client.post("/archives/archiver", data={"cle": ["revision:4", "campagne:2"], "retour": "/reviser"},
+                    follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/reviser"
+    client.post("/archives/garder", data={"cle": "revision:4", "retour": "//ailleurs.example"}, follow_redirects=False)
+    client.post("/archives/restaurer", data={"cle": "campagne:2"}, follow_redirects=False)
+    assert appels == [("archiver", [4], [2]), ("garder", [4], []), ("restaurer", [], [2])]
+    assert client.post("/archives/inconnu", data={}).status_code == 404

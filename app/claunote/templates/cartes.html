@@ -15,6 +15,13 @@
 <p class="doux">Répétition espacée : une carte bien sue revient dans quelques jours, puis de plus en plus tard ;
   une carte ratée revient tout de suite. L'export Anki (.apkg) s'ouvre dans Anki ou AnkiDroid ;
   réimporter met à jour les cartes sans doublons.</p>
+{% if delaisses %}
+<div class="carte rangee">
+  <div class="corps"><strong>{{ delaisses|length }} paquet{{ 's' if delaisses|length > 1 }} délaissé{{ 's' if delaisses|length > 1 }}</strong>
+    <div class="doux">{{ delaisses|map(attribute='titre')|join(' · ')|truncate(140) }}. Archivé, un paquet ne revient plus dans les cartes à revoir.</div></div>
+  <a class="bouton" href="/archives">Voir</a>
+</div>
+{% endif %}
 <div class="grille large">
   {% for p in paquets %}
   <div class="carte">
@@ -29,4 +36,5 @@
   {% endfor %}
 </div>
 {% endif %}
+<p class="doux"><a href="/archives">Paquets archivés</a></p>
 {% endblock %}

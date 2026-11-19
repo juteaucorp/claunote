@@ -43,7 +43,7 @@ PAGES = [
     ("/deposer", "deposer"),
     ("/a-verifier", "organiser"), ("/organiser", "organiser"), ("/hors-cours", "bibliotheque"),
     ("/reviser", "reviser"), ("/revision/", "reviser"), ("/campagne", "reviser"), ("/demander", "reviser"),
-    ("/formule", "reviser"), ("/cartes", "reviser"), ("/progression", "reviser"),
+    ("/formule", "reviser"), ("/cartes", "reviser"), ("/archives", "reviser"), ("/progression", "reviser"),
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
     ("/piece/", "reviser"), ("/partages", "bibliotheque"),
