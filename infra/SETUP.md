@@ -224,7 +224,7 @@ est au programme et l'historique **Déjà fait** (filtres par type, matière, re
   Sans cours cochés, le sujet sert de recherche dans la matière ; s'il ne trouve rien, toute la matière est utilisée.
 - **Campagne** : plusieurs matières × plusieurs supports d’un coup (sans limite de nombre, générés l’un après l’autre) + un **programme
   jour par jour** sur la période choisie, qui tient compte de ton contexte et des évaluations Pronote.
-  Les tâches se cochent sur la page de la campagne ; celles du jour apparaissent sur Aujourd'hui et
+  Les tâches se cochent sur la page de la campagne ; celles du jour apparaissent sur Réviser et
   dans le rappel quotidien. Une seule notification quand tout est prêt.
 - **PDF** : chaque support (et le livret complet d'une campagne) s'ouvre en PDF, avec ou sans corrigé.
   **Partager** ouvre la feuille de partage de l'iPhone (AirDrop, Messages, Fichiers…).
@@ -412,15 +412,18 @@ Organiser ─► filtres (ajouté du … au …, année, matière, type, état, 
 ┌───────────────────────────┐
 │ Claunote          🔍  📷  │  recherche · photo d'un cours
 │                           │
-│  Aujourd'hui              │  évals (J-2…), devoirs, flashcards du jour,
-│  …                        │  nouveaux documents des profs
+│  Actualités               │  page d'arrivée : veille et sujets suivis
+│  …                        │
 ├───────────────────────────┤
-│ Aujourd'hui Cours Réviser Agenda Plus │  onglets en bas
+│ Actualités Cours·248 Réviser Agenda Plus │  onglets en bas
 └───────────────────────────┘
 ```
 
-- La page d'accueil **Aujourd'hui** rassemble tout ce qui compte pour la journée ; la Bibliothèque
-  est dans l'onglet **Cours**.
+- On arrive sur **Actualités**. L'onglet **Cours** (la Bibliothèque) affiche le nombre total de cours ;
+  flashcards du jour et campagne sont dans **Réviser**, évaluations et devoirs dans **Agenda**.
+- **Plus** ne garde que trois entrées : **Ajouter**, **Ranger**, **Réglages**. La page **Réglages** mène à tout,
+  en deux groupes : **Moi** (compte, notifications, données, appli iPhone) et, pour l'admin, **Administration**
+  (comptes, sécurité, activité, état et disque, mise à jour, installation, « Tout voir »), avec l'état de chaque page.
 - **Déposer** → **Prendre en photo** : chaque photo devient un document (une page = une photo, ou
   un PDF pour un cours de plusieurs pages).
 - Flashcards : toucher la carte pour la retourner, les boutons de note restent sous le pouce.

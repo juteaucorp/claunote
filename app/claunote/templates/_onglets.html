@@ -9,22 +9,19 @@
 {% elif groupe == 'activite' %}
   {% set liste = [('analyses', '/analyses', 'Analyses', 0), ('etat', '/etat', 'État du service', 0)] %}
 {% else %}
-  {% if est_admin() %}
-  {% set liste = [('compte', '/compte', 'Compte', 0), ('comptes', '/comptes', 'Comptes', 0),
-                  ('installation', '/reglages/installation', 'Installation', 0),
-                  ('securite', '/securite', 'Sécurité', nb_alertes_securite()),
-                  ('notifications', '/notifications', 'Notifications', 0),
-                  ('mise_a_jour', '/mise-a-jour', 'Mise à jour', nb_mises_a_jour()), ('donnees', '/tes-donnees', 'Données', 0)] %}
-  {% else %}
-  {% set liste = [('compte', '/compte', 'Compte', 0), ('notifications', '/notifications', 'Notifications', 0),
-                  ('donnees', '/tes-donnees', 'Tes données', 0), ('conditions', '/conditions', 'Conditions', 0)] %}
-  {% endif %}
+  {% set liste = [] %}
 {% endif %}
+{# Réglages et Activité : un lien de retour vers la page Réglages (qui mène à tout) au lieu d'une rangée d'onglets #}
+{% if groupe in ('reglages', 'activite') %}
+<a class="retour-reglages" href="/reglages">‹ Réglages</a>
+{% endif %}
+{% if liste %}
 <nav class="onglets-page" aria-label="Pages de la rubrique">
   {% for cle, url, libelle, n in liste %}
   <a href="{{ url }}" class="{{ 'actif' if cle == actif }}" {{ 'aria-current=page' if cle == actif }}>{{ libelle }}{% if n %}<span class="badge">{{ n }}</span>{% endif %}</a>
   {% endfor %}
 </nav>
+{% endif %}
 <style>
   .onglets-page { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 0 14px; padding: 2px 0; }
   .onglets-page::-webkit-scrollbar { display: none; }
@@ -32,6 +29,7 @@
     border: 1px solid var(--bord); background: var(--carte); color: var(--texte); text-decoration: none; font-weight: 500; font-size: .92rem; }
   .onglets-page a.actif { border-color: var(--accent); background: var(--accent-pale); color: var(--accent-fonce); }
   .onglets-page .badge { margin: 0; }
+  .retour-reglages { display: inline-block; margin: 0 0 8px; font-weight: 500; text-decoration: none; }
   @media (max-width: 760px) { .onglets-page { margin-left: -12px; margin-right: -12px; padding-left: 12px; padding-right: 12px; } }
 </style>
 {%- endmacro %}

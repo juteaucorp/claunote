@@ -1245,23 +1245,55 @@ def deconnecter_partout(request: Request, appareils_aussi: str = Form("")):
 
 # --- Bibliothèque ----------------------------------------------------------
 
-@app.get("/", response_class=HTMLResponse)
+def _premiere_page(compte: dict | None) -> str:
+    """Page d'arrivée (plus de page « Aujourd'hui ») : Actualités, sinon la première rubrique permise."""
+    for url, droit in (("/actualites", "actualites"), ("/bibliotheque", "bibliotheque"), ("/reviser", "reviser"),
+                       ("/agenda", "agenda")):
+        if comptes.peut(compte, droit):
+            return url
+    return "/reglages"
+
+
+@app.get("/")
 def accueil(request: Request):
-    """Aujourd'hui : ce qui arrive (évals, devoirs), ce qui attend (cartes, docs des profs)."""
-    matieres = sorted({r["matiere"] for r in db.niveaux_matieres()})
-    evaluations = [{**e, "cours": pronote.trouver_matiere(e["matiere"], matieres)}
-                   for e in db.evenements_a_venir("evaluation", 21)]
-    aujourdhui = dt.datetime.now(pronote.PARIS).date()
-    campagne = db.campagne_du_jour(aujourdhui)
-    jour = next((j for j in revision.jours_programme(campagne["programme"], campagne["faits"])
-                 if j["date"] >= aujourdhui), None) if campagne else None
-    return templates.TemplateResponse(request, "accueil.html", {
-        "aujourdhui": aujourdhui, "paris": pronote.PARIS, "campagne": campagne, "jour": jour,
-        "courts": revision.COURTS,
-        "evaluations": evaluations[:6], "devoirs": [d for d in db.evenements_a_venir("devoir", 7) if not d["fait"]],
-        "documents": db.documents_pronote(5), "revisions": db.revisions(4),
-        "actus": db.articles("pour_toi", limite=3, non_lus_jours=3),
-        "synchro": db.etat_valeur("pronote_synchro"), "nb_documents": db.nb_documents()})
+    return RedirectResponse(_premiere_page(getattr(request.state, "compte", None)), status_code=303)
+
+
+def _nb_cours_total() -> int:
+    try:
+        return db.nb_documents()
+    except Exception:
+        return 0
+
+
+templates.env.globals["nb_cours_total"] = _nb_cours_total
+
+
+# --- Réglages : une seule page qui mène à tout -----------------------------------
+
+def _sans_erreur(f, defaut=None):
+    try:
+        return f()
+    except Exception:
+        return defaut
+
+
+@app.get("/reglages", response_class=HTMLResponse)
+def page_reglages(request: Request):
+    """Point d'entrée unique : « Moi » pour tout le monde, « Administration » pour l'admin, avec l'état de chaque page."""
+    moi_ = getattr(request.state, "compte", None) or {}
+    admin = comptes.est_admin(moi_)
+    ctx = {"abonnes": len(_sans_erreur(db.abonnements, []) or []), "admin": admin}
+    if admin:
+        ctx.update({
+            "nb_comptes": len(_sans_erreur(db.comptes, []) or []),
+            "alertes": _sans_erreur(securite.nb_nouvelles_alertes, 0),
+            "maj_n": _sans_erreur(maj.disponibles, 0),
+            "pause": _sans_erreur(lambda: db.etat_valeur("analyses_pause") == "oui", False),
+            "disque": _sans_erreur(disque.etat),
+            "inst_a_faire": _sans_erreur(installation.a_faire, False),
+        })
+    return templates.TemplateResponse(request, "reglages.html", ctx)
 
 
 @app.get("/bibliotheque", response_class=HTMLResponse)
