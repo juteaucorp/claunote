@@ -141,18 +141,30 @@ def claude(monkeypatch):
     """Faux `claude -p` : rejoue les réponses données, note le modèle de chaque appel."""
     from claunote import modeles
     modeles._indisponibles.clear()
+    modeles._alias_seul.clear()
+    monkeypatch.delenv("CLAUDE_REPLI_CREATION", raising=False)
+    monkeypatch.delenv("CLAUDE_ID_OPUS", raising=False)
     monkeypatch.setattr(agent, "ATTENTES_PANNE", (0, 0))
     monkeypatch.setattr(agent.time, "sleep", lambda s: None)
-    appels, reponses = [], []
+    appels, reponses, ids, options = [], [], [], []
 
     def run(cmd, **kw):
-        appels.append(cmd[cmd.index("--model") + 1])
+        appels.append(agent._nom_court(cmd[cmd.index("--model") + 1]))
+        ids.append(cmd[cmd.index("--model") + 1])
+        options.append(cmd)
         code, sortie = reponses.pop(0)
         stdout = json.dumps(sortie) if isinstance(sortie, dict) else sortie
         return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr="")
     monkeypatch.setattr(agent, "_lancer", lambda cmd, cwd, entree, timeout, tache: run(cmd))
-    yield appels, reponses
+    faux = Faux((appels, reponses))
+    faux.ids, faux.options = ids, options
+    yield faux
     modeles._indisponibles.clear()
+    modeles._alias_seul.clear()
+
+
+class Faux(tuple):
+    """(appels, réponses), plus les identifiants exacts passés à --model et les commandes entières."""
 
 
 def ok(d):
@@ -199,8 +211,32 @@ def test_reclasser_monte_tant_que_l_agent_doute(claude):
     assert appels == ["haiku", "sonnet", "opus"] and a.confiance == 0.95 and a.modele == "opus"
 
 
-def test_limite_d_opus_bascule_sur_sonnet(claude, tmp_path):
+def test_creation_de_contenu_par_opus_5_5(claude, tmp_path):
+    appels, reponses = claude
+    for genre in ("fiche", "quiz", "cartes", "plan", "programme", "examen"):
+        reponses.append(ok("x"))
+        assert agent.demander(genre, "p", tmp_path) == ("x", "opus")
+    assert set(claude.ids) == {"claude-opus-5-5"}  # identifiant exact, pas l'alias
+    assert all("--fallback-model" not in c for c in claude.options)  # pas de Sonnet en douce si Opus est surchargé
+
+
+def test_limite_d_opus_les_creations_attendent(claude, tmp_path):
     from claunote import modeles
+    appels, reponses = claude
+    reponses.append((1, {"is_error": True, "result": "Opus weekly limit reached ∙ resets Oct 27, 9am"}))
+    with pytest.raises(agent.OpusEnPause) as e:
+        agent.demander("examen", "p", tmp_path)
+    assert appels == ["opus"] and e.value.reprise and not modeles.disponible("opus")
+    with pytest.raises(agent.OpusEnPause):   # tant qu'Opus est en pause, aucun appel n'est lancé
+        agent.demander("fiche", "p", tmp_path)
+    assert appels == ["opus"]
+    reponses.append(ok("rangé"))              # le reste continue
+    assert agent.demander("dossiers", "p", tmp_path) == ("rangé", "haiku")
+
+
+def test_limite_d_opus_repli_sur_sonnet_si_demande(claude, tmp_path, monkeypatch):
+    from claunote import modeles
+    monkeypatch.setenv("CLAUDE_REPLI_CREATION", "1")
     appels, reponses = claude
     reponses += [(1, {"is_error": True, "result": "Opus weekly limit reached ∙ resets Oct 27, 9am"}),
                  ok("## Sujet\n" + "x" * 100 + "\n## Corrigé\ny")]
@@ -212,7 +248,7 @@ def test_limite_de_sonnet_remonte_avec_l_heure(claude, tmp_path):
     appels, reponses = claude
     reponses.append((1, {"is_error": True, "result": "Claude AI usage limit reached|1761235200"}))
     with pytest.raises(LimiteAtteinte) as e:
-        agent.demander("fiche", "p", tmp_path)
+        agent.demander("scan", "p", tmp_path)
     assert e.value.reprise.timestamp() == 1761235200
 
 
@@ -225,10 +261,16 @@ def test_panne_passagere_reessayee(claude, tmp_path):
         agent.demander("dossiers", "p", tmp_path)
 
 
-def test_modele_refuse_par_le_forfait(claude, tmp_path):
+def test_modele_refuse_par_le_forfait(claude, tmp_path, monkeypatch):
     appels, reponses = claude
-    reponses += [(1, {"is_error": True, "result": "model: claude-opus is not available on your plan"}), ok("x")]
-    assert agent.demander("examen", "p", tmp_path) == ("x", "sonnet")
+    refus = (1, {"is_error": True, "result": "model: claude-opus is not available on your plan"})
+    # Identifiant exact inconnu (Claude Code ancien) : l'alias « opus » d'abord ; refusé aussi : pas de Sonnet
+    reponses += [refus, refus]
+    with pytest.raises(agent.ErreurAgent, match="Opus 5.5"):
+        agent.demander("examen", "p", tmp_path)
+    assert claude.ids == ["claude-opus-5-5", "opus"]
+    reponses += [refus, ok("x")]   # seconde avis d'un classement : Sonnet prend le relais
+    assert agent.demander("scan", "p", tmp_path, modele="opus") == ("x", "sonnet")
 
 
 def test_journal_des_appels(claude, monkeypatch, tmp_path):
