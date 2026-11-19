@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block titre %}Comptes{% endblock %}
+{% from "_icones.html" import icone %}
+{% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('reglages', 'comptes') }}
+<h1>Comptes</h1>
+<p class="doux">Chaque compte a <strong>ses propres données</strong> (cours, fiches, cartes, questions). Une personne ne
+  peut créer son compte qu'avec un <strong>jeton que tu lui donnes</strong>, valable {{ duree_min }} min et une seule fois.</p>
+{% if message %}<p class="carte accent">{{ message }}</p>{% endif %}
+{% if erreur %}<p class="carte alerte">{{ erreur }}</p>{% endif %}
+
+{% if jeton %}
+<div class="carte accent jeton" style="max-width: 640px">
+  <strong>{% if jeton.genre == 'mot_de_passe' %}Lien de nouveau mot de passe pour « {{ jeton.pour }} »{% else %}Jeton d'invitation{% endif %}</strong>
+  <p class="doux">Affiché <strong>une seule fois</strong>. Valable jusqu'à {{ jeton.fin|paris }} ({{ duree_min }} min), pour un seul usage.
+    Envoie-le par un canal sûr (en main propre, message privé).</p>
+  <p class="valeur"><code id="valeur-jeton">{{ jeton.valeur }}</code></p>
+  <p class="lien"><input readonly value="{{ jeton.lien }}" id="lien-jeton" aria-label="Lien" onclick="this.select()"></p>
+  <div class="actions"><button type="button" class="principal" onclick="navigator.clipboard.writeText(document.getElementById('lien-jeton').value).then(() => this.textContent = 'Lien copié')">Copier le lien</button></div>
+</div>
+{% endif %}
+
+<div class="carte" style="max-width: 640px" id="inviter">
+  <strong>Inviter quelqu'un</strong>
+  <form method="post" action="/comptes/inviter">
+    <p><label>Pour qui (note pour toi, facultatif)<br><input name="note" maxlength="120" placeholder="ex. Camille, BTS SIO"></label></p>
+    <p><label>Rôle<br><select name="role">{% for r, nom in roles.items() %}<option value="{{ r }}" {{ 'selected' if r == 'invite' }}>{{ nom }}</option>{% endfor %}</select></label></p>
+    <fieldset class="droits"><legend>Droits</legend>
+      {% for d, (nom, aide) in droits.items() %}
+      <label><input type="checkbox" name="droits" value="{{ d }}" {{ 'checked' if d in droits_invite }}> <span><strong>{{ nom }}</strong><br><span class="doux">{{ aide }}</span></span></label>
+      {% endfor %}
+    </fieldset>
+    <p class="doux">Un admin a tous les droits, y compris « Tout voir ». Sans le droit « Forfait Claude », le compte
+      n'utilise jamais ton abonnement : seulement les modèles locaux de la VM.</p>
+    <button class="principal">Créer un jeton ({{ duree_min }} min)</button>
+  </form>
+</div>
+
+<h2>Comptes ({{ comptes|length }})</h2>
+{% for k in comptes %}
+<details class="carte compte" {{ 'open' if comptes|length <= 2 and k.id != moi().id }}>
+  <summary><strong>{{ k.nom or k.identifiant }}</strong> <span class="doux">@{{ k.identifiant }}</span>
+    <span class="etiquette {{ 'admin' if k.role == 'admin' }}">{{ roles[k.role] }}</span>
+    {% if not k.actif %}<span class="etiquette eteint">désactivé</span>{% endif %}
+    {% if k.expire_le %}<span class="etiquette">jusqu'au {{ k.expire_le|paris }}</span>{% endif %}
+    {% if k.id == moi().id %}<span class="doux">(toi)</span>{% endif %}
+    <br><span class="doux">{{ k.nb_documents }} document(s), {{ k.nb_revisions }} révision(s){% if k.connecte_le %} · vu {{ k.connecte_le|paris }}{% else %} · jamais connecté{% endif %}</span></summary>
+  <form method="post" action="/comptes/{{ k.id }}/modifier">
+    <p><label>Nom affiché<br><input name="nom" value="{{ k.nom or '' }}" maxlength="60"></label></p>
+    <p><label>Rôle<br><select name="role" {{ 'disabled' if k.id == 1 }}>{% for r, nom in roles.items() %}<option value="{{ r }}" {{ 'selected' if r == k.role }}>{{ nom }}</option>{% endfor %}</select></label>
+      {% if k.id == 1 %}<input type="hidden" name="role" value="admin"><br><span class="doux">Compte d'origine : toujours admin.</span>{% endif %}</p>
+    <fieldset class="droits" {{ 'disabled' if k.role == 'admin' }}><legend>Droits{% if k.role == 'admin' %} (un admin les a tous){% endif %}</legend>
+      {% for d, (nom, aide) in droits.items() %}
+      <label><input type="checkbox" name="droits" value="{{ d }}" {{ 'checked' if d in (k.droits or []) or k.role == 'admin' }}> <strong>{{ nom }}</strong></label>
+      {% endfor %}
+    </fieldset>
+    <p><label><input type="checkbox" name="actif" value="1" {{ 'checked' if k.actif }}> Compte actif (décoché : il ne peut plus se connecter)</label></p>
+    <p><label>Fin d'accès (facultatif)<br><input type="date" name="expire_le" value="{{ k.expire_le.astimezone(paris_tz).date().isoformat() if k.expire_le else '' }}"></label></p>
+    <button class="principal">Enregistrer</button>
+  </form>
+  <div class="actions">
+    <form method="post" action="/comptes/{{ k.id }}/deconnecter"><button>Déconnecter partout</button></form>
+    <form method="post" action="/comptes/{{ k.id }}/mot-de-passe"><button title="La personne choisit elle-même son nouveau mot de passe">Lien de nouveau mot de passe</button></form>
+  </div>
+  {% if k.id != 1 and k.id != moi().id %}
+  <form method="post" action="/comptes/{{ k.id }}/supprimer" class="supprimer">
+    <p class="doux">Supprimer le compte <strong>et toutes ses données sur le site</strong> (documents, fiches, cartes, questions).
+      Ses fichiers restent dans kDrive (Etudes/comptes/{{ k.identifiant }}) : à toi de les effacer si besoin.</p>
+    <input name="confirmation" placeholder="tape {{ k.identifiant }} pour confirmer" autocomplete="off" autocapitalize="none">
+    <button class="lien-danger">Supprimer</button>
+  </form>
+  {% endif %}
+</details>
+{% endfor %}
+
+<h2>Jetons récents</h2>
+<div class="carte">
+  {% if invitations %}
+  <ul class="jetons">
+    {% for i in invitations %}
+    <li><span>{% if i.genre == 'mot_de_passe' %}Nouveau mot de passe{% if i.pour %} pour @{{ i.pour }}{% endif %}{% else %}Invitation {{ roles.get(i.role, i.role) }}{% if i.note %} : {{ i.note }}{% endif %}{% endif %}
+      <br><span class="doux">créé {{ i.cree_le|paris }} ·
+      {% if i.utilise_le %}utilisé {{ i.utilise_le|paris }}{% if i.utilise_par_identifiant %} par @{{ i.utilise_par_identifiant }}{% endif %}
+      {% elif i.expire_le <= maintenant %}expiré{% else %}valable jusqu'à {{ i.expire_le|paris }}{% endif %}</span></span>
+      {% if not i.utilise_le and i.expire_le > maintenant %}<form method="post" action="/comptes/invitations/{{ i.id }}/annuler"><button class="lien-danger">Annuler</button></form>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="doux">Aucun jeton pour l'instant.</p>{% endif %}
+</div>
+
+{% if disque %}
+<h2>Disque de la VM</h2>
+<div class="carte {{ 'alerte' if disque.niveau in ('attention', 'critique') }}">
+  <p>{{ disque.phrase }}</p>
+  <p class="doux">Chaque compte ajoute ses scans et transcriptions : surveille cette jauge (page <a href="/etat">État</a>).</p>
+</div>
+{% endif %}
+
+<style>
+  .jeton .valeur code { font-size: clamp(.85rem, 3.6vw, 1.1rem); white-space: nowrap; }
+  .jeton .lien input { width: 100%; }
+  .droits { border: 1px solid var(--bord); border-radius: 12px; padding: 8px 12px; margin: 0 0 12px; display: grid; gap: 8px; }
+  .droits label { display: flex; gap: 8px; align-items: flex-start; }
+  .droits input, .compte input[type=checkbox] { width: auto; flex: none; margin-top: 4px; }
+  .compte summary { cursor: pointer; line-height: 1.6; }
+  .compte form { margin: 12px 0 0; }
+  .compte .actions form { margin: 0; }
+  .etiquette { display: inline-block; font-size: .78rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--bord); margin-left: 4px; }
+  .etiquette.admin { border-color: var(--accent); color: var(--accent-fonce); background: var(--accent-pale); }
+  .etiquette.eteint { color: var(--alerte); border-color: var(--alerte); }
+  .supprimer { border-top: 1px solid var(--bord); padding-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .supprimer p { flex-basis: 100%; margin: 0; }
+  .jetons { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+  .jetons li { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  .jetons form { margin: 0; }
+</style>
+{% endblock %}

@@ -560,8 +560,10 @@ def test_connexion_pas_de_redirection_externe(anonyme):
         assert r.headers["location"] == "/"
 
 
-def test_identifiants_du_env(monkeypatch, anonyme):
+def test_identifiants_du_env(monkeypatch, anonyme, faux_comptes):
+    """Installation d'avant les comptes : l'admin reprend l'identifiant et le mot de passe du .env."""
     from claunote import auth
+    faux_comptes.comptes[1].update(hash=None, identifiant="admin")   # pas encore migré
     monkeypatch.setenv("CLAUNOTE_UTILISATEUR", "camille")
     monkeypatch.setenv("CLAUNOTE_MOT_DE_PASSE", auth.hacher("s3cret"))
     with TestClient(main.app) as c:
@@ -651,17 +653,17 @@ def test_pwa(anonyme):
 
 # --- Compte, reclassement, hors cours, actions de masse -------------------------
 
-def test_changer_mot_de_passe(client):
+def test_changer_mot_de_passe(client, faux_comptes):
     assert "Change-le maintenant" in client.get("/").text
     r = client.post("/compte", data={"actuel": "faux", "nouveau": "nouveau-mdp", "confirmation": "nouveau-mdp"})
     assert r.status_code == 400 and "actuel incorrect" in r.text
     r = client.post("/compte", data={"actuel": "claunote", "nouveau": "court", "confirmation": "court"})
-    assert "8 caractères" in r.text
+    assert "10 caractères" in r.text
     r = client.post("/compte", data={"actuel": "claunote", "nouveau": "nouveau-mdp", "confirmation": "autre-mdp"})
     assert "différents" in r.text
     r = client.post("/compte", data={"actuel": "claunote", "nouveau": "nouveau-mdp", "confirmation": "nouveau-mdp"})
     assert r.status_code == 200 and "Mot de passe changé" in r.text
-    assert client.etat["mot_de_passe"].startswith("scrypt:")
+    assert faux_comptes.comptes[1]["hash"].startswith("scrypt:") and not faux_comptes.comptes[1]["mdp_defaut"]
     # Cet appareil reste connecté, l'ancien mot de passe ne marche plus
     page = client.get("/", follow_redirects=False)
     assert page.status_code == 200 and "Change-le maintenant" not in page.text
@@ -671,8 +673,10 @@ def test_changer_mot_de_passe(client):
     assert r.status_code == 303
 
 
-def test_mot_de_passe_du_site_prioritaire(anonyme):
+def test_mot_de_passe_du_site_prioritaire(anonyme, faux_comptes):
+    """Mot de passe déjà choisi sur la page Compte avant les comptes : c'est lui que l'admin garde."""
     from claunote import auth
+    faux_comptes.comptes[1]["hash"] = None   # pas encore migré
     anonyme.etat["mot_de_passe"] = auth.hacher("choisi-sur-le-site")
     with TestClient(main.app) as c:
         assert c.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"}).status_code == 401

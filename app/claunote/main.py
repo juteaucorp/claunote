@@ -1,4 +1,5 @@
 import base64
+import contextvars
 import hashlib
 import datetime as dt
 import html
@@ -24,8 +25,8 @@ from markupsafe import Markup
 from starlette.background import BackgroundTask
 from starlette.datastructures import FormData
 
-from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, db, decoupage, demande, formules,
-                      importation, index, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
+from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, comptes, db, decoupage, demande,
+                      disque, formules, importation, index, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, ressources, revision, schemas, securite, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
@@ -40,9 +41,10 @@ async def lifespan(app):
     db.init()
     app.state.secret = os.environ.get("CLAUNOTE_SECRET") or db.secret_session()
     # « Déconnecter partout » change la génération : toutes les signatures de session changent
-    app.state.compte = auth.Compte.from_env(_cle_sessions(app), db.etat_valeur("mot_de_passe"))
+    app.state.limiteur = auth.Limiteur()
+    comptes.migrer()   # installation d'avant les comptes : son identifiant et son mot de passe font l'admin
     agent.journal = _noter_appel  # les appels faits par le site (Demander, matières) vont sur la page État
-    if app.state.compte.par_defaut:
+    if (db.compte(1) or {}).get("mdp_defaut"):
         print("ATTENTION : mot de passe par défaut (admin / claunote), "
               "change-le sur la page Compte du site", flush=True)
     yield
@@ -64,7 +66,21 @@ app = FastAPI(title="Claunote", lifespan=lifespan, docs_url=None, redoc_url=None
 # Pages ouvertes sans connexion : chemins EXACTS (un préfixe « /appareil » ouvrait aussi « /appareils/code »
 # et « /appareils/…/retirer », qui doivent rester réservés au compte), plus les fichiers statiques.
 PUBLIC = frozenset({"/appareil", "/connexion", "/cles/connexion", "/cles/connexion/options", "/manifest.webmanifest",
-                    "/sw.js", "/hors-ligne", "/installer", "/certificat.crt"})
+                    "/sw.js", "/hors-ligne", "/installer", "/certificat.crt", "/invitation", "/conditions",
+                    "/tes-donnees"})
+# Connecté mais conditions d'utilisation pas encore acceptées (ou changées) : seulement ces pages
+AVANT_CONDITIONS = frozenset({"/conditions", "/tes-donnees", "/deconnexion"})
+_moi: contextvars.ContextVar[dict | None] = contextvars.ContextVar("moi", default=None)
+
+
+def moi() -> dict | None:
+    """Le compte connecté de la requête en cours (None sur une page publique)."""
+    return _moi.get()
+
+
+def _session(request: Request) -> dict | None:
+    compte = auth.lire_session(_cle_sessions(request.app), request.cookies.get(auth.COOKIE), comptes.trouver)
+    return compte if comptes.utilisable(compte) else None
 PUBLIC_PREFIXES = ("/static/",)
 
 
@@ -72,10 +88,40 @@ def _public(chemin: str) -> bool:
     return chemin in PUBLIC or chemin.startswith(PUBLIC_PREFIXES)
 
 
+async def _servir_compte(request: Request, call_next, compte: dict, droit: str | None):
+    if comptes.peut(compte, droit):
+        return await call_next(request)
+    texte = f"Ton compte n'a pas le droit « {comptes.DROITS[droit][0]} »." if droit in comptes.DROITS \
+        else "Réservé à l'admin."
+    if request.method != "GET" and droit == "claude":
+        texte += " Les fiches, quiz et programmes demandent Claude : vois avec l'admin."
+    if request.headers.get("HX-Request") or request.method != "GET":
+        return Response(texte, status_code=403)
+    return templates.TemplateResponse(request, "refuse.html", {"droit": comptes.DROITS.get(droit)}, status_code=403)
+
+
 @app.middleware("http")
 async def exiger_connexion(request: Request, call_next):
     chemin = request.url.path
-    if _public(chemin) or request.app.state.compte.session_valide(request.cookies.get(auth.COOKIE)):
+    compte = _session(request)
+    if compte:
+        request.state.compte = compte
+        if comptes.doit_accepter(compte) and chemin not in AVANT_CONDITIONS and not chemin.startswith("/static/"):
+            if request.method != "GET" or request.headers.get("HX-Request"):
+                return Response("conditions d'utilisation à accepter", status_code=403,
+                                headers={"HX-Redirect": "/conditions"})
+            return RedirectResponse("/conditions", status_code=303)
+        droit = comptes.droit_requis(chemin, request.method)
+        if comptes.peut(compte, droit) and comptes.besoin_claude(chemin, request.method):
+            droit = "claude"
+        jeton = _moi.set(compte)
+        # La base ne montre que les données de ce compte (« Tout voir » : l'admin voit tout), refus compris
+        try:
+            with comptes.pour(compte["id"], comptes.est_admin(compte) and compte.get("tout_voir")):
+                return await _servir_compte(request, call_next, compte, droit)
+        finally:
+            _moi.reset(jeton)
+    if _public(chemin):
         return await call_next(request)
     if request.headers.get("HX-Request"):
         return Response(status_code=401, headers={"HX-Redirect": "/connexion"})
@@ -276,7 +322,13 @@ templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
 templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirmer()
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
-templates.env.globals["mdp_par_defaut"] = lambda: app.state.compte.par_defaut
+templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_defaut"))
+templates.env.globals["moi"] = moi
+templates.env.globals["peut"] = lambda droit: comptes.peut(moi(), droit)
+templates.env.globals["est_admin"] = lambda: comptes.est_admin(moi())
+templates.env.globals["paris_tz"] = pronote.PARIS
+templates.env.globals["contact"] = (os.environ.get("CLAUNOTE_CONTACT") or "").strip()   # mentions légales
+templates.env.globals["disque_admin"] = lambda: disque.etat() if comptes.est_admin(moi()) else None
 templates.env.globals["nb_mises_a_jour"] = maj.disponibles
 templates.env.globals["nb_actualites"] = lambda: db.nb_actualites_nouvelles()
 templates.env.globals["nb_alertes_securite"] = securite.nb_nouvelles_alertes
@@ -410,20 +462,27 @@ def page_connexion(request: Request, suite: str = "/"):
 
 @app.post("/connexion", response_class=HTMLResponse)
 def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str = Form(...), suite: str = Form("/")):
-    compte = request.app.state.compte
+    limiteur = request.app.state.limiteur
     ip = appareils.ip_client(request)
-    attente = compte.bloque(ip) or _verrou_internet(request)
-    refus = _refus_internet(request)
+    attente = limiteur.bloque(ip) or _verrou_internet(request)
+    compte = db.compte_par_identifiant(utilisateur) if not attente else None
+    ok = not attente and auth.verifier_compte(compte, mot_de_passe)   # toujours un scrypt : même durée
+    if ok and not comptes.utilisable(compte):
+        securite.echec("connexion_echec", request, f"compte désactivé « {utilisateur.strip()[:40]} »")
+        return _page_connexion(request, suite, "Ce compte est désactivé : vois avec l'admin.", 403)
+    refus = _refus_internet(request, compte if ok else None)
     if refus:
         return _page_connexion(request, suite, refus, 403)
-    if attente or not compte.verifier(ip, utilisateur.strip(), mot_de_passe):
+    if not ok:
         if not attente:
+            limiteur.echec(ip)
             securite.echec("connexion_echec", request, f"identifiant « {utilisateur.strip()[:40]} »")
-        attente = attente or compte.bloque(ip)
+        attente = attente or limiteur.bloque(ip)
         erreur = (f"Trop d'essais : réessaie dans {attente // 60 + 1} min." if attente
                   else "Identifiant ou mot de passe incorrect.")
         return _page_connexion(request, suite, erreur, 401)
-    securite.reussite(request, "mot de passe")
+    limiteur.reussite(ip)
+    securite.reussite(request, f"mot de passe ({compte['identifiant']})")
     r = RedirectResponse(_suite_sure(suite), status_code=303)
     _cookie_session(request, r, compte)
     return r
@@ -440,9 +499,9 @@ def _verrou_internet(request: Request) -> int:
     return securite.verrouille() if appareils.par_tunnel(request.headers) else 0
 
 
-def _refus_internet(request: Request) -> str | None:
+def _refus_internet(request: Request, compte: dict | None = None) -> str | None:
     """Par Internet, le mot de passe par défaut ne suffit pas : n'importe qui le connaît."""
-    if appareils.par_tunnel(request.headers) and request.app.state.compte.par_defaut:
+    if appareils.par_tunnel(request.headers) and (compte or {}).get("mdp_defaut"):
         securite.noter("mot_de_passe_defaut", request, "connexion refusée", alerte=(
             "Connexion par Internet refusée : le mot de passe est encore admin / claunote. "
             "Change-le par le VPN (Réglages → Compte)."))
@@ -451,9 +510,15 @@ def _refus_internet(request: Request) -> str | None:
     return None
 
 
-def _cookie_session(request: Request, reponse: Response, compte: auth.Compte):
-    reponse.set_cookie(auth.COOKIE, compte.creer_session(), max_age=auth.DUREE, httponly=True, samesite="lax",
-                       secure=_https(request))
+def _cookie_session(request: Request, reponse: Response, compte: dict):
+    comptes.oublier(compte["id"])
+    compte = db.compte(compte["id"]) or compte   # génération et mot de passe à jour
+    reponse.set_cookie(auth.COOKIE, auth.creer_session(_cle_sessions(request.app), compte), max_age=auth.DUREE,
+                       httponly=True, samesite="lax", secure=_https(request))
+    try:
+        db.maj_compte(compte["id"], connecte_le=dt.datetime.now(dt.timezone.utc))
+    except Exception:
+        pass
 
 
 def _https(request: Request) -> bool:
@@ -467,10 +532,10 @@ def _origine(request: Request) -> str:
 
 def _contexte_compte(request: Request, **plus) -> dict:
     host = request.headers.get("host", "")
-    return {"utilisateur": request.app.state.compte.utilisateur, "cles": db.cles_acces(),
+    return {"utilisateur": (moi() or {}).get("identifiant", ""), "cles": db.cles_acces(),
             "cles_impossible": cles.possible(host, _https(request)), "nom_sslip": cles.nom_sslip(host),
             "hote": cles.hote(host), "appareils": appareils.liste(), "code_expire": appareils.code_en_cours(),
-            "par_tunnel": appareils.par_tunnel(request.headers),
+            "par_tunnel": appareils.par_tunnel(request.headers), "droits_noms": {d: v[0] for d, v in comptes.DROITS.items()},
             "appareil_ici": appareils.reconnu(request.cookies.get(appareils.COOKIE)), **plus}
 
 
@@ -483,15 +548,15 @@ def page_appareil(request: Request, suite: str = "/"):
 
 @app.post("/appareil", response_class=HTMLResponse)
 def approuver_appareil(request: Request, code: str = Form(...), nom: str = Form("Appareil"), suite: str = Form("/")):
-    compte = request.app.state.compte
+    limiteur = request.app.state.limiteur
     ip = appareils.ip_client(request)
-    attente = compte.bloque(ip) or _verrou_internet(request)
+    attente = limiteur.bloque(ip) or _verrou_internet(request)
     valeur = None if attente else appareils.utiliser_code(code, nom)
     if not valeur:
         if not attente:
-            compte._echecs.setdefault(ip, []).append(time.time())
+            limiteur.echec(ip)
             securite.echec("code_echec", request, f"nom donné « {nom.strip()[:60]} »")
-        attente = attente or compte.bloque(ip)
+        attente = attente or limiteur.bloque(ip)
         erreur = (f"Trop d'essais : réessaie dans {attente // 60 + 1} min." if attente
                   else "Code inconnu ou expiré : crée-en un nouveau (Réglages → Compte).")
         return templates.TemplateResponse(request, "appareil.html", {"suite": _suite_sure(suite), "sans_nav": True,
@@ -541,7 +606,7 @@ def cles_inscription_options(request: Request):
     host = request.headers.get("host", "")
     if cles.possible(host, _https(request)):
         raise HTTPException(400, "Face ID demande un nom de site en HTTPS (voir Réglages → Compte)")
-    return _reponse_options(*cles.options_inscription(host, request.app.state.compte.utilisateur,
+    return _reponse_options(*cles.options_inscription(host, moi()["identifiant"],
                                                       [k["id"] for k in db.cles_acces()]))
 
 
@@ -578,9 +643,9 @@ def cles_connexion_options(request: Request):
 
 @app.post("/cles/connexion")
 async def cles_connexion(request: Request):
-    compte = request.app.state.compte
+    limiteur = request.app.state.limiteur
     ip = appareils.ip_client(request)
-    if compte.bloque(ip) or _verrou_internet(request):
+    if limiteur.bloque(ip) or _verrou_internet(request):
         return JSONResponse({"erreur": "Trop d'essais : réessaie dans quelques minutes."}, status_code=429)
     corps = cles.lire(await request.body())
     reponse = corps.get("cle") or {}
@@ -590,8 +655,11 @@ async def cles_connexion(request: Request):
             raise cles.CleRefusee("clé inconnue : ajoute cet appareil depuis Réglages → Compte")
         compteur = cles.verifier_connexion(request.cookies.get(COOKIE_DEFI), reponse, cle,
                                            request.headers.get("host", ""), _origine(request))
+        compte = db.compte(cle.get("compte_id") or 1)
+        if not comptes.utilisable(compte):
+            raise cles.CleRefusee("ce compte est désactivé : vois avec l'admin")
     except cles.CleRefusee as e:
-        compte._echecs.setdefault(ip, []).append(time.time())
+        limiteur.echec(ip)
         securite.echec("faceid_echec", request, str(e)[:200])
         return JSONResponse({"erreur": str(e)}, status_code=400)
     db.cle_utilisee(cle["id"], compteur)
@@ -605,32 +673,239 @@ async def cles_connexion(request: Request):
 @app.post("/compte", response_class=HTMLResponse)
 def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str = Form(...),
                          confirmation: str = Form(...)):
-    compte = request.app.state.compte
+    compte = db.compte(moi()["id"])
+    limiteur = request.app.state.limiteur
     ip = appareils.ip_client(request)
     erreur = None
-    if compte.bloque(ip) or not compte.verifier(ip, compte.utilisateur, actuel):
+    if limiteur.bloque(ip) or not auth.verifier_compte(compte, actuel):
+        limiteur.echec(ip)
         erreur = "Mot de passe actuel incorrect."
         securite.echec("connexion_echec", request, "mot de passe actuel faux (page Compte)")
-    elif len(nouveau) < 8:
-        erreur = "Le nouveau mot de passe doit faire au moins 8 caractères."
-    elif nouveau != confirmation:
-        erreur = "Les deux nouveaux mots de passe sont différents."
-    elif nouveau == auth.DEFAUT_MOT_DE_PASSE:
-        erreur = "Choisis un autre mot de passe que celui par défaut."
+    else:
+        erreur = comptes.verifier_mot_de_passe(nouveau, confirmation, compte["identifiant"])
     if erreur:
         return templates.TemplateResponse(request, "compte.html", _contexte_compte(request, erreur=erreur),
                                           status_code=400)
-    hache = auth.hacher(nouveau)
-    db.etat_ecrire("mot_de_passe", hache)
-    # Nouveau compte = nouvelles signatures : les autres appareils sont déconnectés, pas celui-ci
-    request.app.state.compte = auth.Compte(compte.utilisateur, hache, compte.secret)
-    securite.noter("mot_de_passe", request, "changé sur la page Compte", alerte=(
+    # Nouveau mot de passe = nouvelles signatures : les autres appareils sont déconnectés, pas celui-ci
+    comptes.changer_mot_de_passe(compte["id"], nouveau)
+    securite.noter("mot_de_passe", request, f"changé sur la page Compte ({compte['identifiant']})", alerte=(
         "Le mot de passe du site vient d'être changé. Si ce n'est pas toi : sur la VM, "
         "docker compose exec web python -m claunote.auth reinitialiser"))
     r = templates.TemplateResponse(request, "compte.html", _contexte_compte(
         request, message="Mot de passe changé. Les autres appareils devront se reconnecter."))
-    _cookie_session(request, r, request.app.state.compte)
+    _cookie_session(request, r, compte)
     return r
+
+
+# --- Comptes : invitations, droits, données de chacun (voir comptes.py) --------------------
+
+def _page_comptes(request: Request, statut: int = 200, **plus):
+    return templates.TemplateResponse(request, "comptes.html", {
+        "comptes": db.comptes(), "invitations": db.invitations_recentes(15), "droits": comptes.DROITS,
+        "droits_invite": comptes.DROITS_INVITE, "roles": comptes.ROLES, "duree_min": comptes.DUREE_JETON // 60,
+        "maintenant": dt.datetime.now(dt.timezone.utc), "disque": disque.etat(), **plus}, status_code=statut)
+
+
+def _lien_jeton(request: Request, jeton: str) -> str:
+    return f"{_origine(request)}/invitation?{urlencode({'jeton': jeton})}"
+
+
+@app.get("/comptes", response_class=HTMLResponse)
+def page_comptes(request: Request, message: str = ""):
+    return _page_comptes(request, message=message)
+
+
+@app.post("/comptes/inviter", response_class=HTMLResponse)
+def inviter(request: Request, role: str = Form("invite"), droits: list[str] = Form([]), note: str = Form("")):
+    jeton, fin = comptes.inviter(moi()["id"], role, droits, note)
+    securite.noter("invitation", request, f"jeton créé ({comptes.ROLES.get(role, role)}, valable "
+                   f"{comptes.DUREE_JETON // 60} min){' : ' + note.strip()[:60] if note.strip() else ''}")
+    return _page_comptes(request, jeton={"valeur": jeton, "lien": _lien_jeton(request, jeton), "fin": fin,
+                                         "genre": "compte"})
+
+
+def _cible(compte_id: int) -> dict:
+    compte = db.compte(compte_id)
+    if not compte:
+        raise HTTPException(404, "compte inconnu")
+    return compte
+
+
+def _retour_comptes(message: str) -> RedirectResponse:
+    return RedirectResponse("/comptes?" + urlencode({"message": message}), status_code=303)
+
+
+@app.post("/comptes/{compte_id}/modifier", response_class=HTMLResponse)
+def modifier_compte(request: Request, compte_id: int, role: str = Form("invite"), droits: list[str] = Form([]),
+                    actif: str = Form(""), expire_le: str = Form(""), nom: str = Form("")):
+    cible = _cible(compte_id)
+    role = role if role in comptes.ROLES else "invite"
+    actif_ = actif == "1"
+    perd_admin = cible["role"] == "admin" and (role != "admin" or not actif_)
+    if perd_admin and (compte_id == moi()["id"] or db.nb_admins_actifs(sauf=compte_id) == 0):
+        return _page_comptes(request, 400, erreur="Il faut toujours au moins un admin actif, et tu ne peux pas "
+                                                  "te retirer tes propres droits d'admin.")
+    if compte_id == 1 and role != "admin":
+        return _page_comptes(request, 400, erreur="Le compte d'origine reste admin.")
+    try:
+        fin = dt.datetime.combine(dt.date.fromisoformat(expire_le), dt.time(23, 59), pronote.PARIS) if expire_le else None
+    except ValueError:
+        return _page_comptes(request, 400, erreur="Date de fin d'accès illisible.")
+    droits_ = [d for d in droits if d in comptes.DROITS]
+    db.maj_compte(compte_id, role=role, droits=droits_, actif=actif_, expire_le=fin, nom=nom.strip()[:60] or None,
+                  **({"tout_voir": False} if role != "admin" else {}))
+    if not actif_:
+        db.deconnecter_compte(compte_id)
+    comptes.oublier(compte_id)
+    securite.noter("compte_modifie", request, f"« {cible['identifiant']} » : {comptes.ROLES[role]}, "
+                   f"{'actif' if actif_ else 'désactivé'}, droits {', '.join(droits_) or 'aucun'}"
+                   + (f", jusqu'au {expire_le}" if expire_le else ""))
+    return _retour_comptes(f"Compte « {cible['identifiant']} » enregistré.")
+
+
+@app.post("/comptes/{compte_id}/deconnecter")
+def deconnecter_compte(request: Request, compte_id: int):
+    cible = _cible(compte_id)
+    db.deconnecter_compte(compte_id)
+    comptes.oublier(compte_id)
+    securite.noter("compte_deconnecte", request, f"« {cible['identifiant']} » déconnecté partout")
+    if compte_id == moi()["id"]:
+        return RedirectResponse("/connexion", status_code=303)
+    return _retour_comptes(f"« {cible['identifiant']} » est déconnecté de tous ses appareils.")
+
+
+@app.post("/comptes/{compte_id}/mot-de-passe", response_class=HTMLResponse)
+def lien_mot_de_passe(request: Request, compte_id: int):
+    cible = _cible(compte_id)
+    jeton, fin = comptes.lien_mot_de_passe(moi()["id"], compte_id)
+    securite.noter("lien_mot_de_passe", request, f"pour « {cible['identifiant']} », valable {comptes.DUREE_JETON // 60} min")
+    return _page_comptes(request, jeton={"valeur": jeton, "lien": _lien_jeton(request, jeton), "fin": fin,
+                                         "genre": "mot_de_passe", "pour": cible["identifiant"]})
+
+
+@app.post("/comptes/{compte_id}/supprimer", response_class=HTMLResponse)
+def supprimer_compte(request: Request, compte_id: int, confirmation: str = Form("")):
+    cible = _cible(compte_id)
+    if compte_id in (1, moi()["id"]):
+        return _page_comptes(request, 400, erreur="Ni ton propre compte ni le compte d'origine ne peuvent être supprimés.")
+    if confirmation.strip().lower() != cible["identifiant"]:
+        return _page_comptes(request, 400, erreur=f"Pour supprimer, tape exactement « {cible['identifiant']} ».")
+    if cible["role"] == "admin" and db.nb_admins_actifs(sauf=compte_id) == 0:
+        return _page_comptes(request, 400, erreur="Il faut toujours au moins un admin actif.")
+    db.supprimer_compte(compte_id)
+    comptes.oublier(compte_id)
+    securite.noter("compte_supprime", request, f"« {cible['identifiant']} » et ses données", alerte=(
+        f"Le compte « {cible['identifiant']} » et toutes ses données ont été supprimés."))
+    return _retour_comptes(f"Compte « {cible['identifiant']} » supprimé, avec ses données sur le site.")
+
+
+@app.post("/comptes/invitations/{invitation_id}/annuler")
+def annuler_invitation(request: Request, invitation_id: int):
+    db.annuler_invitation(invitation_id)
+    securite.noter("invitation_annulee", request, f"jeton n° {invitation_id}")
+    return _retour_comptes("Jeton annulé : il ne marche plus.")
+
+
+@app.post("/comptes/tout-voir")
+def tout_voir(request: Request, actif: str = Form(""), suite: str = Form("/")):
+    """Admin : voir et utiliser les données de tous les comptes (bandeau visible tant que c'est actif)."""
+    actif_ = actif == "1"
+    db.maj_compte(moi()["id"], tout_voir=actif_)
+    comptes.oublier(moi()["id"])
+    securite.noter("tout_voir", request, "activé : données de tous les comptes" if actif_ else "désactivé")
+    return RedirectResponse(_suite_sure(suite), status_code=303)
+
+
+# --- Invitation : créer son compte avec le jeton de l'admin (page publique) ---------------
+
+def _page_invitation(request: Request, jeton: str = "", statut: int = 200, **plus):
+    inv = comptes.invitation(jeton) if jeton else None
+    cible = db.compte(inv["compte_id"]) if inv and inv.get("compte_id") else None
+    return templates.TemplateResponse(request, "invitation.html", {
+        "jeton": comptes.normaliser_jeton(jeton) if inv else "", "inv": inv, "cible": cible, "sans_nav": True,
+        "mdp_min": comptes.MDP_MIN, "version": comptes.CONDITIONS_VERSION, **plus}, status_code=statut)
+
+
+@app.get("/invitation", response_class=HTMLResponse)
+def page_invitation(request: Request, jeton: str = ""):
+    erreur = "Jeton inconnu, déjà utilisé ou expiré : demande-en un nouveau à l'admin." \
+        if jeton and not comptes.invitation(jeton) else None
+    return _page_invitation(request, jeton, erreur=erreur)
+
+
+@app.post("/invitation", response_class=HTMLResponse)
+def utiliser_invitation(request: Request, jeton: str = Form(...), identifiant: str = Form(""), nom: str = Form(""),
+                        mot_de_passe: str = Form(""), confirmation: str = Form(""), accepte: str = Form("")):
+    limiteur = request.app.state.limiteur
+    ip = appareils.ip_client(request)
+    attente = limiteur.bloque(ip) or _verrou_internet(request)
+    if attente:
+        return _page_invitation(request, "", 429, erreur=f"Trop d'essais : réessaie dans {attente // 60 + 1} min.")
+    inv = comptes.invitation(jeton)
+    if not inv:
+        limiteur.echec(ip)
+        securite.echec("invitation_echec", request, "jeton inconnu ou expiré")
+        return _page_invitation(request, "", 403, erreur="Jeton inconnu, déjà utilisé ou expiré : demande-en un "
+                                                         "nouveau à l'admin.")
+    if inv["genre"] == "mot_de_passe":
+        cible = db.compte(inv["compte_id"])
+        erreur = comptes.verifier_mot_de_passe(mot_de_passe, confirmation, (cible or {}).get("identifiant", ""))
+        if erreur:
+            return _page_invitation(request, jeton, 400, erreur=erreur)
+        if not comptes.utiliser_lien_mot_de_passe(inv, mot_de_passe):
+            return _page_invitation(request, "", 403, erreur="Ce lien vient d'être utilisé ou a expiré.")
+        securite.noter("mot_de_passe", request, f"nouveau mot de passe de « {cible['identifiant']} » (lien de l'admin)")
+        r = RedirectResponse("/", status_code=303)
+        _cookie_session(request, r, cible)
+        return r
+    identifiant = identifiant.strip().lower()
+    erreur = (comptes.verifier_identifiant(identifiant)
+              or comptes.verifier_mot_de_passe(mot_de_passe, confirmation, identifiant)
+              or (None if accepte == "1" else "Il faut lire et accepter les conditions d'utilisation pour créer ton compte."))
+    if erreur:
+        return _page_invitation(request, jeton, 400, erreur=erreur, identifiant=identifiant, nom=nom)
+    compte_id = comptes.utiliser_invitation(inv, identifiant, mot_de_passe, nom)
+    if not compte_id:
+        return _page_invitation(request, "", 409, erreur="Ce jeton vient d'être utilisé, ou l'identifiant est pris.")
+    limiteur.reussite(ip)
+    securite.noter("compte_cree", request, f"« {identifiant} » ({comptes.ROLES.get(inv['role'])}), conditions "
+                   f"{comptes.CONDITIONS_VERSION} acceptées", alerte=f"Nouveau compte « {identifiant} » créé avec "
+                   "une invitation. Si ce n'est pas prévu : Réglages → Comptes → Supprimer.")
+    r = RedirectResponse("/", status_code=303)
+    _cookie_session(request, r, db.compte(compte_id))
+    return r
+
+
+# --- Conditions d'utilisation, mentions légales, « Tes données » (pages publiques) -------
+
+@app.get("/conditions", response_class=HTMLResponse)
+def page_conditions(request: Request):
+    compte = getattr(request.state, "compte", None)
+    return templates.TemplateResponse(request, "conditions.html", {
+        "version": comptes.CONDITIONS_VERSION, "a_accepter": comptes.doit_accepter(compte), "compte": compte,
+        "sans_nav": comptes.doit_accepter(compte) or not compte})
+
+
+@app.post("/conditions")
+def accepter_conditions(request: Request, accepte: str = Form("")):
+    compte = getattr(request.state, "compte", None)
+    if not compte:
+        return RedirectResponse("/connexion", status_code=303)
+    if accepte != "1":
+        return RedirectResponse("/conditions", status_code=303)
+    db.maj_compte(compte["id"], conditions_version=comptes.CONDITIONS_VERSION,
+                  conditions_le=dt.datetime.now(dt.timezone.utc))
+    comptes.oublier(compte["id"])
+    securite.noter("conditions", request, f"« {compte['identifiant']} » accepte la version {comptes.CONDITIONS_VERSION}")
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/tes-donnees", response_class=HTMLResponse)
+def page_tes_donnees(request: Request):
+    compte = getattr(request.state, "compte", None)
+    return templates.TemplateResponse(request, "tes_donnees.html", {
+        "compte": compte, "sans_nav": not compte or comptes.doit_accepter(compte), "droits": comptes.DROITS,
+        "version": comptes.CONDITIONS_VERSION})
 
 
 def _contexte_maj(request: Request, **plus) -> dict:
@@ -716,11 +991,8 @@ def securite_tester(request: Request):
 @app.post("/securite/deconnecter-partout")
 def deconnecter_partout(request: Request, appareils_aussi: str = Form("")):
     """Nouvelle clé de signature : toutes les sessions tombent, sauf celle de cet appareil (recréée)."""
-    ancien = request.app.state.compte
     db.etat_ecrire("session_generation", base64.urlsafe_b64encode(os.urandom(12)).decode())
-    compte = auth.Compte(ancien.utilisateur, ancien.hash, _cle_sessions(request.app))
-    compte.par_defaut = ancien.par_defaut
-    request.app.state.compte = compte
+    compte = moi()
     retires = 0
     if appareils_aussi == "1":
         ici = appareils.reconnu(request.cookies.get(appareils.COOKIE))
@@ -879,9 +1151,11 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
         taille = f.file.tell()
         f.file.seek(0)
         if taille > GROS_FICHIER:  # scan d'une année entière : envoyé par morceaux, pas en mémoire
-            kd.upload_flux(dossiers_kdrive[dossiers], chemin[-1], f.file, taille)
+            envoi = kd.upload_flux(dossiers_kdrive[dossiers], chemin[-1], f.file, taille)
         else:
-            kd.upload(dossiers_kdrive[dossiers], chemin[-1], f.file.read(), conflict="rename")
+            envoi = kd.upload(dossiers_kdrive[dossiers], chemin[-1], f.file.read(), conflict="rename")
+        if isinstance(envoi, dict) and envoi.get("id"):   # le worker donnera le document à ce compte
+            db.noter_depot(envoi["id"], moi()["id"])
         envoyes.append("/".join(chemin))
     if envoyes:
         db.demander_scan()
@@ -1842,8 +2116,9 @@ def _lancer_reponse(conv: dict, q: str, mode: str) -> int:
     if mode == "ia" and (not pause or not _local_libre()):
         historique = [m for m in db.messages(conv["id"]) if m["statut"] == "pret"][:-1]  # sans la question
         msg_id = db.ajouter_message(conv["id"], "ia", statut="en_attente")
-        threading.Thread(target=_repondre_ia, args=(msg_id, q, conv, historique), daemon=True,
-                         name=f"demander-{msg_id}").start()
+        # Le fil garde le compte de la requête : sa recherche ne voit que ses cours, et son droit au forfait
+        threading.Thread(target=contextvars.copy_context().run, args=(_repondre_ia, msg_id, q, conv, historique),
+                         daemon=True, name=f"demander-{msg_id}").start()
         return msg_id
     msg_id = db.ajouter_message(conv["id"], "local", statut="en_attente")
     _repondre_localement(msg_id, q, conv, pause or "")

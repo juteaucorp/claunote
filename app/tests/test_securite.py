@@ -151,8 +151,9 @@ def test_deconnecter_partout(site):
     r = site.post("/securite/deconnecter-partout", follow_redirects=False)
     assert r.status_code == 303 and "deconnexion_partout" in _types(site)
     assert site.get("/compte").status_code == 200                       # cet appareil reste connecté
-    autre = main.app.state.compte
-    assert not autre.session_valide(ancienne)                            # les autres sessions tombent
+    from claunote import auth, comptes
+    comptes.oublier()
+    assert not auth.lire_session(main._cle_sessions(main.app), ancienne, comptes.trouver)   # les autres tombent
 
 
 def test_deconnecter_partout_retire_les_appareils(site):

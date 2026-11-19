@@ -18,6 +18,7 @@ Fiabilité (voir la page État du site) :
   une révision reste « en attente » tant qu'elle n'est pas finie, un PDF non copié est recopié.
 - À l'arrêt (mise à jour, redémarrage), le document en cours est terminé avant de quitter.
 """
+import contextvars
 import datetime as dt
 import json
 import os
@@ -30,9 +31,10 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (actualites, agent, db, decoupage, importation, index, lecture, local, modeles, notifications,
-                      ocr, pdf, pronote, rangement, ressources, revision, sensible)
-from claunote.agent import NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte, analyser
+from claunote import (actualites, agent, comptes, db, decoupage, disque, importation, index, lecture, local, modeles,
+                      notifications, ocr, pdf, pronote, rangement, ressources, revision, sensible)
+from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
+                            SansForfait, analyser)
 from claunote.kdrive import KDrive, KDriveIndisponible
 from claunote.matieres import harmoniser
 
@@ -270,11 +272,13 @@ def arrete() -> bool:
 
 def claude_peut_aider() -> bool:
     """Claude est là et le réglage permet de lui demander de l'aide pour une analyse."""
-    return CLAUDE.disponible() and reglages_analyse()["mode"] != "toujours"
+    return CLAUDE.disponible() and reglages_analyse()["mode"] != "toujours" and agent.forfait_autorise()
 
 
 def etape_echec(e: Exception):
     """Claude est tombé pendant qu'il aidait le modèle local : on ouvre son disjoncteur, le local continue."""
+    if isinstance(e, SansForfait):   # un compte sans droit au forfait : pas une panne de Claude
+        return
     if isinstance(e, LimiteAtteinte):
         CLAUDE.limite(e)
     elif isinstance(e, ClaudeDeconnecte):
@@ -291,7 +295,21 @@ def a_relire(a) -> bool:
     return r["relire"] and (a.a_relire or r["mode"] == "auto")
 
 
+def proprietaire(item: dict) -> int:
+    """Compte du fichier : celui qui l'a déposé (ou celui du document déjà connu), sinon l'admin d'origine."""
+    return item.get("compte_id") or db.compte_du_fichier(item["id"])
+
+
 def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dossiers: dict | None = None):
+    """Pour le compte du fichier : ses données seulement, et le forfait Claude selon son droit."""
+    compte_id = proprietaire(item)
+    with comptes.pour(compte_id):
+        if compte_id != 1:   # les matières de ce compte, pas celles des autres
+            matieres = db.matieres()
+        return _traiter(kd, {**item, "compte_id": compte_id}, matieres, cache_dossiers)
+
+
+def _traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dossiers: dict | None = None):
     """Analyse un fichier et le range. `item["local"]` : sans Claude ; `item["relire"]` : relecture par Claude
     d'un document déjà analysé sans lui (en cas d'échec, il garde son classement)."""
     dossiers = item.get("dossiers", [])
@@ -332,6 +350,12 @@ def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dos
             return
         db.maj(doc_id, statut="erreur", erreur=str(e))
         log(f"erreur d'analyse : {item['name']} : {e}")
+        return
+    except SansForfait:   # le modèle local n'y arrive pas et ce compte n'a pas accès à Claude : à classer à la main
+        db.maj(doc_id, statut="a_verifier", relire=False,
+               note="Pas lisible par les modèles locaux, et ce compte n'utilise pas le forfait Claude : "
+                    "classe-le à la main.")
+        log(f"illisible sans Claude (compte sans forfait) : {item['name']}")
         return
     except ClaudeIndisponible as e:
         if not relecture and panne_sur("documents", doc_id, e):
@@ -517,6 +541,7 @@ def envoyer_decoupage(kd: KDrive, item: dict, chemin: Path, plan: dict):
         contenu = decoupage.extraire(chemin, d["pages"])
         nom_d = decoupage.nom_partie(nom, k, total, d)
         envoi = kd.upload(dest, nom_d, contenu, conflict="rename")
+        db.noter_depot(envoi["id"], db.compte_actuel())   # chaque morceau reste au compte du gros scan
         d["kdrive_id"] = envoi["id"]
         db.import_enregistrer(lot_de(item), [importation.Fichier(
             envoi["id"], envoi.get("name") or nom_d, dossiers, len(contenu),
@@ -538,6 +563,7 @@ def envoyer_decoupage(kd: KDrive, item: dict, chemin: Path, plan: dict):
             log(f"pages {pages} de {nom} ({v.libelle}) mises à la corbeille kDrive sans analyse")
         else:
             envoi = kd.upload(dest, nom_s, contenu, conflict="rename")
+            db.noter_depot(envoi["id"], db.compte_actuel())
             nom_s = envoi.get("name") or nom_s
             db.import_enregistrer(lot_de(item), [importation.Fichier(
                 envoi["id"], nom_s, dossiers, len(contenu), decision="sensible", raison="; ".join(g["raisons"]))])
@@ -558,7 +584,7 @@ def ranger_doc(kd: KDrive, doc: dict, dossiers: dict[tuple, int]):
     Rejouable sans risque : sert après une analyse, après une action sur le site (Organiser,
     reclassement) et pour reprendre un rangement interrompu par une panne ou un redémarrage.
     """
-    parts = tuple(rangement.dossier_doc(doc))
+    parts = tuple(racine(doc.get("compte_id")) + rangement.dossier_doc(doc))
     if parts not in dossiers:
         dossiers[parts] = kd.ensure_path(ETUDES_ID, list(parts))
     dest = dossiers[parts]
@@ -587,6 +613,14 @@ def ranger_doc(kd: KDrive, doc: dict, dossiers: dict[tuple, int]):
             pass
     ranger_variantes(kd, doc["kdrive_id"], doc["id"], dest, doc["nom"])
     db.marquer_a_ranger([doc["id"]], False)
+
+
+def racine(compte_id: int | None) -> list[str]:
+    """Dans kDrive, les fichiers d'un autre compte que l'admin d'origine vont dans Etudes/comptes/<identifiant>/."""
+    if not compte_id or compte_id == 1:
+        return []
+    k = comptes.trouver(compte_id)
+    return ["comptes", k["identifiant"] if k else str(compte_id)]
 
 
 def ranger_variantes(kd: KDrive, kdrive_id: int, doc_id: int, dest_id: int, nom: str):
@@ -624,6 +658,10 @@ def reclasser(doc: dict, matieres: list[str]):
         if reglages_analyse()["mode"] != "jamais":  # le modèle local d'abord
             a = local.reclasser(doc, matieres, claude=claude_peut_aider(), claude_echec=etape_echec)
         if a is None:
+            if not agent.forfait_autorise():   # compte sans forfait Claude : il classe à la main
+                db.maj(doc["id"], statut="a_verifier",
+                       note="Le modèle local n'a pas su le reclasser (compte sans forfait Claude) : classe-le à la main.")
+                return
             if not CLAUDE.disponible():
                 return  # ni local ni Claude : il attend
             a = agent.reclasser(doc, matieres)
@@ -742,7 +780,8 @@ def copier_pdf(kd: KDrive, rev: dict) -> int | None:
     kdrive_id = None
     try:
         sources = {d["id"]: d["titre"] or d["nom"] for d in db.documents(list((rev["reperes"] or {}).values()))}
-        dossier = kd.ensure_path(ETUDES_ID, ["fiches", rev.get("campagne_titre") or rev.get("matiere") or "divers"])
+        dossier = kd.ensure_path(ETUDES_ID, racine(rev.get("compte_id")) + [
+            "fiches", rev.get("campagne_titre") or rev.get("matiere") or "divers"])
         nom = revision.nom_fichier(rev["genre"], rev["sujet"], rev["cree_le"].date(), "pdf")
         kdrive_id = kd.upload(dossier, nom, pdf.revision_pdf(rev, sources)).get("id")
     except KDriveIndisponible:
@@ -836,7 +875,17 @@ def a_traiter(kd: KDrive, items: list[dict] | None = None, sans_claude: bool = F
         retenus += [(doc["essais"], {**item, "moteur": None}) for doc, item in orphelins(kd, ids)
                     if not (sans_claude and doc.get("relire"))]
     retenus.sort(key=lambda r: (r[0], "Pronote" not in r[1]["dossiers"]))
-    return [item for _, item in retenus]
+    proprios = db.proprietaires([item["id"] for _, item in retenus])
+    sortie = []
+    for _, item in retenus:
+        compte_id = (docs.get(item["id"]) or {}).get("compte_id") or proprios.get(item["id"], 1)
+        if compte_id != 1:   # l'admin d'origine : rien à noter (cas de toutes les installations à un compte)
+            item = {**item, "compte_id": compte_id}
+        if compte_id != 1 and not comptes.peut_claude(compte_id):   # compte sans forfait Claude : modèles locaux seulement
+            item["moteur"] = "local"
+            item["sans_forfait"] = True
+        sortie.append(item)
+    return sortie
 
 
 def orphelins(kd: KDrive, dans_inbox: list[int]):
@@ -1134,6 +1183,8 @@ def en_parallele(items: list, faire, libelle, fils: int = PARALLELE, continuer=N
             activite(EN_COURS[0] + (f" (et {len(EN_COURS) - 1} autre(s) en même temps)" if len(EN_COURS) > 1 else ""))
         try:
             faire(item)
+        except SansForfait as e:   # un compte sans droit au forfait : seulement cet élément, pas une panne
+            log(f"sans forfait Claude ({libelle(item)}) : {e}")
         except (LimiteAtteinte, ClaudeIndisponible, KDriveIndisponible, Interrompu) as e:
             echec.append(e)
         except Exception as e:  # un fichier qui plante ne doit pas arrêter les autres
@@ -1143,8 +1194,8 @@ def en_parallele(items: list, faire, libelle, fils: int = PARALLELE, continuer=N
                 EN_COURS.remove(libelle(item))
                 ETAT["en_cours"] = list(EN_COURS)
 
-    with ThreadPoolExecutor(fils, thread_name_prefix="ia") as ex:
-        list(ex.map(un, items))
+    with ThreadPoolExecutor(fils, thread_name_prefix="ia") as ex:   # chaque fil garde le compte en cours
+        list(ex.map(lambda item, ctx=contextvars.copy_context(): ctx.copy().run(un, item), items))
     if echec:
         raise echec[0]
 
@@ -1162,7 +1213,9 @@ def repartir(items: list[dict], mode: str, claude_ok: bool) -> tuple[list[dict],
     choisis_claude = [i for i in items if i.get("moteur") == "claude"] if claude_ok else []
     libres = [i for i in items if not i.get("moteur")]
     if ressources.locaux_eteints():   # même ceux confiés au modèle local partent chez Claude
-        return [], (choisis_local + choisis_claude + libres)[:LOT] if claude_ok else []
+        # sauf ceux des comptes sans forfait Claude : ils attendent le retour des modèles locaux
+        return [], [i for i in choisis_local + choisis_claude + libres if not i.get("sans_forfait")][:LOT] \
+            if claude_ok else []
     if mode == "jamais":
         return choisis_local[:LOT_LOCAL], (choisis_claude + libres)[:LOT] if claude_ok else []
     if mode == "toujours" or (mode == "auto" and not claude_ok) or (mode == "local" and not claude_ok):
@@ -1234,6 +1287,9 @@ def relire_avec_claude(kd: KDrive):
     """Documents analysés sans Claude : relus par Claude quand il est là et que la file est vide."""
     items = []
     for doc in db.a_relire(PARALLELE * 2):
+        if not comptes.peut_claude(doc.get("compte_id")):
+            db.marquer_relire([doc["id"]], False)
+            continue
         try:
             info = kd.stat(doc["kdrive_id"])
         except httpx.HTTPStatusError:
@@ -1254,18 +1310,37 @@ def revisions_en_attente(kd: KDrive):
         if ARRET.is_set():
             return
         log(f"campagne : « {campagne['titre']} »")
-        traiter_campagne(campagne)
+        with comptes.pour(campagne.get("compte_id")):
+            if not agent.forfait_autorise():
+                db.maj_campagne(campagne["id"], "erreur", erreur=SANS_FORFAIT)
+                continue
+            traiter_campagne(campagne)
     for rev in db.revisions_en_attente():
         if ARRET.is_set() or not CLAUDE.disponible():
             return
         log(f"révision : {rev['genre']} « {rev['sujet']} »")
-        traiter_revision(kd, rev)
+        with comptes.pour(rev.get("compte_id")):
+            if not agent.forfait_autorise():
+                if rev.get("retouche") and rev.get("contenu"):
+                    db.finir_retouche(rev["id"], erreur=SANS_FORFAIT)
+                else:
+                    db.maj_revision(rev["id"], "erreur", erreur=SANS_FORFAIT)
+                continue
+            traiter_revision(kd, rev)
+
+
+SANS_FORFAIT = ("Ce compte n'utilise pas le forfait Claude de l'admin : les fiches, quiz et programmes demandent "
+                "Claude. Demande à l'admin le droit « Forfait Claude ».")
 
 
 def reclasser_en_attente():
     a_reclasser = db.a_reclasser(LOT * 4)  # peu coûteux : seulement du texte
-    matieres = db.matieres() if a_reclasser else []
-    en_parallele(a_reclasser, lambda doc: reclasser(doc, matieres),
+
+    def pour_son_compte(doc):
+        with comptes.pour(doc.get("compte_id")):
+            reclasser(doc, db.matieres())
+
+    en_parallele(a_reclasser, pour_son_compte,
                  lambda doc: f"Reclassement de « {doc['titre'] or doc['nom']} »")
 
 
@@ -1304,8 +1379,24 @@ def indexer_si_calme():
         ETAT["index_en_retard"] = bool(n) and (n[0] >= 20 or n[1] >= 128)
 
 
+_disque = {"vu": float("-inf")}
+
+
+def surveiller_disque():
+    """Toutes les heures : disque presque plein → une notification aux admins (une par jour au plus)."""
+    if time.monotonic() - _disque["vu"] < 3600:
+        return
+    _disque["vu"] = time.monotonic()
+    e = disque.etat()
+    if disque.a_signaler(e):
+        log(e["phrase"])
+        db.notifier(f"disque:{e['niveau']}:{dt.date.today()}", "💽 Disque de la VM presque plein"
+                    if e["niveau"] == "critique" else "💽 Peu de place sur le disque", e["phrase"], "/etat")
+
+
 def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     """Un passage du worker. Renvoie l'heure du dernier nettoyage de l'inbox."""
+    etape("disque", surveiller_disque)
     # Ce que tu attends sur le site passe d'abord : révisions, puis reclassements, puis les scans.
     if CLAUDE.disponible():
         etape("révisions", revisions_en_attente, kd)

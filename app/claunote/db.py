@@ -1,15 +1,20 @@
 """Accès PostgreSQL : documents analysés + petit état partagé site/worker."""
 import atexit
+import contextvars
 import os
 import secrets
 import threading
 import time
+import weakref
+from contextlib import contextmanager
 
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from psycopg.types.json import Jsonb
 
 SCHEMA = """
+-- Le site et le worker démarrent ensemble : un seul des deux met la base à jour à la fois
+SELECT pg_advisory_xact_lock(20261117);
 CREATE TABLE IF NOT EXISTS documents (
     id            SERIAL PRIMARY KEY,
     kdrive_id     BIGINT UNIQUE NOT NULL,
@@ -413,6 +418,125 @@ CREATE TABLE IF NOT EXISTS securite (
 );
 CREATE INDEX IF NOT EXISTS securite_le ON securite (le DESC);
 DELETE FROM securite WHERE le < now() - interval '180 days';
+-- Comptes (comptes.py) : l'admin invite, chaque compte a ses droits et ses propres données.
+-- Le compte 1 est l'admin d'origine : toutes les données d'avant les comptes lui appartiennent.
+CREATE TABLE IF NOT EXISTS comptes (
+    id                 SERIAL PRIMARY KEY,
+    identifiant        TEXT NOT NULL UNIQUE,                 -- en minuscules
+    nom                TEXT,
+    hash               TEXT,                                 -- scrypt ; NULL : à reprendre du .env (migration)
+    mdp_defaut         BOOLEAN NOT NULL DEFAULT false,       -- encore admin / claunote
+    role               TEXT NOT NULL DEFAULT 'invite',       -- admin, invite
+    droits             TEXT[] NOT NULL DEFAULT '{}',         -- voir comptes.DROITS (l'admin a tout)
+    actif              BOOLEAN NOT NULL DEFAULT true,
+    generation         INT NOT NULL DEFAULT 0,               -- +1 : ses sessions tombent
+    tout_voir          BOOLEAN NOT NULL DEFAULT false,       -- admin : voit les données de tous les comptes
+    cree_le            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    cree_par           INT,
+    connecte_le        TIMESTAMPTZ,
+    expire_le          TIMESTAMPTZ                           -- accès temporaire (NULL : sans fin)
+);
+ALTER TABLE comptes ADD COLUMN IF NOT EXISTS conditions_version TEXT;     -- conditions d'utilisation acceptées
+ALTER TABLE comptes ADD COLUMN IF NOT EXISTS conditions_le TIMESTAMPTZ;
+INSERT INTO comptes (id, identifiant, role) SELECT 1, 'admin', 'admin' WHERE NOT EXISTS (SELECT 1 FROM comptes);
+SELECT setval(pg_get_serial_sequence('comptes', 'id'), GREATEST((SELECT max(id) FROM comptes), 1));
+-- Jetons d'invitation et de nouveau mot de passe : seule leur empreinte est gardée, 15 min, un seul usage
+CREATE TABLE IF NOT EXISTS invitations (
+    id          SERIAL PRIMARY KEY,
+    empreinte   TEXT NOT NULL UNIQUE,                        -- sha256 du jeton
+    genre       TEXT NOT NULL DEFAULT 'compte',              -- compte (nouveau compte), mot_de_passe (compte_id)
+    compte_id   INT REFERENCES comptes(id) ON DELETE CASCADE,
+    role        TEXT NOT NULL DEFAULT 'invite',
+    droits      TEXT[] NOT NULL DEFAULT '{}',
+    note        TEXT,
+    cree_par    INT,
+    cree_le     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expire_le   TIMESTAMPTZ NOT NULL,
+    utilise_le  TIMESTAMPTZ,
+    utilise_par INT
+);
+DELETE FROM invitations WHERE expire_le < now() - interval '30 days';
+-- Qui a déposé quel fichier dans l'inbox : le worker donne le document à ce compte
+CREATE TABLE IF NOT EXISTS depots (
+    kdrive_id  BIGINT PRIMARY KEY,
+    compte_id  INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
+    le         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE OR REPLACE FUNCTION claunote_compte() RETURNS INT LANGUAGE sql STABLE AS
+$$ SELECT NULLIF(current_setting('claunote.compte', true), '')::int $$;
+CREATE OR REPLACE FUNCTION claunote_tout() RETURNS BOOLEAN LANGUAGE sql STABLE AS
+$$ SELECT coalesce(current_setting('claunote.tout', true), '') = '1' $$;
+-- Propriétaire d'une ligne : celui de la ligne parente (passage → document, carte → révision…), sinon le
+-- compte de la requête, sinon l'admin d'origine. SECURITY DEFINER : voit le parent quel que soit le compte.
+CREATE OR REPLACE FUNCTION claunote_proprietaire() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public AS $$
+DECLARE i INT := 0; fk TEXT; parent INT;
+BEGIN
+    WHILE i + 1 < TG_NARGS LOOP
+        fk := to_jsonb(NEW) ->> TG_ARGV[i + 1];
+        IF fk IS NOT NULL THEN
+            EXECUTE format('SELECT compte_id FROM %I WHERE id = $1', TG_ARGV[i]) INTO parent USING fk::int;
+            IF parent IS NOT NULL THEN
+                NEW.compte_id := parent;
+                RETURN NEW;
+            END IF;
+        END IF;
+        i := i + 2;
+    END LOOP;
+    NEW.compte_id := coalesce(NEW.compte_id, claunote_compte(), 1);
+    RETURN NEW;
+END $$;
+-- Rôle sans privilège pris par le site pour chaque requête connectée : la base elle-même ne lui montre que
+-- les lignes de son compte (row-level security), même si une requête oublie de filtrer.
+DO $$ BEGIN
+    CREATE ROLE claunote_compte NOLOGIN;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+    EXECUTE format('GRANT claunote_compte TO %I', current_user);
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+GRANT USAGE ON SCHEMA public TO claunote_compte;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO claunote_compte;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO claunote_compte;
+DO $$
+DECLARE
+    t TEXT;
+    parents TEXT[];
+    liens JSONB := '{"passages": ["documents", "document_id"], "cartes": ["revisions", "revision_id"],
+                     "revues_cartes": ["cartes", "carte_id"], "messages": ["conversations", "conversation_id"],
+                     "pieces_jointes": ["revisions", "revision_id", "campagnes", "campagne_id"],
+                     "revisions": ["campagnes", "campagne_id"]}';
+BEGIN
+    FOREACH t IN ARRAY ARRAY['documents', 'passages', 'revisions', 'campagnes', 'cartes', 'revues_cartes',
+                             'conversations', 'messages', 'pieces_jointes', 'pronote_evenements', 'pronote_notes',
+                             'pronote_documents', 'cles_acces', 'sensibles', 'decoupages'] LOOP
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+                       AND table_name = t AND column_name = 'compte_id') THEN
+            EXECUTE format('ALTER TABLE %I ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE', t);
+            EXECUTE format('UPDATE %I SET compte_id = 1', t);
+            EXECUTE format('ALTER TABLE %I ALTER COLUMN compte_id SET NOT NULL', t);
+            EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (compte_id)', t || '_compte', t);
+        END IF;
+        EXECUTE format('ALTER TABLE %I ALTER COLUMN compte_id SET DEFAULT claunote_compte()', t);
+        SELECT coalesce(array_agg(x), '{}') INTO parents FROM jsonb_array_elements_text(liens -> t) x;
+        EXECUTE format('DROP TRIGGER IF EXISTS proprietaire ON %I', t);
+        EXECUTE format('CREATE TRIGGER proprietaire BEFORE INSERT ON %I FOR EACH ROW EXECUTE FUNCTION '
+                       'claunote_proprietaire(%s)', t,
+                       (SELECT coalesce(string_agg(quote_literal(p), ', '), '') FROM unnest(parents) p));
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = t
+                       AND policyname = 'par_compte') THEN
+            EXECUTE format('CREATE POLICY par_compte ON %I USING (compte_id = claunote_compte() OR claunote_tout()) '
+                           'WITH CHECK (compte_id = claunote_compte() OR claunote_tout())', t);
+        END IF;
+    END LOOP;
+END $$;
+-- Notifications et appareils abonnés : à un compte (NULL : les admins, comme les alertes de sécurité)
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS compte_id INT REFERENCES comptes(id) ON DELETE CASCADE;
+ALTER TABLE notifications ALTER COLUMN compte_id SET DEFAULT claunote_compte();
+ALTER TABLE abonnements_push ADD COLUMN IF NOT EXISTS compte_id INT REFERENCES comptes(id) ON DELETE CASCADE;
+ALTER TABLE abonnements_push ALTER COLUMN compte_id SET DEFAULT claunote_compte();
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -437,6 +561,46 @@ def _verifier(conn):
         ConnectionPool.check_connection(conn)
 
 
+# Compte pour lequel on travaille : (id, tout voir). None : le worker, le démarrage, les pages sans connexion,
+# qui voient tout. Posé par le site à chaque requête connectée et par le worker le temps d'un travail.
+_compte: contextvars.ContextVar[tuple[int, bool] | None] = contextvars.ContextVar("compte", default=None)
+_etat_connexion: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()   # connexion → contexte déjà posé
+
+
+@contextmanager
+def pour_compte(compte_id: int | None, tout_voir: bool = False):
+    """Le temps du bloc, la base ne montre (et ne laisse écrire) que les données de ce compte."""
+    jeton = _compte.set((int(compte_id), bool(tout_voir)) if compte_id is not None else None)
+    try:
+        yield
+    finally:
+        _compte.reset(jeton)
+
+
+def sans_compte():
+    """Le temps du bloc, toutes les données (travail interne : connexion, alertes, comptes)."""
+    return pour_compte(None)
+
+
+def compte_actuel() -> int | None:
+    ctx = _compte.get()
+    return ctx[0] if ctx else None
+
+
+def _appliquer_compte(conn):
+    voulu = _compte.get()
+    if _etat_connexion.get(conn, ()) == voulu:
+        return
+    if voulu is None:
+        conn.execute("RESET ROLE; RESET claunote.compte; RESET claunote.tout")
+    else:
+        # Entiers uniquement (jamais de texte venu d'une requête) : pas d'injection possible
+        conn.execute(f"SET ROLE claunote_compte; SET claunote.compte = '{int(voulu[0])}'; "
+                     f"SET claunote.tout = '{1 if voulu[1] else 0}'")
+    _etat_connexion[conn] = voulu
+
+
+@contextmanager
 def connect():
     """Connexion prise dans un pool : en ouvrir une coûte ~10 ms (authentification), et une page en fait plusieurs."""
     global _pool
@@ -446,7 +610,9 @@ def connect():
                 _pool = ConnectionPool(os.environ["DATABASE_URL"], min_size=1, max_size=12, open=True,
                                        kwargs={"row_factory": dict_row, "autocommit": True},
                                        check=_verifier, reset=_rendue)
-    return _pool.connection()
+    with _pool.connection() as c:
+        _appliquer_compte(c)
+        yield c
 
 
 def fermer():
@@ -459,7 +625,7 @@ atexit.register(fermer)
 
 
 def init():
-    with connect() as c:
+    with sans_compte(), connect() as c:
         c.execute(SCHEMA)
 
 
@@ -1314,7 +1480,8 @@ def enregistrer_abonnement(endpoint: str, p256dh: str, auth: str, appareil: str 
     with connect() as c:
         c.execute("""INSERT INTO abonnements_push (endpoint, p256dh, auth, appareil) VALUES (%s, %s, %s, %s)
                      ON CONFLICT (endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth,
-                       appareil = EXCLUDED.appareil, vu_le = now()""", (endpoint, p256dh, auth, appareil))
+                       appareil = EXCLUDED.appareil, vu_le = now(), compte_id = EXCLUDED.compte_id""",
+                  (endpoint, p256dh, auth, appareil))
 
 
 def retirer_abonnement(endpoint: str):
@@ -1323,8 +1490,22 @@ def retirer_abonnement(endpoint: str):
 
 
 def abonnements():
+    """Appareils abonnés du compte de la requête (tous pour le worker et le travail interne)."""
+    compte = compte_actuel()
     with connect() as c:
-        return c.execute("SELECT * FROM abonnements_push ORDER BY cree_le").fetchall()
+        if compte is None:
+            return c.execute("SELECT * FROM abonnements_push ORDER BY cree_le").fetchall()
+        return c.execute("SELECT * FROM abonnements_push WHERE compte_id = %s ORDER BY cree_le", (compte,)).fetchall()
+
+
+def abonnements_de(compte_id: int | None):
+    """Appareils qui reçoivent une notification de ce compte ; None : ceux des admins (alertes de sécurité)."""
+    with sans_compte(), connect() as c:
+        return c.execute(
+            """SELECT a.* FROM abonnements_push a LEFT JOIN comptes k ON k.id = a.compte_id
+               WHERE CASE WHEN %(c)s::int IS NULL THEN coalesce(k.role, 'admin') = 'admin' AND coalesce(k.actif, true)
+                          ELSE a.compte_id = %(c)s END
+               ORDER BY a.cree_le""", {"c": compte_id}).fetchall()
 
 
 def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str = "attente") -> bool:
@@ -1339,6 +1520,7 @@ def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str 
                SELECT %(cle)s, %(titre)s, %(corps)s, %(url)s,
                       CASE WHEN %(statut)s = 'attente' AND EXISTS (
                              SELECT 1 FROM notifications WHERE titre = %(titre)s AND corps = %(corps)s
+                              AND compte_id IS NOT DISTINCT FROM claunote_compte()
                               AND statut IN ('attente', 'envoi', 'envoye')
                               AND cree_le > now() - interval '20 hours')
                            THEN 'ignore' ELSE %(statut)s END
@@ -1349,7 +1531,8 @@ def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str 
 def notification_directe(cle: str, titre: str, corps: str, url: str) -> int | None:
     """Notification envoyée tout de suite par le site (alerte de sécurité), sans passer par la file du worker."""
     with connect() as c:
-        r = c.execute("INSERT INTO notifications (cle, titre, corps, url, statut) VALUES (%s, %s, %s, %s, 'envoi') "
+        r = c.execute("INSERT INTO notifications (cle, titre, corps, url, statut, compte_id) "
+                      "VALUES (%s, %s, %s, %s, 'envoi', NULL) "   # NULL : pour les admins
                       "ON CONFLICT (cle) DO NOTHING RETURNING id", (cle, titre, corps, url)).fetchone()
         return r["id"] if r else None
 
@@ -1377,8 +1560,12 @@ def maj_notification(notif_id: int, statut: str, erreur: str | None = None):
 
 def notifications_recentes(limite: int = 10):
     with connect() as c:
-        return c.execute("SELECT * FROM notifications WHERE statut <> 'ignore' ORDER BY id DESC LIMIT %s",
-                         (limite,)).fetchall()
+        return c.execute(
+            """SELECT * FROM notifications WHERE statut <> 'ignore'
+                 AND (claunote_compte() IS NULL OR compte_id = claunote_compte()
+                      OR (compte_id IS NULL AND EXISTS (SELECT 1 FROM comptes WHERE id = claunote_compte()
+                                                        AND role = 'admin')))
+               ORDER BY id DESC LIMIT %s""", (limite,)).fetchall()
 
 
 def nouveaux_cours_sans_revision(jours: int = 7, minimum: int = 3):
@@ -1542,7 +1729,7 @@ def import_dossiers(lot: str) -> dict[str, int]:
 def statuts_kdrive(ids: list[int]) -> dict[int, dict]:
     """{kdrive_id: {statut, essais}} des fichiers déjà connus (une requête pour toute l'inbox)."""
     with connect() as c:
-        rows = c.execute("SELECT kdrive_id, statut, essais, relire FROM documents WHERE kdrive_id = ANY(%s)",
+        rows = c.execute("SELECT kdrive_id, statut, essais, relire, compte_id FROM documents WHERE kdrive_id = ANY(%s)",
                          (ids,)).fetchall()
     return {r["kdrive_id"]: r for r in rows}
 
@@ -2234,3 +2421,146 @@ def securite_ip_connue(ip: str) -> bool:
     with connect() as c:
         return c.execute("SELECT 1 FROM securite WHERE type = 'connexion_ok' AND ip = %s "
                          "AND le > now() - interval '90 days' LIMIT 1", (ip,)).fetchone() is not None
+
+
+# --- Comptes et invitations (comptes.py) ----------------------------------------------
+# Toujours sans filtre par compte : ces tables servent à la connexion et à l'administration.
+
+COLONNES_COMPTE = {"nom", "hash", "mdp_defaut", "role", "droits", "actif", "generation", "tout_voir", "connecte_le",
+                   "expire_le", "conditions_version", "conditions_le"}
+
+
+def comptes():
+    with sans_compte(), connect() as c:
+        return c.execute(
+            """SELECT k.*, (SELECT count(*) FROM documents d WHERE d.compte_id = k.id) AS nb_documents,
+                      (SELECT count(*) FROM revisions r WHERE r.compte_id = k.id) AS nb_revisions
+               FROM comptes k ORDER BY k.role = 'admin' DESC, k.id""").fetchall()
+
+
+def compte(compte_id: int):
+    with sans_compte(), connect() as c:
+        return c.execute("SELECT * FROM comptes WHERE id = %s", (compte_id,)).fetchone()
+
+
+def compte_par_identifiant(identifiant: str):
+    with sans_compte(), connect() as c:
+        return c.execute("SELECT * FROM comptes WHERE identifiant = %s", (identifiant.strip().lower(),)).fetchone()
+
+
+def creer_compte(identifiant: str, hash_: str, role: str, droits: list[str], nom: str | None = None,
+                 cree_par: int | None = None) -> int | None:
+    """None si l'identifiant est déjà pris."""
+    with sans_compte(), connect() as c:
+        r = c.execute("INSERT INTO comptes (identifiant, nom, hash, role, droits, cree_par) VALUES (%s, %s, %s, %s, %s, %s) "
+                      "ON CONFLICT (identifiant) DO NOTHING RETURNING id",
+                      (identifiant.strip().lower(), nom, hash_, role, droits, cree_par)).fetchone()
+        return r["id"] if r else None
+
+
+def maj_compte(compte_id: int, **champs):
+    inconnus = set(champs) - COLONNES_COMPTE
+    if inconnus:
+        raise ValueError(f"champs inconnus : {inconnus}")
+    if not champs:
+        return
+    cols = ", ".join(f"{k} = %s" for k in champs)
+    with sans_compte(), connect() as c:
+        c.execute(f"UPDATE comptes SET {cols} WHERE id = %s", (*champs.values(), compte_id))
+
+
+def deconnecter_compte(compte_id: int):
+    with sans_compte(), connect() as c:
+        c.execute("UPDATE comptes SET generation = generation + 1 WHERE id = %s", (compte_id,))
+
+
+def supprimer_compte(compte_id: int):
+    """Le compte et toutes ses données (documents, révisions, cartes…) partent avec lui (ON DELETE CASCADE)."""
+    with sans_compte(), connect() as c:
+        c.execute("DELETE FROM comptes WHERE id = %s", (compte_id,))
+
+
+def nb_admins_actifs(sauf: int | None = None) -> int:
+    with sans_compte(), connect() as c:
+        return c.execute("SELECT count(*) AS n FROM comptes WHERE role = 'admin' AND actif AND id IS DISTINCT FROM %s",
+                         (sauf,)).fetchone()["n"]
+
+
+def creer_invitation(empreinte: str, genre: str, expire_le, role: str = "invite", droits: list[str] | None = None,
+                     note: str | None = None, cree_par: int | None = None, compte_id: int | None = None) -> int:
+    with sans_compte(), connect() as c:
+        if genre == "mot_de_passe":   # un seul lien de nouveau mot de passe valable à la fois par compte
+            c.execute("DELETE FROM invitations WHERE genre = 'mot_de_passe' AND compte_id = %s AND utilise_le IS NULL",
+                      (compte_id,))
+        return c.execute(
+            "INSERT INTO invitations (empreinte, genre, expire_le, role, droits, note, cree_par, compte_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (empreinte, genre, expire_le, role, droits or [], note, cree_par, compte_id)).fetchone()["id"]
+
+
+def invitation(empreinte: str):
+    """Invitation encore valable (pas expirée, pas utilisée)."""
+    with sans_compte(), connect() as c:
+        return c.execute("SELECT * FROM invitations WHERE empreinte = %s AND utilise_le IS NULL AND expire_le > now()",
+                         (empreinte,)).fetchone()
+
+
+def utiliser_invitation(invitation_id: int, compte_id: int | None) -> bool:
+    """Vrai une seule fois : deux envois simultanés du même jeton ne créent pas deux comptes."""
+    with sans_compte(), connect() as c:
+        return c.execute("UPDATE invitations SET utilise_le = now(), utilise_par = %s WHERE id = %s "
+                         "AND utilise_le IS NULL AND expire_le > now() RETURNING id",
+                         (compte_id, invitation_id)).fetchone() is not None
+
+
+def invitations_recentes(limite: int = 20):
+    with sans_compte(), connect() as c:
+        return c.execute(
+            """SELECT i.*, k.identifiant AS pour, u.identifiant AS utilise_par_identifiant FROM invitations i
+               LEFT JOIN comptes k ON k.id = i.compte_id LEFT JOIN comptes u ON u.id = i.utilise_par
+               ORDER BY i.id DESC LIMIT %s""", (limite,)).fetchall()
+
+
+def annuler_invitation(invitation_id: int):
+    with sans_compte(), connect() as c:
+        c.execute("UPDATE invitations SET expire_le = now() WHERE id = %s AND utilise_le IS NULL", (invitation_id,))
+
+
+def noter_depot(kdrive_id: int, compte_id: int | None):
+    """Fichier envoyé dans l'inbox par ce compte : le worker lui donnera le document."""
+    if compte_id is None:
+        return
+    with sans_compte(), connect() as c:
+        c.execute("INSERT INTO depots (kdrive_id, compte_id) VALUES (%s, %s) ON CONFLICT (kdrive_id) DO UPDATE "
+                  "SET compte_id = EXCLUDED.compte_id", (kdrive_id, compte_id))
+
+
+def proprietaires(kdrive_ids: list[int]) -> dict[int, int]:
+    """Compte de chaque fichier de l'inbox : celui qui l'a déposé, sinon l'admin d'origine (1)."""
+    if not kdrive_ids:
+        return {}
+    with sans_compte(), connect() as c:
+        lus = {r["kdrive_id"]: r["compte_id"] for r in c.execute(
+            "SELECT kdrive_id, compte_id FROM depots WHERE kdrive_id = ANY(%s)", (list(kdrive_ids),)).fetchall()}
+    return {i: lus.get(i, 1) for i in kdrive_ids}
+
+
+def proprietaire_document(doc_id: int) -> int:
+    with sans_compte(), connect() as c:
+        r = c.execute("SELECT compte_id FROM documents WHERE id = %s", (doc_id,)).fetchone()
+        return r["compte_id"] if r else 1
+
+
+def compte_du_fichier(kdrive_id: int) -> int:
+    """Compte d'un fichier kDrive : celui de son document s'il est connu, sinon celui qui l'a déposé, sinon 1."""
+    with sans_compte(), connect() as c:
+        r = c.execute("SELECT compte_id FROM documents WHERE kdrive_id = %s", (kdrive_id,)).fetchone()
+    return r["compte_id"] if r else proprietaires([kdrive_id])[kdrive_id]
+
+
+def renommer_compte(compte_id: int, identifiant: str) -> bool:
+    with sans_compte(), connect() as c:
+        return c.execute("UPDATE comptes SET identifiant = %s WHERE id = %s AND NOT EXISTS "
+                         "(SELECT 1 FROM comptes WHERE identifiant = %s AND id <> %s) RETURNING id",
+                         (identifiant.strip().lower(), compte_id, identifiant.strip().lower(), compte_id)
+                         ).fetchone() is not None

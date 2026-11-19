@@ -11,6 +11,7 @@ Les échecs sont triés pour que le worker sache quoi faire :
   sans marquer le document en erreur ; ClaudeDeconnecte : jeton refusé ou expiré ;
 - ErreurAgent : le document lui-même pose problème (illisible, réponse invalide).
 """
+import contextvars
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import datetime as dt
 from pathlib import Path
@@ -128,6 +130,28 @@ class ModeleIndisponible(Exception):
 
 class ErreurAgent(Exception):
     pass
+
+
+class SansForfait(ClaudeIndisponible):
+    """Ce compte n'a pas le droit d'utiliser le forfait Claude de l'admin : modèles locaux seulement.
+    Ce n'est pas une panne : rien ne doit mettre Claude en pause pour les autres comptes."""
+
+
+# Faux le temps du travail d'un compte sans le droit « claude » (comptes.pour) : aucun `claude -p` ne part
+_forfait: contextvars.ContextVar[bool] = contextvars.ContextVar("forfait", default=True)
+
+
+@contextmanager
+def forfait(autorise: bool):
+    jeton = _forfait.set(bool(autorise))
+    try:
+        yield
+    finally:
+        _forfait.reset(jeton)
+
+
+def forfait_autorise() -> bool:
+    return _forfait.get()
 
 
 class Interrompu(Exception):
@@ -264,6 +288,8 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
     `entree` est passé sur l'entrée standard (Claude Code l'ajoute au prompt).
     Une panne passagère est réessayée deux fois avant de lever ClaudeIndisponible.
     """
+    if not _forfait.get():
+        raise SansForfait("ce compte n'utilise pas le forfait Claude de l'admin (modèles locaux seulement)")
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", modele]
     if modele == "opus":
         cmd += ["--fallback-model", "sonnet"]  # Opus surchargé : Sonnet prend le relais
@@ -593,8 +619,8 @@ def transcrire_par_morceaux(chemin: Path, memoire: Path | None = None, contexte:
             garde.write_text(texte)
         return texte, modele
 
-    with ThreadPoolExecutor(len(morceaux)) as ex:
-        resultats = list(ex.map(un, morceaux))
+    with ThreadPoolExecutor(len(morceaux)) as ex:   # chaque fil garde le compte et son droit au forfait
+        resultats = list(ex.map(lambda m, ctx=contextvars.copy_context(): ctx.copy().run(un, m), morceaux))
     modeles_lus = [m for _, m in resultats if m]
     return "\n\n".join(t for t, _ in resultats), max(modeles_lus, key=modeles.ECHELLE.index, default="")
 

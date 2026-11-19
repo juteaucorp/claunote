@@ -1,10 +1,15 @@
+import base64
+import hashlib
+import hmac
 import time
 
 from claunote import auth
 
+COMPTE = {"id": 3, "identifiant": "camille", "hash": auth.hacher("claunote"), "generation": 0}
 
-def compte(mdp="claunote", secret=b"s"):
-    return auth.Compte("admin", mdp, secret)
+
+def trouver(compte):
+    return lambda i: dict(compte) if i == compte["id"] else None
 
 
 def test_hash_scrypt():
@@ -14,31 +19,50 @@ def test_hash_scrypt():
     assert not auth.verifier_hash("x", "pas-un-hash")
 
 
-def test_mot_de_passe_en_clair_ou_hache():
-    assert compte().par_defaut
-    c = compte(auth.hacher("secret"))
-    assert not c.par_defaut and c.verifier("ip", "admin", "secret") and not c.verifier("ip", "admin", "claunote")
-    assert not c.verifier("ip", "root", "secret")
+def test_verifier_compte():
+    assert auth.verifier_compte(COMPTE, "claunote") and not auth.verifier_compte(COMPTE, "autre")
+    assert not auth.verifier_compte(None, "claunote") and not auth.verifier_compte({**COMPTE, "hash": None}, "x")
 
 
 def test_session_signee_et_limitee_dans_le_temps():
-    c = compte()
-    s = c.creer_session()
-    assert c.session_valide(s)
-    assert not c.session_valide(s[:-1] + ("0" if s[-1] != "0" else "1"))
-    assert not c.session_valide(s, maintenant=time.time() + auth.DUREE + 1)
-    assert not c.session_valide(None) and not c.session_valide("n'importe quoi")
-    assert not compte(secret=b"autre").session_valide(s)
+    s = auth.creer_session(b"s", COMPTE)
+    assert auth.lire_session(b"s", s, trouver(COMPTE))["id"] == 3
+    assert not auth.lire_session(b"s", s[:-1] + ("0" if s[-1] != "0" else "1"), trouver(COMPTE))
+    assert not auth.lire_session(b"s", s, trouver(COMPTE), maintenant=time.time() + auth.DUREE + 1)
+    assert not auth.lire_session(b"s", None, trouver(COMPTE))
+    assert not auth.lire_session(b"s", "n'importe quoi", trouver(COMPTE))
+    assert not auth.lire_session(b"autre", s, trouver(COMPTE))
+    assert not auth.lire_session(b"s", s, lambda i: None)                          # compte supprimé
 
 
-def test_changer_le_mot_de_passe_deconnecte():
-    s = compte().creer_session()
-    assert not compte("nouveau").session_valide(s)
+def test_changer_le_mot_de_passe_ou_deconnecter_le_compte():
+    s = auth.creer_session(b"s", COMPTE)
+    assert not auth.lire_session(b"s", s, trouver({**COMPTE, "hash": auth.hacher("nouveau")}))
+    assert not auth.lire_session(b"s", s, trouver({**COMPTE, "generation": 1}))
+
+
+def test_un_compte_ne_peut_pas_prendre_la_session_d_un_autre():
+    s = auth.creer_session(b"s", COMPTE)
+    charge, sig = s.rsplit(".", 1)
+    autre = base64.urlsafe_b64encode(base64.urlsafe_b64decode(charge).replace(b"3|", b"1|", 1)).decode()
+    admin = {**COMPTE, "id": 1, "identifiant": "admin"}
+    assert not auth.lire_session(b"s", f"{autre}.{sig}", trouver(admin))
+
+
+def test_ancien_cookie_valable_pour_l_admin():
+    """Cookie d'avant les comptes (« admin|expiration ») : l'admin n'est pas déconnecté par la mise à jour."""
+    admin = {"id": 1, "identifiant": "admin", "hash": auth.hacher("claunote"), "generation": 0}
+    charge = base64.urlsafe_b64encode(f"admin|{int(time.time()) + 60}".encode()).decode()
+    sig = hmac.new(b"s" + admin["hash"].encode(), charge.encode(), hashlib.sha256).hexdigest()
+    assert auth.lire_session(b"s", f"{charge}.{sig}", trouver(admin))["id"] == 1
+    assert not auth.lire_session(b"s", f"{charge}.{sig}", trouver({**admin, "generation": 1}))
 
 
 def test_blocage_apres_trop_d_echecs():
-    c = compte()
+    lim = auth.Limiteur()
     for _ in range(auth.ESSAIS_MAX):
-        assert c.bloque("1.2.3.4") == 0
-        c.verifier("1.2.3.4", "admin", "faux")
-    assert c.bloque("1.2.3.4") > 0 and c.bloque("5.6.7.8") == 0
+        assert lim.bloque("1.2.3.4") == 0
+        lim.echec("1.2.3.4")
+    assert lim.bloque("1.2.3.4") > 0 and lim.bloque("5.6.7.8") == 0
+    lim.reussite("1.2.3.4")
+    assert lim.bloque("1.2.3.4") == 0

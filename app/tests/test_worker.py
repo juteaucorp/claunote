@@ -953,6 +953,67 @@ def test_modification_de_revision(worker, monkeypatch):
     assert vu["fin"][1] is None and "réponse trop courte" in vu["fin"][2]
 
 
+# --- Comptes : le travail de chacun, avec ou sans le forfait Claude de l'admin ------------------------
+
+def _invite(faux_comptes, claude: bool):
+    i = faux_comptes.creer_compte("camille", "h", "invite", ["bibliotheque", "deposer"] + (["claude"] if claude else []))
+    return i
+
+
+def test_fichier_d_un_invite_sans_forfait_lu_en_local(worker, monkeypatch, faux_comptes):
+    invite = _invite(faux_comptes, claude=False)
+    faux_comptes.depots[2] = invite
+    monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {})
+    monkeypatch.setattr(worker.db, "import_connus", lambda ids: {1: "analyser", 2: "analyser"})
+    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: [])
+    monkeypatch.setattr(worker.db, "documents_orphelins", lambda ids, n: [])
+    items = worker.a_traiter(FauxKD({}), [{"id": 1, "name": "a.pdf", "type": "file", "dossiers": []},
+                                          {"id": 2, "name": "b.pdf", "type": "file", "dossiers": []}])
+    par_id = {i["id"]: i for i in items}
+    assert par_id[1].get("moteur") is None and "compte_id" not in par_id[1]        # l'admin : comme avant
+    assert par_id[2]["compte_id"] == invite and par_id[2]["moteur"] == "local" and par_id[2]["sans_forfait"]
+    # modèles locaux éteints : le fichier de l'invité attend, il ne part jamais chez Claude
+    monkeypatch.setattr(worker.ressources, "locaux_eteints", lambda: True)
+    pour_local, pour_claude = worker.repartir(items, "local", True)
+    assert [i["id"] for i in pour_claude] == [1] and pour_local == []
+
+
+def test_revision_d_un_invite_sans_forfait(worker, monkeypatch, faux_comptes):
+    invite = _invite(faux_comptes, claude=False)
+    fait = []
+    monkeypatch.setattr(worker.db, "campagnes_en_attente", lambda: [])
+    monkeypatch.setattr(worker.db, "revisions_en_attente", lambda: [
+        {"id": 5, "genre": "fiche", "sujet": "VLAN", "compte_id": invite}])
+    monkeypatch.setattr(worker.db, "maj_revision", lambda i, statut, **k: fait.append((i, statut, k.get("erreur"))))
+    monkeypatch.setattr(worker, "traiter_revision", lambda kd, rev: fait.append("claude appelé"))
+    worker.revisions_en_attente(FauxKD({}))
+    assert fait == [(5, "erreur", worker.SANS_FORFAIT)]
+
+
+def test_revision_d_un_invite_avec_forfait(worker, monkeypatch, faux_comptes):
+    invite = _invite(faux_comptes, claude=True)
+    vus = []
+    monkeypatch.setattr(worker.db, "campagnes_en_attente", lambda: [])
+    monkeypatch.setattr(worker.db, "revisions_en_attente", lambda: [
+        {"id": 5, "genre": "fiche", "sujet": "VLAN", "compte_id": invite}])
+    monkeypatch.setattr(worker, "traiter_revision",
+                        lambda kd, rev: vus.append((worker.db.compte_actuel(), worker.agent.forfait_autorise())))
+    worker.revisions_en_attente(FauxKD({}))
+    assert vus == [(invite, True)]   # travail fait au nom de l'invité (ses cours seulement)
+
+
+def test_aucun_appel_a_claude_sans_forfait():
+    from claunote import agent
+    with agent.forfait(False):
+        with pytest.raises(agent.SansForfait):
+            agent.appeler_claude("x", __import__("pathlib").Path("."))
+
+
+def test_rangement_des_fichiers_d_un_invite(worker, faux_comptes):
+    invite = _invite(faux_comptes, claude=False)
+    assert worker.racine(1) == [] and worker.racine(None) == []
+    assert worker.racine(invite) == ["comptes", "camille"]
+
 def test_titre_raccourci_remplace_par_celui_du_support(worker, monkeypatch):
     from claunote import db, notifications
     vu = {}
