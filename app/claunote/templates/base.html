@@ -344,6 +344,7 @@
   {% if moi() and moi().tout_voir and est_admin() %}<form method="post" action="/comptes/tout-voir" class="carte accent tout-voir">
     <input type="hidden" name="suite" value="{{ chemin }}"><span>👁 <strong>Tout voir</strong> : tu vois et modifies les données <strong>de tous les comptes</strong>.</span>
     <button>Revenir à mes données</button></form>{% endif %}
+  {% if est_admin() and installation_a_faire() and not chemin.startswith('/installation') %}<p class="carte accent">L'installation n'est pas finie. <a href="/installation">Continuer l'assistant</a></p>{% endif %}
   {% set dq = disque_admin() %}{% if dq and dq.niveau in ('attention', 'critique') and not chemin.startswith('/etat') %}<p class="carte alerte">💽 {{ dq.phrase }} <a href="/etat">Détails</a></p>{% endif %}
   {% if mdp_par_defaut() and not chemin.startswith('/compte') %}<p class="carte accent">⚠️ Tu utilises le mot de passe par défaut
     (<code>admin</code> / <code>claunote</code>). <a href="/compte">Change-le maintenant</a>.</p>{% endif %}

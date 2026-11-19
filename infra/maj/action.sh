@@ -42,6 +42,25 @@ fin() {  # fin <ok|erreur> <message>
   echo "== $2"
   [ "$1" = ok ] || exit 1
 }
+# Tunnel Cloudflare allumé depuis le site (Réglages → Installation) : le profil « tunnel » est actif pour
+# toutes les commandes docker compose (comme COMPOSE_PROFILES=tunnel dans .env), donc aussi aux mises à jour.
+if [ -f /maj/tunnel_actif ]; then
+  profils=$(sed -n 's/^COMPOSE_PROFILES=//p' "$DEPOT/.env" 2>/dev/null | tail -1 | tr -d "\"' \r")
+  case ",$profils," in *,tunnel,*) ;; *) profils="${profils:+$profils,}tunnel" ;; esac
+  export COMPOSE_PROFILES="$profils"
+fi
+appliquer_tunnel() {  # demande ponctuelle du site : (re)démarre cloudflared avec le nouveau jeton, ou l'arrête
+  [ -f /maj/tunnel_relancer ] || return 0
+  rm -f /maj/tunnel_relancer
+  if [ -f /maj/tunnel_actif ]; then
+    echo "== tunnel Cloudflare allumé depuis le site : (re)démarrage de cloudflared"
+    docker compose up -d --force-recreate cloudflared
+  else
+    echo "== tunnel Cloudflare éteint depuis le site : arrêt de cloudflared"
+    docker compose --profile tunnel stop cloudflared
+  fi
+  return 0
+}
 services() {   # tout sauf ce service-ci (et sauf les modèles locaux s'ils sont éteints)
   if [ -f /maj/locaux_eteints ]; then docker compose config --services | grep -vx -e maj -e ollama -e lecture
   else docker compose config --services | grep -vx maj; fi
@@ -133,6 +152,7 @@ ecrire '.action=$a | .statut="en_cours" | .debut=$t | .fin=null | .message=null'
   --arg a "$action" --arg t "$(maintenant)"
 echo "== $action ($(maintenant))"
 appliquer_locaux
+appliquer_tunnel
 case "$action" in
   verifier)
     releve

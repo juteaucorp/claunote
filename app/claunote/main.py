@@ -23,11 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
 from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, comptes, db, decoupage, demande,
-                      disque, formules, importation, index, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
-                      pronote, question, rangement, ressources, revision, schemas, securite, sensible)
+                      disque, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
+                      pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -43,6 +44,7 @@ async def lifespan(app):
     # « Déconnecter partout » change la génération : toutes les signatures de session changent
     app.state.limiteur = auth.Limiteur()
     comptes.migrer()   # installation d'avant les comptes : son identifiant et son mot de passe font l'admin
+    installation.detecter()   # installation neuve : l'assistant s'ouvre ; installation existante : rien d'imposé
     agent.journal = _noter_appel  # les appels faits par le site (Demander, matières) vont sur la page État
     if (db.compte(1) or {}).get("mdp_defaut"):
         print("ATTENTION : mot de passe par défaut (admin / claunote), "
@@ -111,6 +113,8 @@ async def exiger_connexion(request: Request, call_next):
                 return Response("conditions d'utilisation à accepter", status_code=403,
                                 headers={"HX-Redirect": "/conditions"})
             return RedirectResponse("/conditions", status_code=303)
+        if chemin == "/" and comptes.est_admin(compte) and installation.a_faire():
+            return RedirectResponse("/installation", status_code=303)   # installation neuve : l'assistant d'abord
         droit = comptes.droit_requis(chemin, request.method)
         if comptes.peut(compte, droit) and comptes.besoin_claude(chemin, request.method):
             droit = "claude"
@@ -322,6 +326,7 @@ templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
 templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirmer()
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
+templates.env.globals["installation_a_faire"] = installation.a_faire
 templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_defaut"))
 templates.env.globals["moi"] = moi
 templates.env.globals["peut"] = lambda droit: comptes.peut(moi(), droit)
@@ -694,6 +699,194 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
     r = templates.TemplateResponse(request, "compte.html", _contexte_compte(
         request, message="Mot de passe changé. Les autres appareils devront se reconnecter."))
     _cookie_session(request, r, compte)
+    return r
+
+
+# --- Installation : assistant pas à pas, puis Réglages → Installation (installation.py, reglages.py) -------
+
+def _appliquer_reglages():
+    """Le site prend les nouveaux réglages tout de suite ; le worker voit « reglages_version » et redémarre."""
+    global INBOX_ID, ETUDES_ID
+    INBOX_ID = int(os.environ.get("KDRIVE_INBOX_ID") or 0)
+    ETUDES_ID = int(os.environ.get("KDRIVE_ETUDES_ID") or 0)
+    agent.rafraichir_env()
+
+
+def _page_installation(request: Request, etape: str | None, statut: int = 200, **plus):
+    return templates.TemplateResponse(request, "installation.html", {
+        "etape": etape, "etapes": installation.ETAPES, "noms": installation.NOMS,
+        "precedente": installation.precedente(etape) if etape else None,
+        "r": reglages.etat(), "stockages": reglages.STOCKAGES, "stockage": reglages.stockage(),
+        "kdrive_ok": reglages.kdrive_configure(), "disque": disque.etat(), "besoins": disque.BESOINS,
+        "besoin_total": disque.BESOIN_INSTALLATION, "tunnel_actif": maj.tunnel_actif(), "maj_present": maj.present(),
+        "analyse": local.reglages(), "compte_admin": db.compte(moi()["id"]), "a_faire": installation.a_faire(),
+        **plus}, status_code=statut)
+
+
+@app.get("/installation")
+def installation_debut():
+    return RedirectResponse("/installation/disque", status_code=303)
+
+
+@app.get("/installation/{etape}", response_class=HTMLResponse)
+def installation_etape(request: Request, etape: str):
+    if etape not in installation.NOMS:
+        raise HTTPException(404)
+    return _page_installation(request, etape)
+
+
+@app.get("/reglages/installation", response_class=HTMLResponse)
+def reglages_installation(request: Request, message: str = ""):
+    return _page_installation(request, None, message=message)
+
+
+def _noter_reglage(request: Request, quoi: str):
+    securite.noter("reglage", request, quoi, alerte=f"Réglage de l'installation changé sur le site : {quoi}.")
+
+
+def _etape_compte(request: Request, form: FormData) -> tuple[str | None, str | None]:
+    """(message, erreur). Nouveau mot de passe obligatoire tant que c'est encore admin / claunote."""
+    compte = db.compte(moi()["id"])
+    identifiant = (form.get("identifiant") or compte["identifiant"]).strip().lower()
+    mdp, confirmation = form.get("mot_de_passe") or "", form.get("confirmation") or ""
+    if identifiant != compte["identifiant"]:
+        erreur = comptes.verifier_identifiant(identifiant)
+        if erreur:
+            return None, erreur
+    if mdp or compte.get("mdp_defaut"):
+        erreur = comptes.verifier_mot_de_passe(mdp, confirmation, identifiant)
+        if erreur:
+            return None, erreur
+    if identifiant != compte["identifiant"] and not db.renommer_compte(compte["id"], identifiant):
+        return None, "Cet identifiant est déjà pris."
+    db.maj_compte(compte["id"], nom=(form.get("nom") or "").strip()[:60] or None)
+    if mdp:
+        comptes.changer_mot_de_passe(compte["id"], mdp)
+        securite.noter("mot_de_passe", request, f"choisi dans l'assistant d'installation ({identifiant})", alerte=True)
+    comptes.oublier(compte["id"])
+    reglages.ecrire("CLAUNOTE_CONTACT", (form.get("contact") or "").strip()[:200], compte["id"])
+    return "Compte enregistré.", None
+
+
+def _etape_stockage(request: Request, form: FormData, action: str) -> tuple[str | None, str | None, dict]:
+    choix = form.get("stockage") or "kdrive"
+    if choix not in reglages.STOCKAGES:
+        return None, "Choix de stockage inconnu.", {}
+    if choix != "kdrive":
+        return None, "Les fichiers sur la VM arrivent bientôt : pour l'instant, choisis kDrive.", {}
+    jeton = installation.secret_ou_garde("KDRIVE_TOKEN", form.get("kdrive_token"))
+    ids = {}
+    for cle, nom in (("KDRIVE_ID", "Numéro du kDrive"), ("KDRIVE_ETUDES_ID", "Dossier des cours"),
+                     ("KDRIVE_INBOX_ID", "Dossier inbox")):
+        ids[cle], erreur = installation.nombre(form.get(cle.lower()), nom)
+        if erreur:
+            return None, erreur, {}
+    if not jeton or not ids["KDRIVE_ID"]:
+        return None, "Il faut le jeton API et le numéro du kDrive.", {}
+    if action == "creer_dossiers":
+        try:
+            etudes, inbox = reglages.creer_dossiers_kdrive(jeton, ids["KDRIVE_ID"])
+        except Exception as e:
+            return None, f"kDrive refuse : {str(e)[:200]}", {}
+        ids["KDRIVE_ETUDES_ID"], ids["KDRIVE_INBOX_ID"] = str(etudes), str(inbox)
+    elif action == "tester":
+        ok, texte, racine = reglages.tester_kdrive(jeton, ids["KDRIVE_ID"], *(int(ids[k]) for k in (
+            "KDRIVE_ETUDES_ID", "KDRIVE_INBOX_ID") if ids[k]))
+        return (texte, None, {"racine": racine, "saisi": ids}) if ok else (None, texte, {"saisi": ids})
+    if not ids["KDRIVE_ETUDES_ID"] or not ids["KDRIVE_INBOX_ID"]:
+        return None, "Choisis les deux dossiers (ou « Créer les dossiers »).", {"saisi": ids}
+    ok, texte, _ = reglages.tester_kdrive(jeton, ids["KDRIVE_ID"], int(ids["KDRIVE_ETUDES_ID"]),
+                                          int(ids["KDRIVE_INBOX_ID"]))
+    if not ok:
+        return None, texte + " Rien n'a été enregistré.", {"saisi": ids}
+    compte_id = moi()["id"]
+    reglages.ecrire("STOCKAGE", choix, compte_id)
+    if (form.get("kdrive_token") or "").strip():
+        reglages.ecrire("KDRIVE_TOKEN", jeton, compte_id)
+    for cle, valeur in ids.items():
+        reglages.ecrire(cle, valeur, compte_id)
+    _noter_reglage(request, "stockage kDrive")
+    cree = " Dossiers Claunote/Etudes et Claunote/Inbox prêts." if action == "creer_dossiers" else ""
+    return f"kDrive enregistré.{cree} {texte}", None, {}
+
+
+def _etape_claude(request: Request, form: FormData, action: str) -> tuple[str | None, str | None]:
+    saisi = (form.get("claude_token") or "").strip()
+    if action == "sans_claude":
+        db.etat_ecrire("analyse_locale", "toujours")
+        return ("Sans Claude : les scans sont lus par les modèles locaux de la VM. Les fiches, quiz et questions "
+                "demandent Claude : tu pourras ajouter le jeton plus tard ici."), None
+    jeton = saisi or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if action == "tester":
+        if not jeton:
+            return None, "Colle d'abord le jeton."
+        ok, texte = reglages.tester_claude(jeton)
+        return (texte, None) if ok else (None, texte)
+    if not saisi:
+        return ("Jeton gardé tel quel." if jeton else None), (None if jeton else "Colle le jeton, ou choisis « Sans Claude ».")
+    if not saisi.startswith("sk-ant-"):
+        return None, "Ce n'est pas un jeton Claude (il commence par sk-ant-) : refais claude setup-token."
+    reglages.ecrire("CLAUDE_CODE_OAUTH_TOKEN", saisi, moi()["id"])
+    _noter_reglage(request, "jeton Claude")
+    return "Jeton Claude enregistré (chiffré). « Tester » vérifie qu'il marche.", None
+
+
+def _etape_cloudflare(request: Request, form: FormData) -> tuple[str | None, str | None]:
+    pays, erreur = installation.pays(form.get("pays"))
+    if erreur:
+        return None, erreur
+    compte_id = moi()["id"]
+    saisi = (form.get("tunnel_token") or "").strip()
+    actif = form.get("tunnel") == "1"
+    if actif and not (saisi or os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")):
+        return None, "Pour allumer le tunnel, colle son jeton (Zero Trust → Réseaux → Tunnels)."
+    if saisi:
+        reglages.ecrire("CLOUDFLARE_TUNNEL_TOKEN", saisi, compte_id)
+    reglages.ecrire("CLAUNOTE_PAYS", pays, compte_id)
+    suite = ""
+    if saisi or actif != maj.tunnel_actif():
+        suite = " " + maj.tunnel(actif)
+        _noter_reglage(request, "tunnel Cloudflare " + ("allumé" if actif else "éteint"))
+    return "Accès par Internet enregistré." + suite, None
+
+
+@app.post("/installation/{etape}", response_class=HTMLResponse)
+async def installation_enregistrer(request: Request, etape: str):
+    if etape not in installation.NOMS:
+        raise HTTPException(404)
+    form = await request.form()
+    action, depuis_reglages = form.get("action") or "enregistrer", form.get("retour") == "reglages"
+    if action == "quitter":
+        installation.terminer()
+        return RedirectResponse("/", status_code=303)
+    message = erreur = None
+    plus: dict = {}
+    if action != "passer":
+        try:
+            if etape == "compte":
+                message, erreur = await run_in_threadpool(_etape_compte, request, form)
+            elif etape == "stockage":
+                message, erreur, plus = await run_in_threadpool(_etape_stockage, request, form, action)
+            elif etape == "claude":
+                message, erreur = await run_in_threadpool(_etape_claude, request, form, action)
+            elif etape == "cloudflare":
+                message, erreur = await run_in_threadpool(_etape_cloudflare, request, form)
+            elif etape == "fin":
+                installation.terminer()
+                return RedirectResponse("/", status_code=303)
+        except reglages.CleIndisponible as e:
+            erreur = str(e)
+        _appliquer_reglages()
+    reponse_page = (lambda statut=200: _page_installation(request, None if depuis_reglages else etape, statut,
+                                                          message=message, erreur=erreur, section=etape, **plus))
+    if erreur:
+        return reponse_page(400)
+    if depuis_reglages or action in ("tester", "creer_dossiers", "sans_claude"):
+        r = reponse_page()
+    else:
+        r = RedirectResponse(f"/installation/{installation.suivante(etape)}", status_code=303)
+    if etape == "compte" and action != "passer":
+        _cookie_session(request, r, moi())   # nouveau mot de passe : nouvelle signature de session pour cet appareil
     return r
 
 

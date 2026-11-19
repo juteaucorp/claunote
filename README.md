@@ -117,6 +117,17 @@ flowchart TD
 
 ## Installation
 
+**Le plus simple : l'assistant du site.** Remplis seulement `POSTGRES_PASSWORD` et `BIND_ADDR` dans le `.env`,
+lance `docker compose up -d --build`, ouvre le site et connecte-toi (`admin` / `claunote`) : un **assistant pas à
+pas** s'ouvre (espace disque → ton compte admin → kDrive, avec « Tester » et « Créer les dossiers pour moi » →
+jeton Claude, avec « Tester » → Cloudflare → Pronote). Les jetons sont **chiffrés** dans la base avec une clé gardée
+à part (volume Docker `secrets`) et **jamais réaffichés**. Tout se modifie ensuite dans *Réglages → Installation* ;
+un réglage fait sur le site passe avant celui du `.env`.
+
+> Sauvegarde le volume `secrets` avec la base : sans la clé, les jetons enregistrés sur le site sont à recoller.
+
+À la main, sans l'assistant :
+
 ```mermaid
 flowchart LR
     A["1 · VM + Docker"] --> B["2 · kDrive<br/>dossiers + jeton"]
@@ -176,9 +187,9 @@ Il reste **sur ta VM** (il est ignoré par git) : ne le partage jamais, il conti
 | --- | --- | --- |
 | `POSTGRES_PASSWORD` | **oui** | Un mot de passe au hasard (`openssl rand -hex 16`) |
 | `BIND_ADDR` | **oui** | L'IP de la VM **sur ton VPN** : le site n'écoute que là. `127.0.0.1` si tu passes uniquement par Cloudflare Tunnel |
-| `KDRIVE_TOKEN` | **oui** | Le jeton API Infomaniak (scope `drive`) |
-| `KDRIVE_ID`, `KDRIVE_ETUDES_ID`, `KDRIVE_INBOX_ID` | **oui** | Les nombres lus dans l'adresse de kDrive web (étape 2) |
-| `CLAUDE_CODE_OAUTH_TOKEN` | **oui** | Le jeton de `claude setup-token`. Une `ANTHROPIC_API_KEY` serait **ignorée** |
+| `KDRIVE_TOKEN` | **oui** (ou assistant du site) | Le jeton API Infomaniak (scope `drive`) |
+| `KDRIVE_ID`, `KDRIVE_ETUDES_ID`, `KDRIVE_INBOX_ID` | **oui** (ou assistant du site) | Les nombres lus dans l'adresse de kDrive web (étape 2) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | **oui** (ou assistant du site) | Le jeton de `claude setup-token`. Une `ANTHROPIC_API_KEY` serait **ignorée** |
 | `CLAUNOTE_UTILISATEUR`, `CLAUNOTE_MOT_DE_PASSE` | conseillé | Ton identifiant et ton mot de passe (changeable ensuite sur le site) |
 | `GITHUB_TOKEN` | si dépôt privé | Jeton fine-grained en **lecture seule**, pour le bouton *Mise à jour* (voir [plus bas](#mettre-à-jour)) |
 | `CLAUNOTE_HOTE`, `CLAUNOTE_PUSH_CONTACT` | pour l'iPhone | Adresse VPN de la VM et ton e-mail (`mailto:…`) : appli iPhone en HTTPS et notifications |

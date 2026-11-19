@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import signal
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -32,14 +33,15 @@ from pathlib import Path, PurePosixPath
 import httpx
 
 from claunote import (actualites, agent, comptes, db, decoupage, disque, importation, index, lecture, local, modeles,
-                      notifications, ocr, pdf, pronote, rangement, ressources, revision, sensible)
+                      notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
                             SansForfait, analyser)
 from claunote.kdrive import KDrive, KDriveIndisponible
 from claunote.matieres import harmoniser
 
-INBOX_ID = int(os.environ["KDRIVE_INBOX_ID"])
-ETUDES_ID = int(os.environ["KDRIVE_ETUDES_ID"])
+# 0 tant que kDrive n'est pas configuré (installation neuve) : main() attend les réglages du site
+INBOX_ID = int(os.environ.get("KDRIVE_INBOX_ID") or 0)
+ETUDES_ID = int(os.environ.get("KDRIVE_ETUDES_ID") or 0)
 CACHE_DIR = Path(os.environ.get("CACHE_DIR", "/cache"))
 INTERVALLE = 60          # secondes entre deux vérifications de l'inbox
 # Inbox inchangée depuis CALME secondes : on la regarde toutes les INTERVALLE_CALME secondes seulement.
@@ -1045,8 +1047,9 @@ def fusionner(kd: KDrive, groupe: str):
 DELAI_NETTOYAGE = 10 * 60  # un dossier modifié récemment est peut-être encore en cours d'envoi
 
 
-def nettoyer_inbox(kd: KDrive, dossier_id: int = INBOX_ID, racine: bool = True) -> bool:
+def nettoyer_inbox(kd: KDrive, dossier_id: int | None = None, racine: bool = True) -> bool:
     """Met à la corbeille les sous-dossiers de l'inbox vidés par le rangement. Vrai si vide."""
+    dossier_id = INBOX_ID if dossier_id is None else dossier_id
     vide = True
     for item in kd.list_dir(dossier_id):
         ancien = time.time() - item.get("last_modified_at", 0) > DELAI_NETTOYAGE
@@ -1446,6 +1449,35 @@ def arreter(signum, _frame):
     ARRET.set()
 
 
+def relancer(pourquoi: str):
+    """Réglages changés sur le site : le worker redémarre de lui-même pour les prendre (jeton, dossiers…)."""
+    log(f"{pourquoi} : redémarrage du worker pour les appliquer")
+    publier()
+    db.fermer()
+    os.execv(sys.executable, [sys.executable, "-m", "claunote.worker"])
+
+
+def attendre_kdrive() -> bool:
+    """Installation neuve : kDrive pas encore réglé. On attend les réglages du site (assistant d'installation).
+    Faux si le worker doit s'arrêter."""
+    global INBOX_ID, ETUDES_ID
+    signale = False
+    while not reglages.kdrive_configure():
+        if not signale:
+            log("kDrive pas encore configuré : en attente des réglages du site (assistant d'installation)")
+            signale = True
+        if ARRET.wait(15):
+            return False
+        try:
+            reglages.charger_dans_env()
+        except Exception as e:
+            log(f"réglages illisibles : {e}")
+    INBOX_ID = int(os.environ["KDRIVE_INBOX_ID"])
+    ETUDES_ID = int(os.environ["KDRIVE_ETUDES_ID"])
+    agent.rafraichir_env()
+    return True
+
+
 def main():
     signal.signal(signal.SIGTERM, arreter)
     signal.signal(signal.SIGINT, arreter)
@@ -1457,6 +1489,10 @@ def main():
             log(f"base de données pas encore prête ({e.__class__.__name__}), nouvel essai dans 5 s")
             if ARRET.wait(5):
                 return
+    reglages.charger_dans_env()   # la base répond maintenant : ses réglages passent avant le .env
+    if not attendre_kdrive():
+        return
+    version_reglages = db.etat_valeur("reglages_version")
     agent.journal = noter_appel
     try:
         CLAUDE.restaurer(json.loads(db.etat_valeur("service") or "{}").get("claude"))
@@ -1475,6 +1511,8 @@ def main():
     prochaine_synchro, dernier_nettoyage = 0.0, float("-inf")
     dernier_changement, inbox_vue = time.monotonic(), None
     while not ARRET.is_set():
+        if db.etat_valeur("reglages_version") != version_reglages:
+            relancer("réglages changés sur le site")
         etape("test de Claude", sonder_claude)
         prochaine_synchro = synchro_pronote(prochaine_synchro)
         dernier_nettoyage = tour(kd, dernier_nettoyage)

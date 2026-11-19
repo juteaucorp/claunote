@@ -97,3 +97,15 @@ def test_admin_d_origine_et_invitations(base):
     k = db.creer_compte("camille", "h", "invite", [])
     assert db.utiliser_invitation(i, k) and not db.utiliser_invitation(i, k)   # une seule fois
     assert db.invitation("empreinte") is None
+
+
+def test_reglages_jamais_lisibles_au_nom_d_un_compte(base):
+    db.reglage_ecrire("KDRIVE_ID", "42", False, 1)
+    assert [r["valeur"] for r in db.reglages()] == ["42"]
+    assert db.etat_valeur("reglages_version")
+    invite = db.creer_compte("camille", "h", "invite", [])
+    with db.pour_compte(invite):
+        with pytest.raises(Exception), db.connect() as c:   # même un admin passe par le site, jamais par SQL
+            c.execute("SELECT * FROM reglages").fetchall()
+    db.reglage_effacer("KDRIVE_ID")
+    assert db.reglages() == []
