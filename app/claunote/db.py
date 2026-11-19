@@ -969,7 +969,13 @@ def niveaux_matieres():
 
 def creer_revision(genre: str, sujet: str, doc_ids: list[int], date_eval=None, consigne: str = "",
                    campagne_id: int | None = None, strict: bool = False) -> int:
-    """La matière de la révision est celle de son premier cours (filtre de l'historique)."""
+    """La matière de la révision est celle de son premier cours (filtre de l'historique).
+    Un sujet trop long (une demande collée en entier) donne un titre court ; le texte entier va à l'IA."""
+    from claunote.revision import titre_court  # import ici : revision charge l'agent
+    court = titre_court(sujet)
+    if court != sujet and sujet not in consigne:
+        consigne = f"Sujet demandé par l'élève : « {sujet} »" + (f"\n\n{consigne}" if consigne else "")
+    sujet = court
     with connect() as c:
         return c.execute(
             """INSERT INTO revisions (genre, sujet, doc_ids, date_eval, consigne, campagne_id, strict, niveau, matiere)
@@ -1033,6 +1039,11 @@ def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=No
         c.execute("UPDATE revisions SET statut = %s, contenu = %s, reperes = %s, erreur = %s, kdrive_id = %s, "
                   "sources_web = %s WHERE id = %s",
                   (statut, contenu, Jsonb(reperes or {}), erreur, kdrive_id, Jsonb(web or []), rev_id))
+
+
+def renommer_revision(rev_id: int, sujet: str):
+    with connect() as c:
+        c.execute("UPDATE revisions SET sujet = %s WHERE id = %s", (sujet, rev_id))
 
 
 def relancer_revision(rev_id: int):

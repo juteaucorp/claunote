@@ -311,3 +311,16 @@ def test_aerer_tableaux():
 def test_consignes_de_format_des_formules():
     p = revision.prompt("fiche", "Suites")
     assert "jamais de \\frac ou \\sigma hors des $" in p and "$\\frac{1}{2}$" in p and "ligne vide avant et après" in p
+
+
+def test_titre_court_d_une_longue_demande():
+    long = ("Mathématiques : existe parce que la numération sert aux langages bas niveau et que l'arithmétique "
+            "modulaire est utile à la cryptographie. ac-orleans-tours 2. Calcul matriciel Somme et produit")
+    court = revision.titre_court(long)
+    assert court.endswith("…") and len(court) <= revision.TITRE_MAX + 1 and court.startswith("Mathématiques : existe")
+    assert revision.titre_court("Réseaux : VLAN") == "Réseaux : VLAN"
+    assert revision.titre_du_support("# MATHÉMATIQUES — FICHE SYNTHÈSE (BTS)\n## 1.", "x", "Mathématiques") == \
+        "Mathématiques"
+    assert revision.titre_du_support("# Algèbre de Boole — FICHE SYNTHÈSE", "x", "Mathématiques") == \
+        "Mathématiques : Algèbre de Boole"
+    assert revision.titre_du_support("pas de titre", "x") is None

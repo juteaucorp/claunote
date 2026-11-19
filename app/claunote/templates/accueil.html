@@ -125,7 +125,7 @@
 <ul class="carte lignes">
   {% for r in revisions %}
   <li>{{ icone('cartes' if r.genre == 'cartes' else 'reviser', 20) }}
-    <div class="corps"><a href="/revision/{{ r.id }}">{{ r.sujet }}</a>
+    <div class="corps"><a href="/revision/{{ r.id }}">{{ r.sujet|truncate(90) }}</a>
       <div class="doux">{{ courts.get(r.genre, r.genre) }}
         {% if r.statut == 'en_attente' %} · en préparation…{% elif r.statut == 'erreur' %} · <span class="alerte">erreur</span>{% endif %}</div></div>
   </li>

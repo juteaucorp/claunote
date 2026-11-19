@@ -1013,3 +1013,25 @@ def test_rangement_des_fichiers_d_un_invite(worker, faux_comptes):
     invite = _invite(faux_comptes, claude=False)
     assert worker.racine(1) == [] and worker.racine(None) == []
     assert worker.racine(invite) == ["comptes", "camille"]
+
+def test_titre_raccourci_remplace_par_celui_du_support(worker, monkeypatch):
+    from claunote import db, notifications
+    vu = {}
+    monkeypatch.setattr(worker.revision, "generer", lambda *a, **k: (
+        "# ALGÈBRE DE BOOLE — FICHE SYNTHÈSE\n## 1. AXIOMES\n- a", {}, []))
+    monkeypatch.setattr(db, "pieces_jointes", lambda r=None, c=None, contenu=False: [])
+    monkeypatch.setattr(db, "Condenses", dict)
+    monkeypatch.setattr(db, "documents", lambda ids: [])
+    monkeypatch.setattr(db, "maj_revision", lambda *a, **k: None)
+    monkeypatch.setattr(db, "renommer_revision", lambda i, s: vu.update(titre=s))
+    monkeypatch.setattr(worker, "copier_pdf", lambda kd, rev: None)
+    monkeypatch.setattr(db, "revision", lambda i: {"id": i})
+    monkeypatch.setattr(notifications, "revision_prete", lambda rev: None)
+    rev = {"id": 4, "genre": "fiche", "sujet": "Mathématiques : existe parce que la numération…", "doc_ids": [3],
+           "date_eval": None, "matiere": "Mathématiques"}
+    worker.traiter_revision(None, rev)
+    assert vu["titre"] == "Mathématiques : Algèbre de boole"
+    vu.clear()
+    worker.traiter_revision(None, {**rev, "sujet": "Mathématiques : Boole"})   # titre déjà court : gardé
+    assert "titre" not in vu
+

@@ -620,6 +620,41 @@ def retoucher(rev: dict, demande: str, docs: list[dict], pieces: list[dict] | No
     return contenu, web or (rev.get("sources_web") or [])
 
 
+TITRE_MAX = 70  # au-delà, le titre d'une révision est raccourci (la demande entière reste dans la consigne)
+
+
+def titre_court(texte: str, n: int = TITRE_MAX) -> str:
+    """Titre affichable tiré d'un sujet trop long (« Maths : existe parce que… 2. Calcul… » collé en entier).
+
+    Garde le début jusqu'à la première fin de phrase, coupe à un mot sous `n` caractères ; finit par « … »
+    quand il a coupé : le worker le remplace alors par le titre que l'IA a donné au support (voir titre_du_support)."""
+    texte = re.sub(r"\s+", " ", texte or "").strip()
+    if len(texte) <= n:
+        return texte
+    debut = re.split(r"(?<=[^\d\s][.!?;])\s|\s(?=\d+[.)]\s)", texte, maxsplit=1)[0].rstrip(" .;:,")
+    if len(debut) > n or len(debut) < 25:   # phrase trop longue, ou coupée trop tôt (« Maths : 1. … »)
+        debut = texte[:n].rsplit(" ", 1)[0].rstrip(" .;:,(")
+    return debut + "…"
+
+
+def titre_du_support(contenu: str, ancien: str, matiere: str | None = None) -> str | None:
+    """Titre court tiré du « # TITRE — FICHE SYNTHÈSE » écrit par l'IA, pour remplacer un titre raccourci.
+
+    « # MATHÉMATIQUES — FICHE SYNTHÈSE (BTS SIO) » → « Mathématiques » ; None si rien d'utilisable."""
+    m = re.search(r"^#\s+(.+)$", contenu or "", re.M)
+    if not m:
+        return None
+    titre = re.split(r"\s+[—–-]\s+", m.group(1).strip(), maxsplit=1)[0]
+    titre = re.sub(r"[*_`]|\[(?:D|W)\d+\]|\[IA\]", "", titre).strip(" :.")
+    if not titre or len(titre) > TITRE_MAX:
+        return None
+    if titre.isupper():
+        titre = titre[0] + titre[1:].lower()
+    if matiere and titre.lower() != matiere.lower() and matiere.lower() not in titre.lower():
+        titre = f"{matiere} : {titre}"
+    return titre if titre != ancien else None
+
+
 def nom_fichier(genre: str, sujet: str, quand: dt.date, extension: str = "md") -> str:
     base = slug(sujet)[:50] or "revision"
     return f"{quand.isoformat()}_{genre}_{base}.{extension}"

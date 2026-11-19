@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_icones.html" import icone %}
-{% block titre %}{{ genres[rev.genre] }} : {{ rev.sujet }}{% endblock %}
+{% block titre %}{{ genres[rev.genre] }} : {{ rev.sujet|truncate(60) }}{% endblock %}
 {% block vivant %}{% if rev.statut == 'en_attente' %}recharger{% endif %}{% endblock %}
 {% block contenu %}
 {% include "_reviser.html" %}
@@ -10,6 +10,11 @@
   {% if rev.matiere %}<span class="doux">{{ rev.matiere }}{% if rev.niveau %} · {{ rev.niveau }}{% endif %}</span>{% endif %}
 </div>
 <h1>{{ rev.sujet }}</h1>
+<details class="renommer"><summary>Renommer</summary>
+  <form method="post" action="/revision/{{ rev.id }}/renommer">
+    <input name="sujet" value="{{ rev.sujet }}" maxlength="120" required aria-label="Nouveau titre">
+    <button class="principal">Enregistrer</button></form>
+</details>
 <p class="doux meta">
   {% if rev.cree_le %}<span>Créé le {{ (rev.cree_le|paris)[:10] }}</span>{% endif %}
   {% if rev.date_eval %}<span>· Évaluation le {{ rev.date_eval.strftime('%d/%m/%Y') }}</span>{% endif %}
@@ -235,6 +240,12 @@
   .etiquette-web { --g: var(--g-plan); }
   a.web { color: var(--g-plan); }
   a.etat { text-decoration: none; }
+  .tete-revision + h1 + .renommer { margin: -2px 0 6px; }
+  .renommer summary { display: inline; cursor: pointer; font-size: .82rem; color: var(--doux); list-style: none; }
+  .renommer summary::-webkit-details-marker { display: none; }
+  .renommer[open] summary { display: none; }
+  .renommer form { display: flex; gap: 8px; margin: 4px 0 10px; }
+  .renommer input { flex: 1; min-width: 0; }
   .modifier textarea { width: 100%; margin: 6px 0 8px; }
   .modifier .doux { margin: 4px 0 0; }
   .idees-modif { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
