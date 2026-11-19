@@ -10,6 +10,8 @@
 <p class="doux sous-titre">{{ icone('campagne', 16) }} Du {{ COURT[campagne.debut.weekday()] }} {{ campagne.debut.strftime('%d/%m') }}
   au {{ COURT[campagne.fin.weekday()] }} {{ campagne.fin.strftime('%d/%m') }} · {{ revs|length }} support{{ 's' if revs|length > 1 }}
   · {{ par_matiere|length }} matière{{ 's' if par_matiere|length > 1 }}</p>
+{% if partage_possible() and a_moi(campagne) %}{% from "_visibilite.html" import visibilite with context %}
+{{ visibilite('/campagne/' ~ campagne.id ~ '/visibilite', campagne.public) }}{% endif %}
 {% if campagne.epreuves %}
 <p class="doux epreuves-campagne">{{ icone('examen', 16) }} Épreuves :
   {% for e in campagne.epreuves %}{% set d = e.date|jour_iso %}<strong>{{ e.matiere }}</strong> {{ COURT[d.weekday()] }} {{ d.strftime('%d/%m') }}{% if e.heure %} {{ e.heure|replace(':', ' h ') }}{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</p>
