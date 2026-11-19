@@ -532,6 +532,15 @@ BEGIN
         END IF;
     END LOOP;
 END $$;
+-- Réglages de l'installation (reglages.py) : choisis sur le site, secrets chiffrés avec une clé hors de la base
+CREATE TABLE IF NOT EXISTS reglages (
+    cle      TEXT PRIMARY KEY,
+    valeur   TEXT NOT NULL,
+    chiffre  BOOLEAN NOT NULL DEFAULT false,
+    maj_le   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_par  INT
+);
+REVOKE ALL ON reglages FROM claunote_compte;   -- jamais lisible au nom d'un compte, même chiffré
 -- Notifications et appareils abonnés : à un compte (NULL : les admins, comme les alertes de sécurité)
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS compte_id INT REFERENCES comptes(id) ON DELETE CASCADE;
 ALTER TABLE notifications ALTER COLUMN compte_id SET DEFAULT claunote_compte();
@@ -2564,3 +2573,29 @@ def renommer_compte(compte_id: int, identifiant: str) -> bool:
                          "(SELECT 1 FROM comptes WHERE identifiant = %s AND id <> %s) RETURNING id",
                          (identifiant.strip().lower(), compte_id, identifiant.strip().lower(), compte_id)
                          ).fetchone() is not None
+
+
+# --- Réglages de l'installation (reglages.py) : secrets chiffrés, page admin seulement --------------
+
+def reglages():
+    try:
+        with sans_compte(), connect() as c:
+            return c.execute("SELECT * FROM reglages ORDER BY cle").fetchall()
+    except Exception:   # table pas encore créée (tout premier démarrage)
+        return []
+
+
+def reglage_ecrire(cle: str, valeur: str, chiffre: bool, compte_id: int | None):
+    with sans_compte(), connect() as c:
+        c.execute("INSERT INTO reglages (cle, valeur, chiffre, maj_par) VALUES (%s, %s, %s, %s) ON CONFLICT (cle) DO "
+                  "UPDATE SET valeur = EXCLUDED.valeur, chiffre = EXCLUDED.chiffre, maj_le = now(), maj_par = EXCLUDED.maj_par",
+                  (cle, valeur, chiffre, compte_id))
+        c.execute("INSERT INTO etat VALUES ('reglages_version', %s) ON CONFLICT (cle) DO UPDATE SET valeur = EXCLUDED.valeur",
+                  (str(time.time()),))
+
+
+def reglage_effacer(cle: str):
+    with sans_compte(), connect() as c:
+        c.execute("DELETE FROM reglages WHERE cle = %s", (cle,))
+        c.execute("INSERT INTO etat VALUES ('reglages_version', %s) ON CONFLICT (cle) DO UPDATE SET valeur = EXCLUDED.valeur",
+                  (str(time.time()),))

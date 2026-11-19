@@ -108,6 +108,12 @@ FACTURATION_API = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 ENV_FORFAIT = {k: v for k, v in os.environ.items() if k not in FACTURATION_API}
 
 
+def rafraichir_env():
+    """Jeton du forfait changé sur le site (Réglages → Installation) : les prochains appels l'utilisent."""
+    global ENV_FORFAIT
+    ENV_FORFAIT = {k: v for k, v in os.environ.items() if k not in FACTURATION_API}
+
+
 class LimiteAtteinte(Exception):
     """Limite d'usage du forfait atteinte : réessayer à `reprise` (None : heure inconnue)."""
 

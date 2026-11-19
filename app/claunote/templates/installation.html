@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block titre %}{% if etape %}Installation · {{ noms[etape] }}{% else %}Installation{% endif %}{% endblock %}
+{% block contenu %}
+{% if not etape %}{% from "_onglets.html" import onglets %}{{ onglets('reglages', 'installation') }}{% endif %}
+
+{# Un réglage secret : jamais réaffiché, seulement « enregistré le … » #}
+{% macro secret(cle, nom_champ) -%}
+{% set x = r[cle] %}
+<p><label>{{ x.reglage.libelle }}<br>
+  <input type="password" name="{{ nom_champ }}" autocomplete="off" spellcheck="false"
+    placeholder="{% if x.present %}●●●● enregistré (vide = garder){% else %}colle-le ici{% endif %}"></label>
+  <br><span class="doux">{% if x.present %}<strong>Enregistré{% if x.maj_le %} le {{ x.maj_le|paris }}{% endif %}</strong> : laisse vide pour le garder. {% endif %}{{ x.reglage.aide }}{% if x.source == 'env' %} · actuellement celui du fichier .env{% endif %}</span>
+  {% if x.illisible %}<br><span class="alerte">Enregistré mais illisible (clé de chiffrement changée ?) : colle-le à nouveau.</span>{% endif %}</p>
+{%- endmacro %}
+
+{% macro champ(cle, nom_champ, saisi=None, type='text') -%}
+{% set x = r[cle] %}
+<p><label>{{ x.reglage.libelle }}<br><input type="{{ type }}" name="{{ nom_champ }}" value="{{ saisi if saisi is not none else x.valeur }}" autocomplete="off" spellcheck="false"></label>
+  {% if x.reglage.aide %}<br><span class="doux">{{ x.reglage.aide }}</span>{% endif %}</p>
+{%- endmacro %}
+
+{% macro boutons(e) -%}
+<div class="actions">
+  <button class="principal" name="action" value="enregistrer">{% if etape %}Enregistrer et continuer{% else %}Enregistrer{% endif %}</button>
+  {{ caller() if caller }}
+  {% if etape %}<button name="action" value="passer" formnovalidate>Passer</button>{% endif %}
+</div>
+{% if not etape %}<input type="hidden" name="retour" value="reglages">{% endif %}
+{%- endmacro %}
+
+{% macro retour(e) -%}{% if section == e %}
+{% if message %}<p class="carte accent">{{ message }}</p>{% endif %}
+{% if erreur %}<p class="carte alerte">{{ erreur }}</p>{% endif %}
+{% endif %}{%- endmacro %}
+
+{% if etape %}
+<h1>Installer Claunote</h1>
+<ol class="etapes" aria-label="Étapes">
+  {% for e, nom in etapes %}
+  {% set fait = loop.index0 < (etapes|map('first')|list).index(etape) %}
+  <li class="{{ 'actif' if e == etape }} {{ 'fait' if fait }}"><a href="/installation/{{ e }}">{{ nom }}</a></li>
+  {% endfor %}
+</ol>
+{% else %}
+<h1>Installation</h1>
+<p class="doux">Tout ce qui a été choisi à l'installation, modifiable ici. Les <strong>secrets</strong> (jetons) sont
+  <strong>chiffrés</strong> avec une clé gardée hors de la base, et <strong>jamais réaffichés</strong> : pour en changer
+  un, colle le nouveau. Un réglage fait ici <strong>passe avant</strong> celui du fichier .env.
+  <a href="/installation">Relancer l'assistant pas à pas</a></p>
+{% endif %}
+
+{# ---- 1. Disque ---- #}
+{% if etape == 'disque' or not etape %}
+<section class="carte" id="disque">
+  <h2>Espace disque de la VM</h2>
+  {% if disque %}
+  <p class="{{ 'alerte' if disque.niveau in ('attention', 'critique') }}"><strong>{{ disque.phrase }}</strong></p>
+  <div class="jauge" role="img" aria-label="{{ '%.0f'|format(disque.libre_go) }} Go libres sur {{ '%.0f'|format(disque.total_go) }} Go">
+    <span style="width: {{ (100 - disque.part_libre * 100)|round|int }}%"></span></div>
+  <p class="doux">{{ '%.1f'|format(disque.libre_go) }} Go libres sur {{ '%.1f'|format(disque.total_go) }} Go.</p>
+  {% else %}<p class="doux">Espace disque inconnu (mesure impossible dans ce conteneur).</p>{% endif %}
+  <details><summary>Ce qu'il faut prévoir (~{{ besoin_total|round|int }} Go)</summary>
+    <ul>{% for quoi, go in besoins %}<li>{{ quoi }} : {{ go }} Go</li>{% endfor %}</ul>
+    <p class="doux">Avec les fichiers sur kDrive, les scans ne restent pas sur la VM. Sur la VM seule, ajoute la place de
+      tes scans. Une alerte s'affiche (et une notification part) sous 5 Go libres.</p></details>
+  {% if etape %}<form method="post" action="/installation/disque">{% call boutons('disque') %}{% endcall %}</form>{% endif %}
+</section>
+{% endif %}
+
+{# ---- 2. Compte admin ---- #}
+{% if etape == 'compte' or not etape %}
+<section class="carte" id="compte">
+  <h2>{% if etape %}Ton compte admin{% else %}Contact affiché{% endif %}</h2>
+  {{ retour('compte') }}
+  <form method="post" action="/installation/compte">
+    {% if etape %}
+    <p class="doux">Tu es l'<strong>admin</strong> : tu invites les autres et tu règles tout.
+      {% if compte_admin.mdp_defaut %}<strong>Choisis un vrai mot de passe</strong> : admin / claunote est connu de tous.{% endif %}</p>
+    <p><label>Identifiant<br><input name="identifiant" value="{{ compte_admin.identifiant }}" autocapitalize="none" autocomplete="username" maxlength="32"></label></p>
+    <p><label>Nom affiché (facultatif)<br><input name="nom" value="{{ compte_admin.nom or '' }}" maxlength="60"></label></p>
+    <p><label>Nouveau mot de passe{% if not compte_admin.mdp_defaut %} (vide : garder l'actuel){% endif %}<br>
+      <input type="password" name="mot_de_passe" autocomplete="new-password" minlength="10" {{ 'required' if compte_admin.mdp_defaut }}></label></p>
+    <p><label>Encore une fois<br><input type="password" name="confirmation" autocomplete="new-password" {{ 'required' if compte_admin.mdp_defaut }}></label></p>
+    {% else %}
+    <p class="doux">Mot de passe et identifiant : page <a href="/compte">Compte</a>.</p>
+    {% endif %}
+    {{ champ('CLAUNOTE_CONTACT', 'contact') }}
+    <p class="doux">Montré aux invités dans les <a href="/conditions">mentions légales</a> (une adresse mail suffit).</p>
+    {% call boutons('compte') %}{% endcall %}
+  </form>
+</section>
+{% endif %}
+
+{# ---- 3. Fichiers ---- #}
+{% if etape == 'stockage' or not etape %}
+<section class="carte" id="stockage">
+  <h2>Où sont les fichiers</h2>
+  {{ retour('stockage') }}
+  <form method="post" action="/installation/stockage">
+    <fieldset class="choix-stockage"><legend>Stockage</legend>
+      {% for s, nom in stockages.items() %}
+      <label><input type="radio" name="stockage" value="{{ s }}" {{ 'checked' if s == stockage }} {{ 'disabled' if s != 'kdrive' }}>
+        <span><strong>{{ nom }}</strong>{% if s != 'kdrive' %} <span class="doux">(bientôt)</span>{% endif %}</span></label>
+      {% endfor %}
+    </fieldset>
+    <p class="doux">kDrive (Infomaniak, Suisse) garde tes scans et les cours rangés ; la VM n'en garde qu'une copie le temps de les lire.</p>
+    {{ secret('KDRIVE_TOKEN', 'kdrive_token') }}
+    {{ champ('KDRIVE_ID', 'kdrive_id', (saisi or {}).get('KDRIVE_ID')) }}
+    <div class="actions"><button name="action" value="tester">Tester la connexion</button>
+      <button name="action" value="creer_dossiers" title="Crée Claunote/Etudes et Claunote/Inbox à la racine (ou les retrouve)">Créer les dossiers pour moi</button></div>
+    {% if racine %}<p class="doux">Dossiers à la racine : {% for d in racine %}<code>{{ d.name }}</code> ({{ d.id }}){{ ', ' if not loop.last }}{% endfor %}.
+      Le numéro d'un dossier est aussi à la fin de son adresse dans kDrive.</p>{% endif %}
+    {{ champ('KDRIVE_ETUDES_ID', 'kdrive_etudes_id', (saisi or {}).get('KDRIVE_ETUDES_ID')) }}
+    {{ champ('KDRIVE_INBOX_ID', 'kdrive_inbox_id', (saisi or {}).get('KDRIVE_INBOX_ID')) }}
+    <p class="doux">Inbox : là où tu déposes les scans (le site les y met aussi). Cours rangés : là où Claunote les classe par année et matière.</p>
+    {% call boutons('stockage') %}{% endcall %}
+  </form>
+</section>
+{% endif %}
+
+{# ---- 4. Claude ---- #}
+{% if etape == 'claude' or not etape %}
+<section class="carte" id="claude">
+  <h2>Claude</h2>
+  {{ retour('claude') }}
+  <p class="doux">Claude lit les scans difficiles et fait les fiches, quiz et réponses. Il passe par <strong>ton forfait
+    Claude</strong> (Pro ou Max) : <strong>jamais de clé API, jamais de crédit acheté</strong>. Seuls les comptes avec le
+    droit « Forfait Claude » s'en servent ; les autres n'ont que les modèles locaux.</p>
+  <ol class="doux">
+    <li>Sur un ordinateur avec Claude Code : <code>claude setup-token</code></li>
+    <li>Connecte-toi à ton compte Claude, copie le jeton affiché (<code>sk-ant-…</code>, valable 1 an)</li>
+    <li>Colle-le ci-dessous</li>
+  </ol>
+  <form method="post" action="/installation/claude">
+    {{ secret('CLAUDE_CODE_OAUTH_TOKEN', 'claude_token') }}
+    {% call boutons('claude') %}
+      <button name="action" value="tester">Tester</button>
+      <button name="action" value="sans_claude" formnovalidate title="Les scans sont lus sur la VM ; fiches et quiz attendront un jeton">Sans Claude</button>
+    {% endcall %}
+  </form>
+  {% if analyse.choisi == 'toujours' %}<p class="doux">Analyses actuellement en <strong>local uniquement</strong> (page <a href="/analyses">Analyses</a> pour changer).</p>{% endif %}
+</section>
+{% endif %}
+
+{# ---- 5. Cloudflare ---- #}
+{% if etape == 'cloudflare' or not etape %}
+<section class="carte" id="cloudflare">
+  <h2>Accès par Internet (facultatif)</h2>
+  {{ retour('cloudflare') }}
+  <p class="doux">Sans rien ici, le site n'est joignable que depuis ton réseau ou ton VPN. Avec un <strong>tunnel
+    Cloudflare</strong>, il l'est partout <strong>sans ouvrir de port</strong> ; seuls les appareils que tu approuves
+    passent (page <a href="/compte#appareils">Compte</a>).</p>
+  <form method="post" action="/installation/cloudflare">
+    {{ secret('CLOUDFLARE_TUNNEL_TOKEN', 'tunnel_token') }}
+    {% if r.CLOUDFLARE_TUNNEL_TOKEN.source == 'env' %}<p class="doux">Le jeton du fichier .env reste prioritaire pour
+      cloudflared : retire-le du .env pour utiliser celui du site.</p>{% endif %}
+    <p><label class="case"><input type="checkbox" name="tunnel" value="1" {{ 'checked' if tunnel_actif }}>
+      <span>Tunnel allumé{% if not maj_present %} <span class="doux">(le service maj ne tourne pas : commande à lancer sur la VM)</span>{% endif %}</span></label></p>
+    {{ champ('CLAUNOTE_PAYS', 'pays') }}
+    <p class="doux">Par Internet, les visites d'autres pays sont refusées (FR par défaut).</p>
+    {% call boutons('cloudflare') %}{% endcall %}
+  </form>
+</section>
+{% endif %}
+
+{# ---- 6. Pronote ---- #}
+{% if etape == 'pronote' or not etape %}
+<section class="carte" id="pronote">
+  <h2>Pronote (facultatif)</h2>
+  <p>Agenda, devoirs et notes de Pronote dans Claunote : la connexion se fait sur la page
+    <a href="/agenda">Agenda</a> (identifiants de l'ENT ou QR code). Le mot de passe n'est <strong>jamais gardé</strong>,
+    seulement un jeton de reconnexion.</p>
+  {% if etape %}<form method="post" action="/installation/pronote">{% call boutons('pronote') %}{% endcall %}</form>{% endif %}
+</section>
+{% endif %}
+
+{# ---- 7. Fin ---- #}
+{% if etape == 'fin' %}
+<section class="carte accent" id="fin">
+  <h2>C'est prêt</h2>
+  <ul class="bilan">
+    <li>{{ '✅' if not compte_admin.mdp_defaut else '⚠️' }} Compte admin {{ '' if not compte_admin.mdp_defaut else ': mot de passe par défaut, à changer' }}</li>
+    <li>{{ '✅' if kdrive_ok else '⚠️' }} Fichiers : {{ stockages[stockage] }}{{ '' if kdrive_ok else ' (pas encore réglé : le worker attend)' }}</li>
+    <li>{{ '✅' if r.CLAUDE_CODE_OAUTH_TOKEN.present else '➖' }} Claude {{ '' if r.CLAUDE_CODE_OAUTH_TOKEN.present else ': sans (modèles locaux seulement)' }}</li>
+    <li>{{ '✅' if tunnel_actif else '➖' }} Accès par Internet {{ '' if tunnel_actif else ': non (réseau local ou VPN)' }}</li>
+  </ul>
+  <p class="doux">Tout se modifie ensuite dans <strong>Réglages → Installation</strong>. Pour inviter quelqu'un :
+    <a href="/comptes">Comptes</a> (jeton de 15 min).</p>
+  <form method="post" action="/installation/fin"><div class="actions"><button class="principal" name="action" value="terminer">Terminer</button></div></form>
+</section>
+{% endif %}
+
+{% if etape %}
+<div class="actions bas">
+  {% if precedente %}<a class="bouton" href="/installation/{{ precedente }}">← Retour</a>{% endif %}
+  {% if a_faire %}<form method="post" action="/installation/{{ etape }}"><button name="action" value="quitter" class="lien-danger"
+    title="Ne plus afficher l'assistant ; tout reste réglable dans Réglages → Installation">Je règlerai plus tard</button></form>{% endif %}
+</div>
+{% endif %}
+
+<style>
+  section.carte { max-width: 680px; }
+  section.carte h2 { margin-top: 0; font-size: 1.15rem; }
+  .etapes { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 6px; counter-reset: e; }
+  .etapes li { counter-increment: e; }
+  .etapes a { display: inline-flex; gap: 6px; align-items: center; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--bord);
+    background: var(--carte); color: var(--doux); text-decoration: none; font-size: .88rem; }
+  .etapes a::before { content: counter(e); font-weight: 600; }
+  .etapes .fait a { color: var(--texte); }
+  .etapes .fait a::before { content: "✓"; color: var(--accent-fonce); }
+  .etapes .actif a { border-color: var(--accent); background: var(--accent-pale); color: var(--accent-fonce); font-weight: 600; }
+  .jauge { height: 10px; border-radius: 999px; background: var(--bord); overflow: hidden; max-width: 420px; }
+  .jauge span { display: block; height: 100%; background: var(--accent); }
+  .choix-stockage { border: 1px solid var(--bord); border-radius: 12px; padding: 8px 12px; margin: 0 0 12px; display: grid; gap: 6px; }
+  .choix-stockage label, .case { display: flex; gap: 8px; align-items: flex-start; }
+  .choix-stockage input, .case input { width: auto; flex: none; margin-top: 4px; }
+  #stockage input[type=password], #claude input[type=password], #cloudflare input[type=password] { width: 100%; }
+  .bilan { list-style: none; padding: 0; display: grid; gap: 6px; }
+  .actions.bas { max-width: 680px; justify-content: space-between; }
+  .actions.bas form { margin: 0; }
+</style>
+{% endblock %}

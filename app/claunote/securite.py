@@ -74,6 +74,7 @@ TYPES = {
     "compte_modifie": ("attention", "Compte modifié (droits, rôle, accès)"),
     "compte_deconnecte": ("info", "Compte déconnecté de ses appareils"),
     "compte_supprime": ("alerte", "Compte supprimé"),
+    "reglage": ("alerte", "Réglage de l'installation changé"),
     "lien_mot_de_passe": ("attention", "Lien de nouveau mot de passe créé"),
     "tout_voir": ("attention", "Admin : « Tout voir »"),
     "conditions": ("info", "Conditions d'utilisation acceptées"),

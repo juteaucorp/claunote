@@ -25,6 +25,8 @@ services:
     volumes:
       - caddy:/caddy:ro   # certificat racine à installer sur l'iPhone (page /installer)
       - maj:/maj          # demandes de mise à jour, lues par le service maj
+      - secrets:/secrets  # clé qui chiffre les secrets réglés sur le site (jamais dans la base)
+      - tunnel:/tunnel    # jeton du tunnel Cloudflare réglé sur le site, lu par cloudflared
     depends_on:
       db: {condition: service_healthy}
       pronote: {condition: service_started}
@@ -53,7 +55,11 @@ services:
     read_only: true
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}   # jeton du tunnel, dans .env
+      # Jeton du tunnel : celui du .env s'il y en a un (prioritaire), sinon celui réglé sur le site
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+      TUNNEL_TOKEN_FILE: /tunnel/token
+    volumes:
+      - tunnel:/tunnel:ro
     depends_on: [web]
     # pas de port publié : il joint web:8000 sur le réseau Docker
 
@@ -70,6 +76,7 @@ services:
       CACHE_DIR: /cache
     volumes:
       - cache:/cache   # copies locales des scans en cours de traitement
+      - secrets:/secrets   # clé qui déchiffre les secrets réglés sur le site
     # À une mise à jour, le worker finit le document en cours avant de s'arrêter (sinon, il est refait)
     stop_grace_period: 2m
     depends_on:
@@ -136,6 +143,8 @@ services:
       - maj:/maj
 
 volumes:
+  secrets:   # clé de chiffrement des réglages : à sauvegarder avec la base (sans elle, les secrets sont à refaire)
+  tunnel:
   lecture:
   maj:
   ollama:

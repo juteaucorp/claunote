@@ -11,6 +11,7 @@
 {% else %}
   {% if est_admin() %}
   {% set liste = [('compte', '/compte', 'Compte', 0), ('comptes', '/comptes', 'Comptes', 0),
+                  ('installation', '/reglages/installation', 'Installation', 0),
                   ('securite', '/securite', 'Sécurité', nb_alertes_securite()),
                   ('notifications', '/notifications', 'Notifications', 0),
                   ('mise_a_jour', '/mise-a-jour', 'Mise à jour', nb_mises_a_jour()), ('donnees', '/tes-donnees', 'Données', 0)] %}

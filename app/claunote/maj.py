@@ -124,6 +124,32 @@ def locaux(eteindre: bool) -> str:
             else "Ollama et le service lecture redémarrent (reconstruction si le code a changé).")
 
 
+TUNNEL_ACTIF = "tunnel_actif"         # présent : le service maj garde cloudflared démarré (profil « tunnel »)
+TUNNEL_RELANCER = "tunnel_relancer"   # demande ponctuelle : (re)démarrer ou arrêter cloudflared maintenant
+
+
+def tunnel(actif: bool) -> str:
+    """Allume ou éteint le tunnel Cloudflare depuis le site (Réglages → Installation), par le service maj.
+    cloudflared relit son jeton (/tunnel/token) à chaque démarrage. Renvoie ce qui va se passer."""
+    if actif:
+        (DOSSIER / TUNNEL_ACTIF).write_text("oui")
+    else:
+        (DOSSIER / TUNNEL_ACTIF).unlink(missing_ok=True)
+    (DOSSIER / TUNNEL_RELANCER).write_text("oui")
+    if not present():
+        return ("Le service maj ne tourne pas : sur la VM, " +
+                ("docker compose --profile tunnel up -d cloudflared" if actif else "docker compose stop cloudflared") + ".")
+    try:
+        demander("verifier")
+    except RuntimeError:
+        return "Appliqué à la fin de l'action en cours (mise à jour…)."
+    return "Le tunnel démarre dans quelques secondes." if actif else "Le tunnel s'arrête dans quelques secondes."
+
+
+def tunnel_actif() -> bool:
+    return (DOSSIER / TUNNEL_ACTIF).exists()
+
+
 def conso() -> tuple[list[dict], dt.datetime | None]:
     """Processeur et mémoire de chaque conteneur au dernier relevé du service maj (docker stats)."""
     e = _etat_brut()
