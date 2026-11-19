@@ -465,6 +465,13 @@ CREATE TABLE IF NOT EXISTS depots (
     compte_id  INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
     le         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Matières qu'un compte rend publiques (niveau + matière) : leurs cours le sont, sauf choix contraire sur un cours
+CREATE TABLE IF NOT EXISTS matieres_publiques (
+    compte_id  INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
+    niveau     TEXT NOT NULL,
+    matiere    TEXT NOT NULL,
+    PRIMARY KEY (compte_id, niveau, matiere)
+);
 CREATE OR REPLACE FUNCTION claunote_compte() RETURNS INT LANGUAGE sql STABLE AS
 $$ SELECT NULLIF(current_setting('claunote.compte', true), '')::int $$;
 CREATE OR REPLACE FUNCTION claunote_tout() RETURNS BOOLEAN LANGUAGE sql STABLE AS
@@ -513,7 +520,7 @@ DECLARE
 BEGIN
     FOREACH t IN ARRAY ARRAY['documents', 'passages', 'revisions', 'campagnes', 'cartes', 'revues_cartes',
                              'conversations', 'messages', 'pieces_jointes', 'pronote_evenements', 'pronote_notes',
-                             'pronote_documents', 'cles_acces', 'sensibles', 'decoupages'] LOOP
+                             'pronote_documents', 'cles_acces', 'sensibles', 'decoupages', 'matieres_publiques'] LOOP
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
                        AND table_name = t AND column_name = 'compte_id') THEN
             EXECUTE format('ALTER TABLE %I ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE', t);
@@ -535,6 +542,36 @@ BEGIN
         END IF;
     END LOOP;
 END $$;
+-- Public ou privé (visibilite.py) : chacun choisit pour ses cours, matières, révisions et campagnes.
+-- Privé par défaut. Un élément public ne se lit par les autres comptes que sur les pages « Partagés »
+-- (claunote.partages = '1'), en lecture seule : les autres pages, et « Tout voir » de l'admin, ne changent pas.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS public BOOLEAN;                     -- NULL : comme sa matière
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT false;  -- avec ses révisions
+CREATE OR REPLACE FUNCTION claunote_partages() RETURNS BOOLEAN LANGUAGE sql STABLE AS
+$$ SELECT coalesce(current_setting('claunote.partages', true), '') = '1' $$;
+-- SECURITY DEFINER : lit la matière ou la campagne du propriétaire, quel que soit le compte de la requête
+CREATE OR REPLACE FUNCTION claunote_document_public(proprio INT, choix BOOLEAN, niv TEXT, mat TEXT)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
+$$ SELECT coalesce(choix, EXISTS (SELECT 1 FROM matieres_publiques m
+                                  WHERE m.compte_id = proprio AND m.niveau = niv AND m.matiere = mat)) $$;
+CREATE OR REPLACE FUNCTION claunote_campagne_publique(k INT) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public AS $$ SELECT coalesce((SELECT public FROM campagnes WHERE id = k), false) $$;
+CREATE OR REPLACE FUNCTION claunote_revision_publique(rev INT) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public AS
+$$ SELECT EXISTS (SELECT 1 FROM revisions r LEFT JOIN campagnes k ON k.id = r.campagne_id
+                  WHERE r.id = rev AND r.statut = 'pret' AND (r.public OR coalesce(k.public, false))) $$;
+-- Politiques en plus de par_compte (elles s'additionnent) : lecture seule, jamais écrire chez un autre
+DROP POLICY IF EXISTS partage ON documents;
+CREATE POLICY partage ON documents FOR SELECT
+    USING (claunote_partages() AND statut = 'classe' AND claunote_document_public(compte_id, public, niveau, matiere));
+DROP POLICY IF EXISTS partage ON revisions;
+CREATE POLICY partage ON revisions FOR SELECT
+    USING (claunote_partages() AND statut = 'pret' AND (public OR claunote_campagne_publique(campagne_id)));
+DROP POLICY IF EXISTS partage ON campagnes;
+CREATE POLICY partage ON campagnes FOR SELECT USING (claunote_partages() AND public);
+DROP POLICY IF EXISTS partage ON cartes;
+CREATE POLICY partage ON cartes FOR SELECT USING (claunote_partages() AND claunote_revision_publique(revision_id));
 -- Fichiers sur la VM (stockage local, stockage_local.py) : un identifiant stable par chemin, comme les ID kDrive.
 -- Les numéros commencent à 10^12 : jamais confondus avec un ID kDrive.
 CREATE SEQUENCE IF NOT EXISTS fichiers_locaux_id START 1000000000000;
@@ -591,6 +628,7 @@ def _verifier(conn):
 # Compte pour lequel on travaille : (id, tout voir). None : le worker, le démarrage, les pages sans connexion,
 # qui voient tout. Posé par le site à chaque requête connectée et par le worker le temps d'un travail.
 _compte: contextvars.ContextVar[tuple[int, bool] | None] = contextvars.ContextVar("compte", default=None)
+_partages: contextvars.ContextVar[bool] = contextvars.ContextVar("partages", default=False)
 _etat_connexion: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()   # connexion → contexte déjà posé
 
 
@@ -614,16 +652,28 @@ def compte_actuel() -> int | None:
     return ctx[0] if ctx else None
 
 
+@contextmanager
+def partages():
+    """Le temps du bloc, la base montre en plus, en lecture seule, ce que les autres comptes ont rendu public."""
+    jeton = _partages.set(True)
+    try:
+        yield
+    finally:
+        _partages.reset(jeton)
+
+
 def _appliquer_compte(conn):
     voulu = _compte.get()
+    if voulu is not None:
+        voulu = (*voulu, _partages.get())
     if _etat_connexion.get(conn, ()) == voulu:
         return
     if voulu is None:
-        conn.execute("RESET ROLE; RESET claunote.compte; RESET claunote.tout")
+        conn.execute("RESET ROLE; RESET claunote.compte; RESET claunote.tout; RESET claunote.partages")
     else:
         # Entiers uniquement (jamais de texte venu d'une requête) : pas d'injection possible
         conn.execute(f"SET ROLE claunote_compte; SET claunote.compte = '{int(voulu[0])}'; "
-                     f"SET claunote.tout = '{1 if voulu[1] else 0}'")
+                     f"SET claunote.tout = '{1 if voulu[1] else 0}'; SET claunote.partages = '{1 if voulu[2] else 0}'")
     _etat_connexion[conn] = voulu
 
 
@@ -2685,3 +2735,113 @@ def copie_kdrive_faite(chemin: str, taille: int, mtime: float, kdrive_id: int | 
         c.execute("INSERT INTO copies_kdrive (chemin, taille, mtime, kdrive_id) VALUES (%s, %s, %s, %s) "
                   "ON CONFLICT (chemin) DO UPDATE SET taille = EXCLUDED.taille, mtime = EXCLUDED.mtime, "
                   "kdrive_id = EXCLUDED.kdrive_id, copie_le = now()", (chemin, taille, mtime, kdrive_id))
+
+
+# --- Public ou privé (visibilite.py) ---------------------------------------------------
+# Changer la visibilité : seulement ses propres éléments (même en « Tout voir », l'admin ne choisit pas pour les autres)
+
+TABLES_VISIBILITE = {"documents", "revisions", "campagnes"}
+
+
+def changer_visibilite(table: str, element_id: int, public: bool | None) -> bool:
+    """public None (documents seulement) : comme sa matière. False si l'élément n'est pas à ce compte."""
+    if table not in TABLES_VISIBILITE or (public is None and table != "documents"):
+        raise ValueError(table)
+    with connect() as c:
+        return c.execute(f"UPDATE {table} SET public = %s WHERE id = %s AND compte_id = claunote_compte() RETURNING id",
+                         (public, element_id)).fetchone() is not None
+
+
+def matieres_publiques() -> set[tuple[str, str]]:
+    """(niveau, matière) rendues publiques par ce compte."""
+    with connect() as c:
+        return {(r["niveau"], r["matiere"]) for r in c.execute(
+            "SELECT niveau, matiere FROM matieres_publiques WHERE compte_id = claunote_compte()").fetchall()}
+
+
+def rendre_matiere(niveau: str, matiere: str, public: bool):
+    with connect() as c:
+        if public:
+            c.execute("INSERT INTO matieres_publiques (compte_id, niveau, matiere) VALUES (claunote_compte(), %s, %s) "
+                      "ON CONFLICT DO NOTHING", (niveau, matiere))
+        else:
+            c.execute("DELETE FROM matieres_publiques WHERE compte_id = claunote_compte() AND niveau = %s "
+                      "AND matiere = %s", (niveau, matiere))
+
+
+def plusieurs_comptes() -> bool:
+    """Le partage n'a de sens qu'à plusieurs : seul sur l'environnement, les boutons restent cachés."""
+    with connect() as c:
+        return c.execute("SELECT count(*) > 1 AS v FROM comptes WHERE actif").fetchone()["v"]
+
+
+# Pages « Partagés » : ce que les AUTRES comptes ont rendu public, en lecture seule. Les conditions sont redites
+# ici (pas seulement dans la base) : avec « Tout voir », l'admin y voit la même chose que les autres.
+_AUTEUR = "coalesce(nullif(a.nom, ''), a.identifiant) AS auteur"
+_DOC_PUBLIC = ("d.statut = 'classe' AND d.compte_id <> claunote_compte() "
+               "AND claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere)")
+_REV_PUBLIQUE = ("r.statut = 'pret' AND r.compte_id <> claunote_compte() "
+                 "AND (r.public OR claunote_campagne_publique(r.campagne_id))")
+
+
+def partages_documents():
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT d.id, d.titre, d.nom, d.niveau, d.matiere, d.type, d.chapitre, d.date_doc, d.compte_id, {_AUTEUR}
+                FROM documents d JOIN comptes a ON a.id = d.compte_id WHERE {_DOC_PUBLIC}
+                ORDER BY auteur, d.niveau DESC, d.matiere, d.type, d.date_doc DESC NULLS LAST, d.id DESC""").fetchall()
+
+
+def partages_revisions():
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT r.id, r.genre, r.sujet, r.niveau, r.matiere, r.cree_le, r.campagne_id, r.compte_id, {_AUTEUR}
+                FROM revisions r JOIN comptes a ON a.id = r.compte_id WHERE {_REV_PUBLIQUE}
+                ORDER BY r.cree_le DESC, r.id DESC""").fetchall()
+
+
+def partages_campagnes():
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT k.id, k.titre, k.debut, k.fin, k.compte_id, {_AUTEUR}
+                FROM campagnes k JOIN comptes a ON a.id = k.compte_id
+                WHERE k.public AND k.compte_id <> claunote_compte() ORDER BY k.debut DESC, k.id DESC""").fetchall()
+
+
+def document_partage(doc_id: int):
+    with partages(), connect() as c:
+        return c.execute(f"SELECT d.*, {_AUTEUR} FROM documents d JOIN comptes a ON a.id = d.compte_id "
+                         f"WHERE d.id = %s AND {_DOC_PUBLIC}", (doc_id,)).fetchone()
+
+
+def revision_partagee(rev_id: int):
+    with partages(), connect() as c:
+        return c.execute(f"SELECT r.*, {_AUTEUR} FROM revisions r JOIN comptes a ON a.id = r.compte_id "
+                         f"WHERE r.id = %s AND {_REV_PUBLIQUE}", (rev_id,)).fetchone()
+
+
+def cartes_partagees(rev_id: int):
+    with partages(), connect() as c:
+        return c.execute("SELECT recto, verso FROM cartes WHERE revision_id = %s AND claunote_revision_publique(%s) "
+                         "ORDER BY id", (rev_id, rev_id)).fetchall()
+
+
+def campagne_partagee(campagne_id: int):
+    """La campagne publique et ses révisions prêtes."""
+    with partages(), connect() as c:
+        k = c.execute(f"SELECT k.*, {_AUTEUR} FROM campagnes k JOIN comptes a ON a.id = k.compte_id "
+                      "WHERE k.id = %s AND k.public AND k.compte_id <> claunote_compte()", (campagne_id,)).fetchone()
+        if k is None:
+            return None, []
+        revs = c.execute("SELECT id, genre, sujet, matiere, niveau FROM revisions WHERE campagne_id = %s "
+                         "AND statut = 'pret' ORDER BY matiere NULLS LAST, id", (campagne_id,)).fetchall()
+        return k, revs
+
+
+def documents_partages(ids: list[int]):
+    """Sources d'une révision partagée : seulement celles qui sont publiques elles aussi."""
+    with partages(), connect() as c:
+        rows = c.execute(f"SELECT d.id, d.titre, d.nom FROM documents d WHERE d.id = ANY(%s) AND {_DOC_PUBLIC}",
+                         (ids,)).fetchall()
+    par_id = {r["id"]: r for r in rows}
+    return [par_id[i] for i in ids if i in par_id]

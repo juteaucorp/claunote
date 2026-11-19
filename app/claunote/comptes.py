@@ -46,7 +46,7 @@ PAGES = [
     ("/formule", "reviser"), ("/cartes", "reviser"), ("/progression", "reviser"),
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
-    ("/piece/", "reviser"),
+    ("/piece/", "reviser"), ("/partages", "bibliotheque"),
 ]
 ACTIONS_DOC = {"classer", "hors-cours", "supprimer", "reessayer"}
 

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block titre %}{{ doc.titre or doc.nom }}{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/partages">Partagés</a> › {{ doc.auteur }} › {{ doc.niveau }} › {{ doc.matiere }} · {{ doc.type }}</p>
+<h1>{{ doc.titre or doc.nom }}</h1>
+<p class="doux meta-doc">🌐 Partagé par <strong>{{ doc.auteur }}</strong> · lecture seule
+  · <a href="/partages/doc/{{ doc.id }}/fichier" target="_blank">original</a>
+  {% if doc.chapitre and doc.chapitre != doc.titre %} · {{ doc.chapitre }}{% endif %}
+  {% if doc.date_doc %} · {{ doc.date_doc.strftime('%d/%m/%Y') }}{% endif %}</p>
+{% if doc.resume %}<p>{{ doc.resume }}</p>{% endif %}
+{% if transcription %}<div class="carte transcription">{{ transcription|safe }}</div>
+{% else %}<div class="carte doux">Pas de texte lu pour ce cours : ouvre l'original.</div>{% endif %}
+{% endblock %}

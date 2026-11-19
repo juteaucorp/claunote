@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}{{ genres[rev.genre] }} : {{ rev.sujet|truncate(60) }}{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/partages">Partagés</a> › {{ genres[rev.genre] }}</p>
+<div class="g-{{ rev.genre }} meta tete-revision">
+  <span class="etiquette">{{ icone(rev.genre, 15) }} {{ genres[rev.genre] }}</span>
+  {% if rev.matiere %}<span class="doux">{{ rev.matiere }}{% if rev.niveau %} · {{ rev.niveau }}{% endif %}</span>{% endif %}
+</div>
+<h1>{{ rev.sujet }}</h1>
+<p class="doux">🌐 Partagé par <strong>{{ rev.auteur }}</strong> · lecture seule</p>
+{% if rev.genre == 'quiz' %}
+  {% for q in questions %}
+  <div class="carte">
+    <p><strong>{{ loop.index }}. {{ q.question|maths }}</strong></p>
+    {% if q.schema %}{{ q.schema|schema }}{% endif %}
+    <ol type="A">{% for c in q.choix %}<li>{{ c|maths }}</li>{% endfor %}</ol>
+    <details><summary>Voir la réponse</summary>
+      <p><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse]|maths }}</strong></p>
+      <p>{{ q.explication|maths }}</p></details>
+  </div>
+  {% endfor %}
+{% elif rev.genre == 'cartes' %}
+  <div class="carte"><ul class="liste-partages">
+  {% for c in cartes %}<li><details><summary>{{ c.recto|maths }}</summary><p>{{ c.verso|maths }}</p></details></li>{% endfor %}
+  </ul></div>
+{% else %}
+  <div class="carte transcription contenu-revision">{{ contenu }}</div>
+{% endif %}
+{% if sources %}
+<h2>Cours utilisés</h2>
+<ul>{% for d in sources %}<li><a href="/partages/doc/{{ d.id }}">{{ d.titre or d.nom }}</a></li>{% endfor %}</ul>
+{% endif %}
+<style>.liste-partages { margin: 0; padding-left: 18px; } .liste-partages li { margin: 6px 0; }</style>
+{% endblock %}
