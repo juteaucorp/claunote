@@ -26,7 +26,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
-from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, comptes, db, decoupage, demande,
+from claunote import (actualites, agent, anki, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande,
                       disque, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local)
@@ -1245,23 +1245,55 @@ def deconnecter_partout(request: Request, appareils_aussi: str = Form("")):
 
 # --- Bibliothèque ----------------------------------------------------------
 
-@app.get("/", response_class=HTMLResponse)
+def _premiere_page(compte: dict | None) -> str:
+    """Page d'arrivée (plus de page « Aujourd'hui ») : Actualités, sinon la première rubrique permise."""
+    for url, droit in (("/actualites", "actualites"), ("/bibliotheque", "bibliotheque"), ("/reviser", "reviser"),
+                       ("/agenda", "agenda")):
+        if comptes.peut(compte, droit):
+            return url
+    return "/reglages"
+
+
+@app.get("/")
 def accueil(request: Request):
-    """Aujourd'hui : ce qui arrive (évals, devoirs), ce qui attend (cartes, docs des profs)."""
-    matieres = sorted({r["matiere"] for r in db.niveaux_matieres()})
-    evaluations = [{**e, "cours": pronote.trouver_matiere(e["matiere"], matieres)}
-                   for e in db.evenements_a_venir("evaluation", 21)]
-    aujourdhui = dt.datetime.now(pronote.PARIS).date()
-    campagne = db.campagne_du_jour(aujourdhui)
-    jour = next((j for j in revision.jours_programme(campagne["programme"], campagne["faits"])
-                 if j["date"] >= aujourdhui), None) if campagne else None
-    return templates.TemplateResponse(request, "accueil.html", {
-        "aujourdhui": aujourdhui, "paris": pronote.PARIS, "campagne": campagne, "jour": jour,
-        "courts": revision.COURTS,
-        "evaluations": evaluations[:6], "devoirs": [d for d in db.evenements_a_venir("devoir", 7) if not d["fait"]],
-        "documents": db.documents_pronote(5), "revisions": db.revisions(4),
-        "actus": db.articles("pour_toi", limite=3, non_lus_jours=3),
-        "synchro": db.etat_valeur("pronote_synchro"), "nb_documents": db.nb_documents()})
+    return RedirectResponse(_premiere_page(getattr(request.state, "compte", None)), status_code=303)
+
+
+def _nb_cours_total() -> int:
+    try:
+        return db.nb_documents()
+    except Exception:
+        return 0
+
+
+templates.env.globals["nb_cours_total"] = _nb_cours_total
+
+
+# --- Réglages : une seule page qui mène à tout -----------------------------------
+
+def _sans_erreur(f, defaut=None):
+    try:
+        return f()
+    except Exception:
+        return defaut
+
+
+@app.get("/reglages", response_class=HTMLResponse)
+def page_reglages(request: Request):
+    """Point d'entrée unique : « Moi » pour tout le monde, « Administration » pour l'admin, avec l'état de chaque page."""
+    moi_ = getattr(request.state, "compte", None) or {}
+    admin = comptes.est_admin(moi_)
+    ctx = {"abonnes": len(_sans_erreur(db.abonnements, []) or []), "admin": admin}
+    if admin:
+        ctx.update({
+            "nb_comptes": len(_sans_erreur(db.comptes, []) or []),
+            "alertes": _sans_erreur(securite.nb_nouvelles_alertes, 0),
+            "maj_n": _sans_erreur(maj.disponibles, 0),
+            "pause": _sans_erreur(lambda: db.etat_valeur("analyses_pause") == "oui", False),
+            "disque": _sans_erreur(disque.etat),
+            "inst_a_faire": _sans_erreur(installation.a_faire, False),
+        })
+    return templates.TemplateResponse(request, "reglages.html", ctx)
 
 
 @app.get("/bibliotheque", response_class=HTMLResponse)
@@ -1803,7 +1835,7 @@ def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str
     return templates.TemplateResponse(request, "reviser.html", {
         **contexte, "campagnes": campagnes, "du_jour": du_jour, "jour": jour, "compte": db.compte_revisions(),
         "evaluations": evaluations, "paris": pronote.PARIS,
-        "a_choisir": bool(db.niveaux_matieres())})
+        "a_choisir": bool(db.niveaux_matieres()), "a_archiver": archivage.nb_propositions()})
 
 
 @app.get("/reviser/nouvelle", response_class=HTMLResponse)
@@ -1953,6 +1985,8 @@ def voir_revision(request: Request, rev_id: int):
     rev = db.revision(rev_id)
     if rev is None:
         raise HTTPException(404)
+    if rev["statut"] == "pret":
+        db.noter_ouverture(rev_id)   # « pas ouverte depuis… » : base des propositions d'archivage
     reperes = rev["reperes"] or {}
     web = rev.get("sources_web") or []
     contenu, corrige, questions, cartes = None, None, [], []
@@ -2089,6 +2123,47 @@ def supprimer_revision(rev_id: int):
     return RedirectResponse(suite, status_code=303)
 
 
+@app.post("/revision/{rev_id}/archiver")
+def archiver_revision(rev_id: int):
+    rev = db.revision(rev_id)
+    if rev is None:
+        raise HTTPException(404)
+    db.archiver(revisions=[rev_id])
+    return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+# --- Archives : ménage proposé au fil du temps (archivage.py) --------------------
+
+@app.get("/archives", response_class=HTMLResponse)
+def page_archives(request: Request):
+    campagnes, revisions = db.archives()
+    return templates.TemplateResponse(request, "archives.html", {
+        "propositions": archivage.propositions(), "campagnes": campagnes, "revisions": revisions,
+        "genres": revision.GENRES, "courts": revision.COURTS, "garder_jours": archivage.GARDER_JOURS})
+
+
+def _retour(retour: str) -> str:
+    return retour if retour.startswith("/") and not retour.startswith("//") else "/archives"
+
+
+@app.post("/archives/{action}")
+async def action_archives(request: Request, action: str):
+    """Cases cochées (« revision:12 », « campagne:3 ») : archiver, garder, restaurer ou supprimer pour de bon."""
+    f = await request.form()
+    revs, camps = archivage.separer(f.getlist("cle"))
+    if action == "archiver":
+        db.archiver(revs, camps)
+    elif action == "garder":
+        db.garder(revs, camps, archivage.GARDER_JOURS)
+    elif action == "restaurer":
+        db.restaurer(revs, camps, archivage.GARDER_JOURS)
+    elif action == "supprimer":
+        db.supprimer_archives(revs, camps)
+    else:
+        raise HTTPException(404)
+    return RedirectResponse(_retour(str(f.get("retour") or "")), status_code=303)
+
+
 # --- Campagnes ----------------------------------------------------------------
 
 def _rang_niveau(niveau: str) -> int:
@@ -2217,6 +2292,14 @@ def relancer_campagne(campagne_id: int):
         raise HTTPException(404)
     db.relancer_campagne(campagne_id)
     db.demander_scan()
+    return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
+
+
+@app.post("/campagne/{campagne_id}/archiver")
+def archiver_campagne(campagne_id: int):
+    if db.campagne(campagne_id) is None:
+        raise HTTPException(404)
+    db.archiver(campagnes=[campagne_id])
     return RedirectResponse(f"/campagne/{campagne_id}", status_code=303)
 
 
@@ -2645,7 +2728,11 @@ async def fusionner_matieres(request: Request):
 
 @app.get("/cartes", response_class=HTMLResponse)
 def page_cartes(request: Request):
-    return templates.TemplateResponse(request, "cartes.html", {"paquets": db.paquets()})
+    try:
+        delaisses = [p for p in archivage.propositions() if p["genre"] == "cartes"]
+    except Exception:
+        delaisses = []
+    return templates.TemplateResponse(request, "cartes.html", {"paquets": db.paquets(), "delaisses": delaisses})
 
 
 @app.get("/cartes/session", response_class=HTMLResponse)
@@ -2833,7 +2920,19 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
         vue = "tout"
     page = max(page, 1)
     liste, total = db.articles(vue, sujet, flux, PAR_PAGE_ACTU, (page - 1) * PAR_PAGE_ACTU)
+    liste = actualites.regrouper(liste)
+    cours = actualites.cours_lies([a.get("notion") for a in liste])
     aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    # « L'essentiel » : en haut de « Pour toi », première page seulement
+    essentiel = None
+    if vue == "pour_toi" and page == 1 and not sujet and not flux:
+        p = actualites.point()
+        if p and p.get("points") and time.time() - float(p.get("le") or 0) < 36 * 3600:
+            sources = {a["id"]: a for a in db.articles_par_ids(sorted({i for x in p["points"] for i in x["ids"]}))}
+            essentiel = {**p, "le_txt": dt.datetime.fromtimestamp(float(p["le"]), pronote.PARIS).strftime("%H:%M"),
+                         "points": [{**x, "articles": [sources[i] for i in x["ids"] if i in sources]}
+                                    for x in p["points"]]}
+            essentiel["points"] = [x for x in essentiel["points"] if x["articles"]]
     groupes: list[tuple[str, list]] = []
     for a in liste:
         jour = _jour_actu(a["publie_le"], aujourdhui)
@@ -2853,7 +2952,17 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
         "sujet_nom": next((s["nom"] for s in sujets if s["id"] == sujet), None),
         "flux_nom": next((f["titre"] or f["url"] for f in flux_l if f["id"] == flux), None),
         "en_attente": sum(1 for f in flux_l if f["releve_le"] is None),
-        "reglages": actualites.reglages()})
+        "reglages": actualites.reglages(), "essentiel": essentiel, "cours": cours})
+
+
+@app.get("/actualites/{article_id}/image")
+def actualite_image(article_id: int):
+    """L'illustration de l'article, réduite et passée par le site (la page ne charge rien d'un site tiers)."""
+    a = db.article(article_id)
+    image = actualites.vignette(a["image"]) if a and a.get("image") else None
+    if not image:
+        return Response(status_code=404, headers={"Cache-Control": "private, max-age=86400"})
+    return Response(image, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=604800"})
 
 
 @app.post("/actualites/{article_id}/favori", response_class=HTMLResponse)

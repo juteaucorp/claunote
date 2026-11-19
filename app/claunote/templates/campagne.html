@@ -17,6 +17,15 @@
   {% for e in campagne.epreuves %}{% set d = e.date|jour_iso %}<strong>{{ e.matiere }}</strong> {{ COURT[d.weekday()] }} {{ d.strftime('%d/%m') }}{% if e.heure %} {{ e.heure|replace(':', ' h ') }}{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</p>
 {% endif %}
 
+{% if campagne.archive_le %}
+<form class="carte accent rangee" method="post" action="/archives/restaurer">
+  <div class="corps"><strong>Archivée le {{ (campagne.archive_le|paris)[:10] }}</strong>
+    <div class="doux">Elle et ses supports sont hors de Réviser et des flashcards à revoir.</div></div>
+  <input type="hidden" name="cle" value="campagne:{{ campagne.id }}"><input type="hidden" name="retour" value="/campagne/{{ campagne.id }}">
+  <button class="principal">Restaurer</button>
+</form>
+{% endif %}
+
 {% set pretes = revs|selectattr('statut', 'equalto', 'pret')|list|length %}
 <div class="barre-actions">
   {% if pretes %}
@@ -31,6 +40,7 @@
       {% if erreurs or campagne.statut == 'erreur' %}
       <form method="post" action="/campagne/{{ campagne.id }}/relancer"><button>{{ icone('relancer', 18) }} Relancer ce qui a échoué</button></form>
       {% endif %}
+      {% if not campagne.archive_le %}<form method="post" action="/campagne/{{ campagne.id }}/archiver"><button>{{ icone('archive', 18) }} Archiver avec ses supports</button></form>{% endif %}
       <form method="post" action="/campagne/{{ campagne.id }}/supprimer" onsubmit="return confirm('Supprimer cette campagne et ses {{ revs|length }} supports ?')">
         <button class="danger">{{ icone('corbeille', 18) }} Supprimer la campagne</button></form>
       <form method="post" action="/campagne/{{ campagne.id }}/supprimer" onsubmit="return confirm('Supprimer seulement le programme ? Les supports restent dans l\'historique.')">

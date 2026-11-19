@@ -110,6 +110,12 @@
   .menu-plus summary { list-style: none; cursor: pointer; }
   .menu-plus summary::-webkit-details-marker { display: none; }
   .menu-plus[open] summary { background: var(--accent-pale); color: var(--accent-fonce); border-color: var(--accent-pale); }
+  /* Compteur neutre (pas une alerte) : nombre total de cours à côté de « Cours » */
+  .compteur { display: inline-block; margin-left: 5px; padding: 0 6px; border-radius: 999px; background: var(--bord); color: var(--doux);
+    font-size: .72rem; line-height: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* Explications longues repliées : l'écran reste léger, le détail est à un toucher */
+  details.aide-repliee > summary { cursor: pointer; color: var(--doux); font-size: .9rem; margin: 4px 0; }
+  .bandeau-court { padding-top: 10px; padding-bottom: 10px; }
   .feuille-haut { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: 260px; padding: 6px; display: grid; gap: 2px;
     background: var(--carte); border: 1px solid var(--bord); border-radius: 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, .14); }
   .feuille-haut a, .feuille-haut button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px;
@@ -153,6 +159,8 @@
     .feuille a:active, .feuille button:active { background: var(--accent-pale); }
     .feuille form { margin: 0; }
     .feuille .badge { margin-left: auto; }
+    nav.onglets .compteur { margin-left: 2px; padding: 0 4px; font-size: .6rem; line-height: 14px; }
+    .feuille { grid-template-columns: 1fr; }  /* trois entrées : une par ligne, plus lisible */
     /* place pour la barre d'onglets (≈ 72 px + bord de l'écran) : body main, sinon la règle main plus bas l'écrase */
     body main { padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
   }
@@ -290,26 +298,24 @@
 {% set evals = nb_evaluations_proches() if peut('agenda') else 0 %}
 {% set a_importer = nb_import_a_confirmer() if est_admin() else 0 %}
 {% set attente = nb_a_verifier() + a_importer %}
-{% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours', '/partages')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
+{% set rubrique = 'actualites' if chemin.startswith('/actualites') else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours', '/partages')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander', '/progression')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
 {% set admin = est_admin() %}
-{% set en_pause = analyses_en_pause() if admin else False %}
+{% set actus = nb_actualites() if peut('actualites') else 0 %}
+{% set nb_cours = nb_cours_total() if peut('bibliotheque') else 0 %}
+{# Réglages : un seul point d'entrée, la pastille dit s'il y a quelque chose à regarder (alertes, mise à jour, pause) #}
+{% set a_regler = (nb_alertes_securite() + nb_mises_a_jour() + (1 if analyses_en_pause() else 0)) if admin else 0 %}
+{% set plus_n = attente + a_regler %}
 {% macro liens_plus() %}
-      {% if peut('actualites') %}{% set actus = nb_actualites() %}
-      <a href="/actualites">{{ icone('actualites') }}<span>Actualités<small>veille, flux RSS, sujets suivis</small></span>{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
       {% if peut('deposer') %}<a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer and admin %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>{% endif %}
-      {% if peut('organiser') %}<a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>{% endif %}
-      {% if admin %}<a href="/analyses">{{ icone('etat') }}<span>Activité<small>analyses, état du service</small></span>{% if en_pause %}<span class="badge">pause</span>{% endif %}</a>{% endif %}
-      {% set alertes_secu = nb_alertes_securite() if admin else 0 %}
-      <a href="{{ '/securite' if alertes_secu else '/compte' }}">{{ icone('compte') }}<span>Réglages<small>{% if admin %}compte, comptes invités, sécurité, mise à jour{% else %}ton compte, notifications, tes données{% endif %}</small></span>{% if alertes_secu %}<span class="badge" title="Alertes de sécurité">{{ alertes_secu }}</span>{% elif admin and nb_mises_a_jour() %}<span class="badge">{{ nb_mises_a_jour() }}</span>{% endif %}</a>
-      {% if admin %}<form method="post" action="/comptes/tout-voir"><input type="hidden" name="actif" value="{{ '' if moi().tout_voir else '1' }}"><input type="hidden" name="suite" value="{{ chemin }}">
-        <button title="Voir et utiliser les données de tous les comptes">{{ icone('cours') }}<span>{% if moi().tout_voir %}Revenir à mes données<small>« Tout voir » est actif</small>{% else %}Tout voir<small>les données de tous les comptes</small>{% endif %}</span></button></form>{% endif %}
+      {% if peut('organiser') %}<a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, matières, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>{% endif %}
+      <a href="/reglages">{{ icone('compte') }}<span>Réglages<small>{% if admin %}ton compte, administration{% else %}ton compte, notifications, tes données{% endif %}</small></span>{% if a_regler %}<span class="badge">{{ a_regler }}</span>{% endif %}</a>
 {% endmacro %}
 <header>
   <div class="barre">
     <a class="marque" href="/"><img src="/static/logo.svg" alt="">Claunote</a>
     <nav class="haut" aria-label="Menu">
-      <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">Aujourd'hui</a>
-      {% if peut('bibliotheque') %}<a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">Cours</a>{% endif %}
+      {% if peut('actualites') %}<a href="/actualites" id="maj-h-actus" class="maj {{ 'actif' if rubrique == 'actualites' }}">Actualités{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
+      {% if peut('bibliotheque') %}<a href="/bibliotheque" id="maj-h-cours" class="maj {{ 'actif' if rubrique == 'cours' }}" title="{{ nb_cours }} cours classés">Cours{% if nb_cours %}<span class="compteur">{{ nb_cours }}</span>{% endif %}</a>{% endif %}
       {% if peut('reviser') %}<a href="/reviser" id="maj-h-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
       {% if peut('agenda') %}<a href="/agenda" id="maj-h-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
     </nav>
@@ -318,7 +324,7 @@
       <a href="/recherche" class="bouton-icone loupe" title="Rechercher" aria-label="Rechercher">{{ icone('recherche', 20) }}</a>
       {% if peut('deposer') %}<a href="/deposer" class="bouton-icone {{ 'actif' if chemin.startswith('/deposer') }}" title="Déposer des scans" aria-label="Déposer">{{ icone('deposer', 20) }}</a>{% endif %}
       <details class="menu-plus" data-menu>
-        <summary id="maj-h-plus" class="maj bouton-icone {{ 'actif' if rubrique == 'plus' }}" title="Plus : à vérifier, organiser, compte…" aria-label="Plus">{{ icone('plus', 20) }}{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
+        <summary id="maj-h-plus" class="maj bouton-icone {{ 'actif' if rubrique == 'plus' }}" title="Plus : ajouter, ranger, réglages" aria-label="Plus">{{ icone('plus', 20) }}{% if plus_n %}<span class="badge">{{ plus_n }}</span>{% endif %}</summary>
         <div class="feuille-haut">{{ liens_plus() }}</div>
       </details>
     </div>
@@ -327,12 +333,12 @@
   </div>
 </header>
 <nav class="onglets verre" aria-label="Onglets">
-  <a href="/" class="{{ 'actif' if rubrique == 'accueil' }}">{{ icone('accueil') }}Aujourd'hui</a>
-  {% if peut('bibliotheque') %}<a href="/bibliotheque" class="{{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}Cours</a>{% endif %}
+  {% if peut('actualites') %}<a href="/actualites" id="maj-o-actus" class="maj {{ 'actif' if rubrique == 'actualites' }}">{{ icone('actualites') }}Actualités{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
+  {% if peut('bibliotheque') %}<a href="/bibliotheque" id="maj-o-cours" class="maj {{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}<span>Cours{% if nb_cours %} <span class="compteur">{{ nb_cours }}</span>{% endif %}</span></a>{% endif %}
   {% if peut('reviser') %}<a href="/reviser" id="maj-o-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
   {% if peut('agenda') %}<a href="/agenda" id="maj-o-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
   <details id="plus" data-menu>
-    <summary id="maj-o-plus" class="maj {{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if attente %}<span class="badge">{{ attente }}</span>{% endif %}</summary>
+    <summary id="maj-o-plus" class="maj {{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if plus_n %}<span class="badge">{{ plus_n }}</span>{% endif %}</summary>
     <div class="feuille verre">{{ liens_plus() }}</div>
   </details>
 </nav>
@@ -346,8 +352,7 @@
     <button>Revenir à mes données</button></form>{% endif %}
   {% if est_admin() and installation_a_faire() and not chemin.startswith('/installation') %}<p class="carte accent">L'installation n'est pas finie. <a href="/installation">Continuer l'assistant</a></p>{% endif %}
   {% set dq = disque_admin() %}{% if dq and dq.niveau in ('attention', 'critique') and not chemin.startswith('/etat') %}<p class="carte alerte">💽 {{ dq.phrase }} <a href="/etat">Détails</a></p>{% endif %}
-  {% if mdp_par_defaut() and not chemin.startswith('/compte') %}<p class="carte accent">⚠️ Tu utilises le mot de passe par défaut
-    (<code>admin</code> / <code>claunote</code>). <a href="/compte">Change-le maintenant</a>.</p>{% endif %}
+  {% if mdp_par_defaut() and not chemin.startswith('/compte') %}<p class="carte accent bandeau-court">⚠️ Mot de passe par défaut : <a href="/compte">change-le</a>.</p>{% endif %}
   {% endif %}
   {# Rafraîchissement invisible : la page se met à jour toute seule (voir le script plus bas) #}
   {% set contenu_html = self.contenu() %}

@@ -43,6 +43,7 @@ TACHES = {
     "controle": "haiku",     # vérifier un classement fait par le modèle local (texte seul)
     "actualites": "haiku",   # trier les articles des flux RSS selon les sujets suivis (par lots de 40)
     "coherence": "haiku",    # une nouvelle fiche reste-t-elle dans le sujet ? (plans comparés, texte court)
+    "actualites_point": "opus",   # « L'essentiel » des actualités : le point du jour (court, au plus toutes les 3 h)
 }
 # Tâches qui créent un support : Opus obligatoire (pas de repli silencieux sur Sonnet)
 CREATION = {"fiche", "quiz", "cartes", "plan", "programme", "examen"}
@@ -58,6 +59,7 @@ LIBELLES = {
     "controle": "Vérification du modèle local",
     "actualites": "Tri des actualités",
     "coherence": "Vérification hors sujet d'un support",
+    "actualites_point": "Point du jour des actualités",
     "sonde": "Test de Claude (bouton Réessayer)",
 }
 NOMS = {"haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus 5.5",

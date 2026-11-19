@@ -118,6 +118,15 @@
 </div>
 {% endif %}
 
+{% if a_archiver %}
+<a class="carte rangee menage" href="/archives">
+  <span class="pastille-genre">{{ icone('archive') }}</span>
+  <div class="corps"><strong>{{ a_archiver }} support{{ 's' if a_archiver > 1 }} ne {{ 'servent' if a_archiver > 1 else 'sert' }} plus ?</strong>
+    <div class="doux">Contrôles passés, flashcards délaissées, campagnes finies : je te propose de les archiver.</div></div>
+  <span class="bouton">Voir</span>
+</a>
+{% endif %}
+
 <h2 id="deja">Déjà fait <span class="doux">· {{ compte.total }} révision{{ 's' if compte.total > 1 }}{% if compte.attente %}, {{ compte.attente }} en préparation{% endif %}</span></h2>
 {% if not a_choisir and not compte.total %}
 <div class="carte">Il faut d'abord des cours classés : dépose des scans depuis <a href="/deposer">Déposer</a>.</div>
@@ -141,7 +150,10 @@
   </div>
 </form>
 {% include "_historique.html" %}
+<p class="doux lien-archives"><a href="/archives">{{ icone('archive', 16) }} Archives</a></p>
 <style>
+  .menage { color: inherit; text-decoration: none; }
+  .lien-archives { text-align: center; }
   .filtres-histo { margin-bottom: 12px; }
   .puces { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; scrollbar-width: none; }
   .puces::-webkit-scrollbar { display: none; }
