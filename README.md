@@ -298,6 +298,8 @@ et les réglages du quotidien se font aussi sur le site (*Activité*, *Réglages
 | `KDRIVE_TOKEN`, `KDRIVE_ID`, `KDRIVE_ETUDES_ID`, `KDRIVE_INBOX_ID` | Accès à kDrive | à remplir |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Jeton du forfait Claude Pro (`claude setup-token`) | à remplir |
 | `CLAUDE_MODELES`, `CLAUDE_MODELE_MAX` | Un modèle par tâche (Haiku, Sonnet, Opus), plafond | voir la page *État* |
+| `CLAUDE_ID_OPUS` | Identifiant exact d'Opus, utilisé pour toute création de contenu | `claude-opus-5-5` |
+| `CLAUDE_REPLI_CREATION` | `1` : si Opus est en limite, fiches/quiz faits par Sonnet au lieu d'attendre | `0` |
 | `CLAUDE_PARALLELE` | Appels à Claude en même temps | `3` |
 | `ANALYSE_LOCALE` | Qui fait le travail : `local` (local d'abord), `auto` (Claude d'abord), `toujours`, `jamais` (aussi sur *Activité*) | `local` |
 | `OLLAMA_MODELE`, `OLLAMA_EMBED`, `LOCAL_PARALLELE` | Modèle local, modèle de recherche par le sens, analyses locales en même temps | `qwen2.5:3b`, `nomic-embed-text`, `1` |

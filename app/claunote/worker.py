@@ -32,7 +32,7 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (actualites, agent, comptes, db, decoupage, disque, importation, index, lecture, local, modeles,
+from claunote import (actualites, agent, coherence, comptes, db, decoupage, disque, importation, index, lecture, local, modeles,
                       notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
                       stockage_local)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
@@ -712,12 +712,18 @@ def traiter_revision(kd: KDrive, rev: dict):
     if rev.get("retouche") and rev.get("contenu"):
         return retoucher_revision(kd, rev, quoi)
     activite(quoi)
-    try:
+    docs = db.documents(rev["doc_ids"])
+    perimetre, anciens = coherence.preparer(rev)   # anciens supports + autres cours : rester dans le sujet
+
+    def rediger(recentrer: str = ""):
         # Beaucoup de cours : condensés par groupes, gardés en base pour reprendre après une limite
-        contenu, reperes, web = revision.generer(
-            rev["genre"], rev["sujet"], db.documents(rev["doc_ids"]), rev["date_eval"], rev.get("consigne") or "",
+        return revision.generer(
+            rev["genre"], rev["sujet"], docs, rev["date_eval"], rev.get("consigne") or "",
             pieces=db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True), memoire=db.Condenses(),
-            progres=lambda etape: activite(f"{quoi} : {etape}"), strict=bool(rev.get("strict")))
+            progres=lambda etape: activite(f"{quoi} : {etape}"), strict=bool(rev.get("strict")),
+            reperes_perimetre=perimetre, recentrer=recentrer)
+    try:
+        contenu, reperes, web = rediger()
     except ErreurAgent as e:
         db.maj_revision(rev["id"], "erreur", erreur=str(e))
         log(f"erreur de révision {rev['id']} : {e}")
@@ -727,9 +733,19 @@ def traiter_revision(kd: KDrive, rev: dict):
             db.maj_revision(rev["id"], "erreur", erreur=f"Claude Code s'arrête à chaque essai : {e}")
             return
         raise
+    activite(f"{quoi} : vérification du sujet")
+    controle = coherence.controler(rev, contenu, docs, anciens)
+    if controle and not controle["ok"]:
+        log(f"révision {rev['id']} hors sujet, recentrage : {'; '.join(controle['ecarts'])[:300]}")
+        try:   # une seule nouvelle version ; ratée (limite, panne…), la première reste avec ses écarts affichés
+            contenu, reperes, web = rediger(coherence.consigne_recentrage(controle))
+            apres = coherence.controler(rev, contenu, docs, anciens) or {"ok": True, "ecarts": []}
+            controle = {**controle, **apres, "recentre": True, "ecarts_avant": controle["ecarts"]}
+        except Exception as e:
+            log(f"recentrage de la révision {rev['id']} impossible : {e}")
     if rev["genre"] == "cartes":
         db.creer_cartes(rev["id"], json.loads(contenu))
-    db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, web=web)
+    db.maj_revision(rev["id"], "pret", contenu=contenu, reperes=reperes, web=web, controle=controle)
     sujet = rev.get("sujet") or ""
     if rev["genre"] in revision.GENRES_TEXTE and (sujet.endswith("…") or len(sujet) > revision.TITRE_MAX):
         # Titre raccourci d'une longue demande : celui que l'IA a donné au support est plus parlant
@@ -1318,10 +1334,17 @@ def revisions_en_attente(kd: KDrive):
             if not agent.forfait_autorise():
                 db.maj_campagne(campagne["id"], "erreur", erreur=SANS_FORFAIT)
                 continue
-            traiter_campagne(campagne)
+            if attend_opus("programme"):
+                continue
+            try:
+                traiter_campagne(campagne)
+            except agent.OpusEnPause as e:
+                opus_en_pause(e)
     for rev in db.revisions_en_attente():
         if ARRET.is_set() or not CLAUDE.disponible():
             return
+        if attend_opus(rev["genre"]):
+            continue  # création de contenu : elle attend Opus 5.5, le reste du worker continue
         log(f"révision : {rev['genre']} « {rev['sujet']} »")
         with comptes.pour(rev.get("compte_id")):
             if not agent.forfait_autorise():
@@ -1330,7 +1353,24 @@ def revisions_en_attente(kd: KDrive):
                 else:
                     db.maj_revision(rev["id"], "erreur", erreur=SANS_FORFAIT)
                 continue
-            traiter_revision(kd, rev)
+            try:
+                traiter_revision(kd, rev)
+            except agent.OpusEnPause as e:
+                opus_en_pause(e)
+
+
+def attend_opus(tache: str) -> bool:
+    """Vrai si cette création doit attendre Opus 5.5, en pause jusqu'à son heure de reprise."""
+    return modeles.obligatoire(tache) and modeles.attente_opus() is not None
+
+
+def opus_en_pause(e):
+    """Limite d'Opus pendant une création : la révision reste « en attente » jusqu'à la reprise (pas de Sonnet)."""
+    reprise = e.reprise or modeles.attente_opus()
+    if reprise is None or reprise <= modeles._maintenant():
+        reprise = modeles._maintenant() + dt.timedelta(hours=1)
+    modeles.marquer_indisponible("opus", reprise, "limite d'usage atteinte")
+    log(f"Opus 5.5 en pause jusqu'à {reprise.astimezone():%H:%M} : les fiches attendent, le reste continue")
 
 
 SANS_FORFAIT = ("Ce compte n'utilise pas le forfait Claude de l'admin : les fiches, quiz et programmes demandent "

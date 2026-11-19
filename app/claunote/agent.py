@@ -130,6 +130,15 @@ class ClaudeDeconnecte(ClaudeIndisponible):
     """Jeton CLAUDE_CODE_OAUTH_TOKEN refusé ou expiré : à refaire avec `claude setup-token`."""
 
 
+class OpusEnPause(Exception):
+    """Opus a atteint sa limite et la tâche est une création (modeles.obligatoire) : elle attend `reprise`
+    au lieu d'être faite par Sonnet. Le reste (classement, lecture) continue : ce n'est pas une pause de Claude."""
+
+    def __init__(self, message: str, reprise: dt.datetime | None = None):
+        super().__init__(message)
+        self.reprise = reprise
+
+
 class ModeleIndisponible(Exception):
     """Le forfait refuse ce modèle : on passe à celui du dessous."""
 
@@ -296,9 +305,9 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
     """
     if not _forfait.get():
         raise SansForfait("ce compte n'utilise pas le forfait Claude de l'admin (modèles locaux seulement)")
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", modele]
-    if modele == "opus":
-        cmd += ["--fallback-model", "sonnet"]  # Opus surchargé : Sonnet prend le relais
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", modeles.identifiant(modele)]
+    if modele == "opus" and not modeles.obligatoire(tache):
+        cmd += ["--fallback-model", "sonnet"]  # Opus surchargé : Sonnet prend le relais (sauf création de contenu)
     if outils:
         cmd += ["--allowedTools", ",".join(outils)]
     for attente in (*ATTENTES_PANNE, None):
@@ -355,7 +364,7 @@ def _lancer(cmd: list[str], cwd: Path, entree: str | None, timeout: int, tache: 
         with _verrou_processus:
             if proc in _arretes:
                 _arretes.discard(proc)
-                journal(tache=tache, modele=cmd[cmd.index("--model") + 1], duree=0, resultat="erreur",
+                journal(tache=tache, modele=_nom_court(cmd[cmd.index("--model") + 1]), duree=0, resultat="erreur",
                         detail="arrêté depuis le site")
                 raise Interrompu("analyse arrêtée depuis le site")
         return subprocess.CompletedProcess(cmd, proc.returncode, sortie, erreurs)
@@ -363,6 +372,10 @@ def _lancer(cmd: list[str], cwd: Path, entree: str | None, timeout: int, tache: 
         with _verrou_processus:
             _processus.pop(proc, None)
             _arretes.discard(proc)
+
+
+def _nom_court(identifiant: str) -> str:
+    return next((m for m in modeles.ECHELLE if m in identifiant), identifiant)
 
 
 def sonder():
@@ -380,15 +393,23 @@ def demander(tache: str, prompt: str, cwd: Path, lire=lambda texte: texte, outil
     """Appelle Claude avec le modèle prévu pour la tâche et lit la réponse avec `lire`.
 
     Réponse illisible (lire lève ErreurAgent) : un essai avec le modèle au-dessus.
-    Modèle refusé par le forfait, ou limite propre à Opus : le modèle en dessous.
+    Modèle refusé par le forfait, ou limite propre à Opus : le modèle en dessous, sauf pour une création
+    de contenu (modeles.obligatoire) qui lève OpusEnPause et attend la reprise d'Opus.
     Renvoie (réponse lue, modèle qui l'a produite).
     """
+    obligatoire = modele is None and modeles.obligatoire(tache)
     modele = modele or modeles.choisir(tache)
+    if obligatoire and (reprise := modeles.attente_opus()):
+        raise OpusEnPause("Opus 5.5 est en pause (limite d'usage)", reprise)
     deja_monte = False
     while True:
         try:
             texte = appeler_claude(prompt, cwd, outils=outils, entree=entree, timeout=timeout, modele=modele, tache=tache)
         except ModeleIndisponible as e:
+            if modeles.identifiant_refuse(modele):  # Claude Code trop ancien pour l'identifiant exact : alias
+                continue
+            if obligatoire:
+                raise ErreurAgent(f"Opus 5.5 refusé par le forfait ou par Claude Code : {e}") from e
             modeles.marquer_indisponible(modele, None, "refusé par le forfait")
             modele = modeles.plus_faible(modele)
             if modele is None:
@@ -400,6 +421,8 @@ def demander(tache: str, prompt: str, cwd: Path, lire=lambda texte: texte, outil
                 raise
             modeles.marquer_indisponible(modele, e.reprise or modeles._maintenant() + dt.timedelta(hours=1),
                                          "limite d'usage atteinte")
+            if obligatoire:
+                raise OpusEnPause(str(e), modeles.attente_opus()) from e
             modele = modeles.plus_faible(modele)
             continue
         try:

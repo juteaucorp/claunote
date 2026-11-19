@@ -113,6 +113,8 @@ def test_flashcards_enregistrees(worker, monkeypatch):
                                                    "contenu": json.dumps(cartes), "reperes": {"D1": 3},
                                                    "matiere": "Réseaux", "niveau": "BTS1", "campagne_titre": None})
     monkeypatch.setattr(notifications, "revision_prete", lambda rev: vu.update(notif=rev["id"]))
+    monkeypatch.setattr(worker.coherence, "preparer", lambda rev: ("", []))
+    monkeypatch.setattr(worker.coherence, "controler", lambda *a: None)
 
     class FauxKD:
         def ensure_path(self, parent, parts):
@@ -951,6 +953,79 @@ def test_modification_de_revision(worker, monkeypatch):
     monkeypatch.setattr(worker.revision, "retoucher", rate)
     worker.traiter_revision(None, rev)
     assert vu["fin"][1] is None and "réponse trop courte" in vu["fin"][2]
+
+
+def _revision_simple(worker, monkeypatch, vu):
+    from claunote import db
+    monkeypatch.setattr(db, "pieces_jointes", lambda r=None, c=None, contenu=False: [])
+    monkeypatch.setattr(db, "Condenses", dict)
+    monkeypatch.setattr(db, "documents", lambda ids: [{"id": 3, "titre": "TP VLAN", "nom": "x.pdf"}])
+    monkeypatch.setattr(db, "maj_revision", lambda rev_id, statut, **k: vu.update(statut=statut, **k))
+    monkeypatch.setattr(worker, "copier_pdf", lambda kd, rev: None)
+    monkeypatch.setattr(db, "revision", lambda i: {"id": i})
+    monkeypatch.setattr(worker.notifications, "revision_prete", lambda rev: None)
+    monkeypatch.setattr(worker.coherence, "preparer", lambda rev: ("\n\nREPERES", [{"id": 1}]))
+
+
+def test_fiche_hors_sujet_refaite_une_fois(worker, monkeypatch):
+    """Contrôle hors sujet : une nouvelle version recentrée par Opus, avec les écarts de la première."""
+    vu, versions, controles = {}, [], [{"ok": False, "ecarts": ["partie OSPF"], "anciens": [1]},
+                                       {"ok": True, "ecarts": [], "anciens": [1]}]
+    _revision_simple(worker, monkeypatch, vu)
+    monkeypatch.setattr(worker.revision, "generer", lambda *a, **k: versions.append(k) or
+                        (f"# Fiche {len(versions)}", {"D1": 3}, []))
+    monkeypatch.setattr(worker.coherence, "controler", lambda rev, contenu, docs, anciens: controles.pop(0))
+    worker.traiter_revision(None, {"id": 4, "genre": "fiche", "sujet": "VLAN", "doc_ids": [3], "date_eval": None})
+    assert [k["reperes_perimetre"] for k in versions] == ["\n\nREPERES"] * 2
+    assert versions[0]["recentrer"] == "" and "partie OSPF" in versions[1]["recentrer"]
+    assert vu["contenu"] == "# Fiche 2" and vu["controle"]["ok"] and vu["controle"]["recentre"]
+    assert vu["controle"]["ecarts_avant"] == ["partie OSPF"]
+
+
+def test_fiche_dans_le_sujet_pas_refaite(worker, monkeypatch):
+    vu, versions = {}, []
+    _revision_simple(worker, monkeypatch, vu)
+    monkeypatch.setattr(worker.revision, "generer", lambda *a, **k: versions.append(k) or ("# Fiche", {}, []))
+    monkeypatch.setattr(worker.coherence, "controler", lambda *a: {"ok": True, "ecarts": [], "anciens": []})
+    worker.traiter_revision(None, {"id": 4, "genre": "fiche", "sujet": "VLAN", "doc_ids": [3], "date_eval": None})
+    assert len(versions) == 1 and vu["statut"] == "pret"
+
+
+def test_recentrage_rate_garde_la_premiere_version(worker, monkeypatch):
+    vu, versions = {}, []
+    _revision_simple(worker, monkeypatch, vu)
+
+    def generer(*a, **k):
+        versions.append(k)
+        if k["recentrer"]:
+            raise worker.agent.OpusEnPause("limite", None)
+        return "# Fiche 1", {}, []
+    monkeypatch.setattr(worker.revision, "generer", generer)
+    monkeypatch.setattr(worker.coherence, "controler", lambda *a: {"ok": False, "ecarts": ["OSPF"], "anciens": []})
+    worker.traiter_revision(None, {"id": 4, "genre": "fiche", "sujet": "VLAN", "doc_ids": [3], "date_eval": None})
+    assert vu["contenu"] == "# Fiche 1" and vu["controle"]["ok"] is False  # écarts affichés sur la fiche
+
+
+def test_les_fiches_attendent_opus(worker, monkeypatch):
+    """Opus 5.5 en limite : les créations restent en attente (pas de Sonnet), sans mettre Claude en pause."""
+    from claunote import modeles
+    modeles._indisponibles.clear()
+    monkeypatch.delenv("CLAUDE_REPLI_CREATION", raising=False)
+    faites = []
+    monkeypatch.setattr(worker.db, "campagnes_en_attente", lambda: [])
+    monkeypatch.setattr(worker.db, "revisions_en_attente", lambda: [
+        {"id": 5, "genre": "fiche", "sujet": "VLAN"}, {"id": 6, "genre": "quiz", "sujet": "OSPF"}])
+
+    def traiter(kd, rev):
+        faites.append(rev["id"])
+        raise worker.agent.OpusEnPause("Opus weekly limit", None)
+    monkeypatch.setattr(worker, "traiter_revision", traiter)
+    try:
+        worker.revisions_en_attente(FauxKD({}))
+        assert faites == [5]   # la 2e n'essaie même pas : Opus est en pause
+        assert modeles.attente_opus() is not None and worker.CLAUDE.disponible()
+    finally:
+        modeles._indisponibles.clear()
 
 
 # --- Comptes : le travail de chacun, avec ou sans le forfait Claude de l'admin ------------------------

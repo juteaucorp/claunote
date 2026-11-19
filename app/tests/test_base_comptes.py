@@ -120,3 +120,23 @@ def test_fichiers_sur_la_vm_numeros_stables(base):
     assert db.fichier_local_chemin(autre) == "Inbox/2024-bis/x.pdf"
     db.copie_kdrive_faite("BTS1/x.pdf", 3, 1.5, 9)
     assert db.copies_kdrive()["BTS1/x.pdf"]["kdrive_id"] == 9
+
+
+def test_anciens_supports_de_la_matiere_par_compte(base):
+    """Repères d'une nouvelle fiche : supports prêts de la même matière, du même compte, jamais elle-même."""
+    invite = db.creer_compte("camille", "h", "invite", ["bibliotheque"])
+    with db.connect() as c:
+        for genre, sujet, matiere, statut in [("fiche", "VLAN", "Réseaux", "pret"), ("quiz", "VLAN", "Réseaux", "pret"),
+                                              ("fiche", "OSPF", "Réseaux", "en_attente"),
+                                              ("fiche", "Suites", "Maths", "pret")]:
+            c.execute("INSERT INTO revisions (genre, sujet, doc_ids, matiere, statut, contenu) "
+                      "VALUES (%s, %s, '{}', %s, %s, '# x')", (genre, sujet, matiere, statut))
+    with db.pour_compte(1):
+        lignes = db.supports_de_la_matiere("Réseaux", None)
+        assert [r["sujet"] for r in lignes] == ["VLAN"]
+        assert db.supports_de_la_matiere("Réseaux", lignes[0]["id"]) == []
+        assert {r["sujet"] for r in db.supports_de_la_matiere(None, None)} == {"VLAN", "Suites"}
+        db.maj_revision(lignes[0]["id"], "pret", contenu="# x", controle={"ok": True, "ecarts": []})
+        assert db.revision(lignes[0]["id"])["controle"] == {"ok": True, "ecarts": []}
+    with db.pour_compte(invite):
+        assert db.supports_de_la_matiere("Réseaux", None) == []   # les fiches de l'admin restent à l'admin
