@@ -56,6 +56,7 @@ class Base:
         monkeypatch.setattr(db, "notifier", lambda *a, **k: self.notifs.append(a) or True)
         monkeypatch.setattr(db, "etat_valeur", lambda k: None)
         monkeypatch.setattr(db, "alertes_recentes", lambda jours=7: ["fuite-france-travail"])
+        monkeypatch.setattr(db, "evenements_recents", lambda jours=3, limite=80: ["fuite-france-travail", "proxmox-9-1"])
         monkeypatch.setattr(ac.local, "reglages", lambda: {"mode": "local_d_abord"})
 
 
@@ -82,11 +83,23 @@ def test_tri_par_l_ia(monkeypatch):
     monkeypatch.setattr(agent, "demander", demander)
     assert ac.trier(lambda: True) == 2
     assert vus["tache"] == "actualites" and vus["ids"] == [1, 2] and "S1 — Cybersécurité : Failles" in vus["prompt"]
-    assert "fuite-france-travail" in vus["prompt"]   # l'IA réutilise l'étiquette d'un événement déjà vu
+    # l'IA réutilise l'étiquette d'une information déjà vue (alertes d'abord, sans doublon)
+    assert "fuite-france-travail, proxmox-9-1" in vus["prompt"]
     assert b.tries == [{"id": 1, "tri": "ia", "sujets": [7], "score": 0.9, "pourquoi": "Faille exploitée : patcher",
-                        "alerte": True, "evenement": "exchange-cve-2026-1"},
+                        "alerte": True, "evenement": "exchange-cve-2026-1", "notion": None},
                        {"id": 2, "tri": "ia", "sujets": [], "score": 0.05, "pourquoi": None,   # hors sujet : jamais d'alerte
-                        "alerte": False, "evenement": None}]
+                        "alerte": False, "evenement": None, "notion": None}]
+
+
+def test_tri_etiquette_et_notion_meme_sans_alerte(monkeypatch):
+    b = Base(SUJETS, [article(1, "Proxmox VE 9.1 est sorti")])
+    b.brancher(monkeypatch)
+    monkeypatch.setattr(agent, "demander", lambda tache, prompt, cwd, entree=None, timeout=0, lire=None, **k: (lire(
+        '[{"id": 1, "sujets": ["S1"], "score": 0.6, "resume": "Nouvelle version", "alerte": false,'
+        ' "evenement": "Proxmox 9.1", "notion": " « virtualisation »."}]'), "haiku"))
+    ac.trier(lambda: True)
+    assert b.tries[0]["evenement"] == "proxmox-9-1" and b.tries[0]["notion"] == "virtualisation"
+    assert b.tries[0]["alerte"] is False
 
 
 def test_tri_sans_claude_attend_puis_mots_cles(monkeypatch):
@@ -98,7 +111,7 @@ def test_tri_sans_claude_attend_puis_mots_cles(monkeypatch):
     ac.trier(lambda: False)
     # le récent attend le retour de Claude ; celui qui attend depuis 4 h passe aux mots-clés
     assert b.tries == [{"id": 2, "tri": "mots_cles", "sujets": [7, 9], "score": None, "pourquoi": None,
-                        "alerte": False, "evenement": None}]
+                        "alerte": False, "evenement": None, "notion": None}]
 
 
 def test_tri_reponse_illisible_repli_mots_cles(monkeypatch):
@@ -250,3 +263,159 @@ def test_passage_en_sisr_garde_les_sujets_modifies(monkeypatch):
     assert ajoutes == ["Cybersécurité", "Réseaux", "Systèmes et virtualisation"]
     ac.initialiser()        # une seule fois
     assert retires == [2]
+
+
+# --- Plus intéressant : images, même info regroupée, point du jour, lien avec les cours ----------------
+
+RSS_IMAGES = """<?xml version="1.0"?><rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>T</title>
+<item><title>A</title><link>https://ex.fr/a</link><media:thumbnail url="https://cdn.ex.fr/a.jpg"/></item>
+<item><title>B</title><link>https://ex.fr/b</link><enclosure url="https://cdn.ex.fr/b.png" type="image/png" length="1"/></item>
+<item><title>C</title><link>https://ex.fr/dossier/c</link>
+  <description>&lt;img src="https://feeds.feedburner.com/~r/pixel.gif"&gt;&lt;img src="../img/c.webp"&gt;Texte</description></item>
+<item><title>D</title><link>https://ex.fr/d</link><enclosure url="https://cdn.ex.fr/d.mp3" type="audio/mpeg" length="1"/></item>
+</channel></rss>"""
+
+
+def test_image_des_articles():
+    _, items = ac.lire_flux(RSS_IMAGES.encode())
+    assert [i["image"] for i in items] == ["https://cdn.ex.fr/a.jpg", "https://cdn.ex.fr/b.png",
+                                          "https://ex.fr/img/c.webp", ""]   # pixel espion et son : ignorés
+
+
+def carte(i, **k):
+    return {**article(i, f"Article {i}", tri="ia", score=0.6, source=f"Site{i}"), "lu": False, "noms_sujets": [],
+            "image": "", "notion": None, "evenement": None, "alerte": False, **k}
+
+
+def test_regrouper_la_meme_information():
+    cartes = ac.regrouper([carte(1, evenement="fuite-x", noms_sujets=["Cybersécurité"]),
+                           carte(2), carte(3, evenement="fuite-x", alerte=True, score=0.95, lu=True,
+                                           image="https://cdn/x.jpg", notion="RGPD")])
+    assert [c["id"] for c in cartes] == [1, 2]
+    tete = cartes[0]
+    assert [x["source"] for x in tete["aussi"]] == ["Site3"]
+    assert tete["alerte"] and tete["score"] == 0.95 and not tete["lu"]       # une source pas lue : carte non lue
+    assert tete["image_id"] == 3 and tete["notion"] == "RGPD"                 # l'image d'un autre site sert
+
+
+class Point:
+    def __init__(self, monkeypatch, candidats, etat=None):
+        self.etat = dict(etat or {})
+        self.appels = []
+        monkeypatch.setattr(db, "etat_valeur", self.etat.get)
+        monkeypatch.setattr(db, "etat_ecrire", lambda k, v: self.etat.update({k: v}))
+        monkeypatch.setattr(db, "articles_pour_point", lambda h, s, n: candidats)
+        monkeypatch.setattr(ac.local, "reglages", lambda: {"mode": "local_d_abord"})
+
+        def demander(tache, prompt, cwd, entree=None, timeout=0, lire=None, **k):
+            self.appels.append((tache, [json.loads(l)["id"] for l in entree.splitlines()]))
+            return lire('{"points": [{"texte": "Fuite chez X : 2 M de comptes.", "ids": [1, 3, 99]},'
+                        ' {"texte": "Sans source", "ids": [42]}], "a_retenir": "Révise le RGPD."}'), "opus"
+        monkeypatch.setattr(agent, "demander", demander)
+
+
+def test_point_du_jour(monkeypatch):
+    c = [carte(1, alerte=True), carte(3)]
+    p = Point(monkeypatch, c)
+    assert ac.faire_point(lambda: True, 10_000)
+    assert p.appels == [("actualites_point", [1, 3])]
+    point = ac.point()
+    assert point["points"] == [{"texte": "Fuite chez X : 2 M de comptes.", "ids": [1, 3]}]   # ids inventés retirés
+    assert point["a_retenir"] == "Révise le RGPD." and point["ids"] == [1, 3] and point["modele"] == "opus"
+    assert not ac.faire_point(lambda: True, 10_060)      # rien de neuf : pas de nouvel appel
+    c.append(carte(5))
+    assert not ac.faire_point(lambda: True, 10_060)      # du neuf, mais le dernier point date d'une minute
+    assert ac.faire_point(lambda: True, 10_000 + ac.POINT_TOUTES)
+    c.append(carte(6, alerte=True))
+    assert ac.faire_point(lambda: True, 10_000 + ac.POINT_TOUTES + 60)   # une alerte : tout de suite
+    assert len(p.appels) == 3
+
+
+def test_point_du_jour_sans_claude_ni_assez_d_articles(monkeypatch):
+    p = Point(monkeypatch, [carte(1), carte(2)])
+    assert not ac.faire_point(lambda: False, 10_000) and p.appels == []
+    p = Point(monkeypatch, [carte(1)])
+    assert not ac.faire_point(lambda: True, 10_000) and p.appels == []
+
+
+def test_point_du_jour_illisible_garde_l_ancien(monkeypatch):
+    ancien = json.dumps({"le": 1, "ids": [1], "points": [{"texte": "Hier", "ids": [1]}], "a_retenir": ""})
+    p = Point(monkeypatch, [carte(1), carte(2)], {"actualites_point": ancien})
+    monkeypatch.setattr(agent, "demander", lambda *a, **k: (k["lire"]("pas de JSON"), "opus"))
+    assert not ac.faire_point(lambda: True, 50_000)
+    assert ac.point()["points"][0]["texte"] == "Hier" and ac.point()["le"] == 50_000   # pas de nouvel essai à chaque tour
+
+
+def _png(cote=100):
+    from io import BytesIO
+
+    from PIL import Image
+    b = BytesIO()
+    Image.new("RGB", (cote * 2, cote), "orange").save(b, "PNG")
+    return b.getvalue()
+
+
+def test_vignette_reduite_et_protegee():
+    import httpx
+
+    def repondre(r):
+        if r.url.host == "redirige.fr":
+            return httpx.Response(302, headers={"location": "http://192.168.1.1/admin.png"})
+        if r.url.path == "/svg":
+            return httpx.Response(200, content=b"<svg onload='x()'/>", headers={"content-type": "image/svg+xml"})
+        if r.url.path == "/html":
+            return httpx.Response(200, content=b"<html>", headers={"content-type": "image/png"})
+        return httpx.Response(200, content=_png(600), headers={"content-type": "image/png"})
+    c = httpx.Client(transport=httpx.MockTransport(repondre))
+    public = lambda url: not url.startswith("http://192.168.")   # noqa: E731
+    from io import BytesIO
+
+    from PIL import Image
+    jpeg = ac.telecharger_image("https://cdn.ex.fr/a.png", c, public)
+    with Image.open(BytesIO(jpeg)) as im:
+        assert im.format == "JPEG" and max(im.size) == ac.VIGNETTE_COTE
+    assert ac.telecharger_image("https://redirige.fr/x.png", c, public) is None   # jamais le réseau local
+    assert ac.telecharger_image("https://cdn.ex.fr/svg", c, public) is None
+    assert ac.telecharger_image("https://cdn.ex.fr/html", c, public) is None      # pas vraiment une image
+    assert ac.telecharger_image("javascript:alert(1)", c, public) is None
+
+
+def test_hote_public():
+    assert not ac._hote_public("http://127.0.0.1/x.png")
+    assert not ac._hote_public("http://10.0.0.5/x.png")
+    assert not ac._hote_public("http://[::1]/x.png")
+    assert not ac._hote_public("http://localhost/x.png")
+
+
+def test_page_actualites_essentiel_regroupement_et_cours(client, monkeypatch):
+    import time
+    lignes = [{**carte(1, sujets=[7], score=0.9, pourquoi="2 M de comptes", evenement="fuite-x", notion="RGPD",
+                       image="https://cdn/x.jpg", noms_sujets=["Cybersécurité"]), "favori": False, "total": 3},
+              {**carte(2, evenement="fuite-x", source="Numerama"), "favori": False, "total": 3},
+              {**carte(4, notion="VLAN", pourquoi="Nouveau switch"), "favori": False, "total": 3}]
+    monkeypatch.setattr(db, "articles", lambda *x, **k: (lignes, 3))
+    monkeypatch.setattr(db, "sujets", lambda: [{**SUJETS[0], "n": 1, "recherche_id": None, "recherche_erreur": None}])
+    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed",
+                                                     "releve_le": MAINTENANT}])
+    monkeypatch.setattr(db, "recherche", lambda q, limite=30: [{"id": 55, "titre": "TP VLAN", "nom": "tp.pdf"}]
+                        if q == "VLAN" else [])
+    monkeypatch.setattr(db, "articles_par_ids", lambda ids: [{"id": 1, "titre": "Fuite", "lien": "https://ex.fr/1",
+                                                              "lu": False, "alerte": True, "source": "Ex"}])
+    client.etat["actualites_point"] = json.dumps({"le": time.time(), "ids": [1], "a_retenir": "Révise le RGPD.",
+                                                  "points": [{"texte": "Fuite chez X.", "ids": [1]}]})
+    r = client.get("/actualites")
+    assert r.status_code == 200
+    assert "L'essentiel" in r.text and "Fuite chez X." in r.text and "Révise le RGPD." in r.text
+    assert "Aussi chez" in r.text and ">Numerama</a>" in r.text and r.text.count('id="a2"') == 0   # regroupé
+    assert 'href="/doc/55"' in r.text and "VLAN · ton cours" in r.text     # lié à ton cours
+    assert 'src="/actualites/1/image"' in r.text
+    # Pas de point sur les autres vues
+    assert "L'essentiel" not in client.get("/actualites?vue=tout").text
+
+
+def test_image_d_un_article(client, monkeypatch):
+    monkeypatch.setattr(db, "article", lambda i: {"id": i, "image": "https://cdn/x.jpg"} if i == 1 else None)
+    monkeypatch.setattr(ac, "vignette", lambda url: b"\xff\xd8jpeg")
+    r = client.get("/actualites/1/image")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content == b"\xff\xd8jpeg"
+    assert client.get("/actualites/2/image").status_code == 404

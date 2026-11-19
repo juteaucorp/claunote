@@ -2825,7 +2825,19 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
         vue = "tout"
     page = max(page, 1)
     liste, total = db.articles(vue, sujet, flux, PAR_PAGE_ACTU, (page - 1) * PAR_PAGE_ACTU)
+    liste = actualites.regrouper(liste)
+    cours = actualites.cours_lies([a.get("notion") for a in liste])
     aujourdhui = dt.datetime.now(pronote.PARIS).date()
+    # « L'essentiel » : en haut de « Pour toi », première page seulement
+    essentiel = None
+    if vue == "pour_toi" and page == 1 and not sujet and not flux:
+        p = actualites.point()
+        if p and p.get("points") and time.time() - float(p.get("le") or 0) < 36 * 3600:
+            sources = {a["id"]: a for a in db.articles_par_ids(sorted({i for x in p["points"] for i in x["ids"]}))}
+            essentiel = {**p, "le_txt": dt.datetime.fromtimestamp(float(p["le"]), pronote.PARIS).strftime("%H:%M"),
+                         "points": [{**x, "articles": [sources[i] for i in x["ids"] if i in sources]}
+                                    for x in p["points"]]}
+            essentiel["points"] = [x for x in essentiel["points"] if x["articles"]]
     groupes: list[tuple[str, list]] = []
     for a in liste:
         jour = _jour_actu(a["publie_le"], aujourdhui)
@@ -2845,7 +2857,17 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
         "sujet_nom": next((s["nom"] for s in sujets if s["id"] == sujet), None),
         "flux_nom": next((f["titre"] or f["url"] for f in flux_l if f["id"] == flux), None),
         "en_attente": sum(1 for f in flux_l if f["releve_le"] is None),
-        "reglages": actualites.reglages()})
+        "reglages": actualites.reglages(), "essentiel": essentiel, "cours": cours})
+
+
+@app.get("/actualites/{article_id}/image")
+def actualite_image(article_id: int):
+    """L'illustration de l'article, réduite et passée par le site (la page ne charge rien d'un site tiers)."""
+    a = db.article(article_id)
+    image = actualites.vignette(a["image"]) if a and a.get("image") else None
+    if not image:
+        return Response(status_code=404, headers={"Cache-Control": "private, max-age=86400"})
+    return Response(image, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=604800"})
 
 
 @app.post("/actualites/{article_id}/favori", response_class=HTMLResponse)
