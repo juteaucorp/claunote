@@ -16,6 +16,7 @@ class FauxComptes:
                             "nb_documents": 0, "nb_revisions": 0}}
         self.invitations = {}
         self.depots = {}
+        self.matieres_publiques = set()
 
     def installer(self, monkeypatch):
         m = monkeypatch.setattr
@@ -41,6 +42,11 @@ class FauxComptes:
         m(db, "compte_du_fichier", lambda kdrive_id: self.depots.get(kdrive_id, 1))
         m(db, "noter_depot", lambda kdrive_id, compte_id: self.depots.update({kdrive_id: compte_id}))
         m(db, "abonnements_de", lambda compte_id: db.abonnements())
+        # Public ou privé : le partage ne s'affiche qu'à plusieurs comptes
+        m(db, "plusieurs_comptes", lambda: sum(1 for k in self.comptes.values() if k["actif"]) > 1)
+        m(db, "matieres_publiques", lambda: set(self.matieres_publiques))
+        m(db, "rendre_matiere", lambda n, mat, pub: (self.matieres_publiques.add if pub
+                                                     else self.matieres_publiques.discard)((n, mat)))
 
     def creer_compte(self, identifiant, hash_, role, droits, nom=None, cree_par=None):
         if any(k["identifiant"] == identifiant for k in self.comptes.values()):
