@@ -11,7 +11,7 @@ Tu scannes tes cahiers et tes TP, ou tu les déposes depuis ton téléphone. Cla
 matière et type, puis te prépare des fiches, des quiz, des flashcards et des épreuves blanches qui citent tes
 propres cours. Il récupère aussi tes évaluations sur Pronote et te dit quoi réviser aujourd'hui.
 
-<img src="docs/captures/apercu-telephone.png" alt="Accueil « Aujourd'hui », fiche de révision et chat « Une question » sur téléphone" width="820">
+<img src="docs/captures/apercu-telephone.png" alt="Fiche de révision et chat « Une question » sur téléphone" width="820">
 
 </div>
 
@@ -45,6 +45,7 @@ propres cours. Il récupère aussi tes évaluations sur Pronote et te dit quoi r
 | 📈 **Progression** | Série de jours de travail, flashcards par jour, mémoire estimée par FSRS, réussite par matière (cartes et quiz), moyennes et tendance des notes Pronote. |
 | 💬 **Une question** | Un chat (ou la barre de recherche de l'accueil) qui lit **tous tes documents** et ton agenda Pronote. Les passages sont relus et triés par un petit modèle local (**FlashRank**) avant la réponse. Le modèle local répond, Claude vérifie et complète quand il doute. Un mode instantané **sans IA** montre les passages qui en parlent. **Photo d'une formule** → LaTeX dans ta question (**pix2tex**). |
 | 🗓️ **Campagnes** | « Semaine de BTS blanc » : plusieurs matières et plusieurs supports d'un coup, plus un programme jour par jour, à cocher, et un livret PDF. |
+| 🗄️ **Archives** | Le ménage **proposé au fil du temps**, jamais fait sans toi : contrôles passés, flashcards plus révisées depuis un mois, fiches plus ouvertes depuis deux mois, campagnes finies. « Archiver » les sort de l'historique et des cartes à revoir (plus de rappels), « Garder » ne les repropose pas avant deux mois, « Restaurer » remet tout comme avant. Rappel le dimanche s'il y a assez à ranger. |
 | 🎓 **Pronote** | Évaluations, devoirs, notes et documents des profs, synchronisés toutes les 3 h. Une fiche synthèse est préparée toute seule avant chaque contrôle. |
 | 🖥️ **Local d'abord** | Le travail interne (lecture, classement, noms de dossiers, matières, chat) est fait **sur le processeur du serveur** : OCR Tesseract et [Ollama](https://ollama.com). Quand le modèle local doute ou n'arrive pas à lire (écriture manuscrite), il demande à Claude, qui vérifie et corrige. Une analyse sûre sur 10 est contrôlée quand même, pour mesurer sa fiabilité. Si la VM sature ou si la file s'allonge, le surplus part chez Claude. Des pics à 100 %, jamais une VM à fond en permanence : au-delà de 60 % en moyenne sur 15 min, le travail de fond ralentit. |
 | ⏯️ **Tu gardes la main** | *Activité* : mise en pause, arrêt immédiat des analyses en cours, actions de masse sur la file, choix de qui fait le travail. *Ranger* : documents à vérifier, actions de masse, matières en double (« Maths » / « Mathématiques »). |
@@ -95,9 +96,9 @@ flowchart TD
   <img src="docs/captures/reviser-telephone.png" alt="Campagne, quiz, agenda Pronote et fiche en thème sombre" width="900">
 </p>
 
-| Aujourd'hui | Réviser |
+| Réglages | Réviser |
 | --- | --- |
-| <img src="docs/captures/accueil.jpg" alt="Page Aujourd'hui sur ordinateur"> | <img src="docs/captures/reviser.jpg" alt="Page Réviser"> |
+| <img src="docs/captures/reglages.jpg" alt="Page Réglages : Moi et Administration"> | <img src="docs/captures/reviser.jpg" alt="Page Réviser"> |
 | **Activité** : pause, arrêt, qui fait le travail, fiabilité du local | **Ranger → Matières** |
 | <img src="docs/captures/analyses.jpg" alt="Page Analyses"> | <img src="docs/captures/matieres.jpg" alt="Page Matières en double"> |
 
@@ -360,6 +361,7 @@ Réglages → Mise à jour.
 | `app/claunote/ressources.py`, `index.py` | Saturation de la VM ; passages et recherche par le sens (pgvector) |
 | `app/claunote/importation.py`, `decoupage.py`, `sensible.py`, `ocr.py` | Tri d'un import, découpage des gros scans, garde-fou, lecture locale |
 | `app/claunote/revision.py`, `question.py`, `pdf.py`, `anki.py` | Supports de révision, flashcards FSRS, chat, PDF, export Anki |
+| `app/claunote/archivage.py` | Propositions d'archivage (révisions, flashcards, campagnes délaissées) |
 | `app/claunote/progression.py`, `carte_mentale.py`, `formules.py` | Page Progression, cartes mentales (markmap), formules LaTeX (KaTeX, texte des PDF) |
 | `app/claunote/lecture.py`, `lecture/` | Docling (Word, PowerPoint, Excel, PDF), service local pix2tex et FlashRank |
 | `app/claunote/cles.py` | Connexion par Face ID / Touch ID (clés d'accès WebAuthn) |
@@ -384,6 +386,7 @@ Réglages → Mise à jour.
 - [x] Appli iPhone (HTTPS local, style Liquid Glass), notifications push
 - [x] Imports de dossiers entiers, garde-fou des documents personnels, découpage des très gros scans
 - [x] Campagnes multi-matières, épreuves blanches, PDF à partager, fichiers joints au contexte
+- [x] Archivage proposé des révisions, flashcards et campagnes délaissées
 - [x] « Une question » : chat avec l'IA ou sans IA
 - [x] Actualités : flux RSS, sujets suivis triés par l'IA, notifications
 - [x] Matières en double : détection, fusion, prévention

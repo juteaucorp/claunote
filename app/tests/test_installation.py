@@ -58,7 +58,8 @@ def test_jeton_du_tunnel_dans_un_fichier_pour_cloudflared(base_reglages):
 
 def test_installation_existante_jamais_d_assistant(client):
     assert client.etat["installation"] == "faite"   # 8 documents : rien d'imposé
-    assert client.get("/", follow_redirects=False).status_code == 200
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] != "/installation"
 
 
 def test_installation_neuve_ouvre_l_assistant(client, base_reglages, monkeypatch):

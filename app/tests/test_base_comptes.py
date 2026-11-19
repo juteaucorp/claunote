@@ -135,6 +135,11 @@ def test_formations_et_regles_par_compte(base):
         assert db.matieres_regles() == {("BTS1", "Maths"): "Mathématiques pour l'informatique",
                                         ("BTS1", "Mathématiques"): "Mathématiques pour l'informatique"}
         assert db.supprimer_regle("BTS1", "Maths") == 1
+        db.rendre_matiere("BTS1", "Mathématiques pour l'informatique", True)
+        d2 = db.creer(101, "b.pdf")
+        db.maj(d2, statut="classe", niveau="BTS1", matiere="Maths info", type="Cours")
+        db.fusionner_matieres("BTS1", ["Mathématiques pour l'informatique"], "Maths info")   # reste publique
+        assert db.matieres_publiques() == {("BTS1", "Maths info")}
     with db.pour_compte(invite):
         assert db.formations() == [] and db.matieres_regles() == {}
         db.definir_formation("BTS1", "BTS SIO option SLAM")
@@ -149,3 +154,62 @@ def test_formations_et_regles_par_compte(base):
         assert db.formations() == []
     with db.pour_compte(invite):
         assert len(db.formations()) == 1
+
+
+def test_public_ou_prive(base):
+    """Privé par défaut ; public : lisible par les autres sur les pages « Partagés » seulement, jamais modifiable."""
+    camille = db.creer_compte("camille", "h", "invite", ["bibliotheque"])
+    dominique = db.creer_compte("dominique", "h", "invite", ["bibliotheque"])
+    with db.pour_compte(camille):
+        vlan = db.creer(200, "vlan.pdf")
+        ip = db.creer(201, "ip.pdf")
+        prive = db.creer(202, "prive.pdf")
+        with db.connect() as c:
+            c.execute("UPDATE documents SET statut = 'classe', niveau = 'BTS1', matiere = 'Réseau', type = 'cours'")
+            fiche = c.execute("INSERT INTO revisions (genre, sujet, doc_ids, statut, contenu) VALUES "
+                              "('cartes', 'VLAN', %s, 'pret', '') RETURNING id", ([vlan, prive],)).fetchone()["id"]
+            c.execute("INSERT INTO cartes (revision_id, recto, verso) VALUES (%s, 'VLAN ?', 'réseau virtuel')", (fiche,))
+            k = c.execute("INSERT INTO campagnes (titre, debut, fin) VALUES ('BTS blanc', current_date, current_date) "
+                          "RETURNING id").fetchone()["id"]
+            dans_k = c.execute("INSERT INTO revisions (genre, sujet, doc_ids, statut, campagne_id) VALUES "
+                               "('fiche', 'IP', %s, 'pret', %s) RETURNING id", ([ip], k)).fetchone()["id"]
+    with db.pour_compte(dominique):                          # tout est privé au départ
+        assert db.partages_documents() == [] and db.partages_revisions() == [] and db.partages_campagnes() == []
+        assert db.document_partage(vlan) is None
+        assert db.changer_visibilite("documents", vlan, True) is False   # pas chez un autre
+    with db.pour_compte(camille):
+        assert db.changer_visibilite("revisions", fiche, True)
+        db.rendre_matiere("BTS1", "Réseau", True)              # toute la matière…
+        assert db.changer_visibilite("documents", prive, False)  # … sauf ce cours
+        assert db.matieres_publiques() == {("BTS1", "Réseau")}
+    with db.pour_compte(dominique):
+        assert sorted(d["nom"] for d in db.partages_documents()) == ["ip.pdf", "vlan.pdf"]
+        assert db.document_partage(prive) is None
+        assert [r["id"] for r in db.partages_revisions()] == [fiche]
+        assert [c["recto"] for c in db.cartes_partagees(fiche)] == ["VLAN ?"]
+        assert [d["nom"] for d in db.documents_partages([vlan, prive])] == ["vlan.pdf"]
+        assert _documents() == []                              # ses autres pages ne changent pas
+        with db.partages(), db.connect() as c:                 # lecture seule, même sur la page « Partagés »
+            assert c.execute("UPDATE documents SET nom = 'x' WHERE id = %s RETURNING id", (vlan,)).fetchone() is None
+            assert c.execute("DELETE FROM revisions WHERE id = %s RETURNING id", (fiche,)).fetchone() is None
+            assert c.execute("UPDATE cartes SET recto = 'x' RETURNING id").fetchone() is None
+        assert db.campagne_partagee(k) == (None, [])
+    with db.pour_compte(camille):
+        db.changer_visibilite("campagnes", k, True)
+    with db.pour_compte(dominique):                          # une campagne publique montre ses révisions
+        campagne, revs = db.campagne_partagee(k)
+        assert campagne["auteur"] == "camille" and [r["id"] for r in revs] == [dans_k]
+        assert {r["id"] for r in db.partages_revisions()} == {fiche, dans_k}
+    # L'admin : « Tout voir » montre tout, privé compris, comme avant ; sans, ses pages restent les siennes
+    with db.pour_compte(1, tout_voir=True):
+        assert _documents() == ["ip.pdf", "prive.pdf", "vlan.pdf"]
+        assert db.document_partage(prive) is None              # « Partagés » : la même chose que pour les autres
+    with db.pour_compte(1):
+        assert _documents() == []
+        db.rendre_matiere("BTS1", "Réseau", False)             # sans effet sur la matière de camille
+    with db.pour_compte(camille):
+        assert db.matieres_publiques() == {("BTS1", "Réseau")}
+        db.rendre_matiere("BTS1", "Réseau", False)
+        assert db.changer_visibilite("documents", vlan, None)
+    with db.pour_compte(dominique):
+        assert db.partages_documents() == []

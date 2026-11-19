@@ -68,10 +68,11 @@
   {% endif %}
 </div>
 <form method="post" action="/analyses/reglages" class="carte reglages">
+  <details class="aide-repliee"><summary>Comment ça marche ?</summary>
   <p class="doux">Le <strong>modèle local</strong> tourne sur la VM (processeur seul) : texte des fichiers numériques,
     <strong>OCR Tesseract</strong> pour les scans, <strong>Ollama</strong> ({{ modele_local }}) pour comprendre et classer.
     Quand il doute ou n'arrive pas à lire (écriture manuscrite), il demande à <strong>Claude</strong>, qui vérifie et
-    corrige ; la même règle sert aux reclassements, aux noms de dossiers, aux matières et au chat.</p>
+    corrige ; la même règle sert aux reclassements, aux noms de dossiers, aux matières et au chat.</p></details>
   <fieldset>
     <legend>Analyses et petites tâches</legend>
     {% if r.eteints %}<p class="doux petit">Modèles locaux éteints : Claude uniquement, quel que soit ce réglage.</p>{% endif %}

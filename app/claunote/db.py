@@ -112,6 +112,13 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS strict BOOLEAN NOT NULL DEFAULT f
 -- Modification demandée par l'élève (« ajoute un exemple sur… ») en attente, et l'historique de celles faites
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS retouche TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS retouches JSONB NOT NULL DEFAULT '[]';
+-- Archivage (archivage.py) : ce qui ne sert plus sort des listes et des flashcards du jour, sans être supprimé.
+-- garder_jusqu_au : « Garder » sur une proposition, pas reproposé avant cette date.
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS ouverte_le TIMESTAMPTZ;       -- dernière ouverture de la page
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS archive_le TIMESTAMPTZ;
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS garder_jusqu_au TIMESTAMPTZ;
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS archive_le TIMESTAMPTZ;
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS garder_jusqu_au TIMESTAMPTZ;
 -- Révisions d'avant l'historique : matière du premier cours utilisé
 UPDATE revisions r SET niveau = d.niveau, matiere = d.matiere FROM documents d
  WHERE r.matiere IS NULL AND d.id = r.doc_ids[1] AND d.matiere IS NOT NULL;
@@ -401,7 +408,10 @@ CREATE TABLE IF NOT EXISTS articles (
 CREATE INDEX IF NOT EXISTS articles_publie ON articles (publie_le DESC);
 CREATE INDEX IF NOT EXISTS articles_attente ON articles (id) WHERE tri = 'attente' OR NOT annonce;
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS alerte BOOLEAN NOT NULL DEFAULT false;  -- rare et grave (IA)
-ALTER TABLE articles ADD COLUMN IF NOT EXISTS evenement TEXT;  -- même événement relayé par plusieurs sites
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS evenement TEXT;  -- même information relayée par plusieurs sites
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS image TEXT NOT NULL DEFAULT '';  -- illustration donnée par le flux
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS notion TEXT;     -- notion du BTS qu'il illustre (IA) : lien vers le cours
+CREATE INDEX IF NOT EXISTS articles_evenement ON articles (evenement, publie_le DESC) WHERE evenement IS NOT NULL;
 -- Journal de sécurité (securite.py) : connexions, appareils, refus, alertes ; gardé 180 jours
 CREATE TABLE IF NOT EXISTS securite (
     id           SERIAL PRIMARY KEY,
@@ -483,6 +493,13 @@ CREATE TABLE IF NOT EXISTS matieres_regles (
     le        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (compte_id, niveau, source)
 );
+-- Matières qu'un compte rend publiques (niveau + matière) : leurs cours le sont, sauf choix contraire sur un cours
+CREATE TABLE IF NOT EXISTS matieres_publiques (
+    compte_id  INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
+    niveau     TEXT NOT NULL,
+    matiere    TEXT NOT NULL,
+    PRIMARY KEY (compte_id, niveau, matiere)
+);
 CREATE OR REPLACE FUNCTION claunote_compte() RETURNS INT LANGUAGE sql STABLE AS
 $$ SELECT NULLIF(current_setting('claunote.compte', true), '')::int $$;
 CREATE OR REPLACE FUNCTION claunote_tout() RETURNS BOOLEAN LANGUAGE sql STABLE AS
@@ -532,7 +549,7 @@ BEGIN
     FOREACH t IN ARRAY ARRAY['documents', 'passages', 'revisions', 'campagnes', 'cartes', 'revues_cartes',
                              'conversations', 'messages', 'pieces_jointes', 'pronote_evenements', 'pronote_notes',
                              'pronote_documents', 'cles_acces', 'sensibles', 'decoupages', 'formations',
-                             'matieres_regles'] LOOP
+                             'matieres_regles', 'matieres_publiques'] LOOP
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
                        AND table_name = t AND column_name = 'compte_id') THEN
             EXECUTE format('ALTER TABLE %I ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE', t);
@@ -554,6 +571,36 @@ BEGIN
         END IF;
     END LOOP;
 END $$;
+-- Public ou privé (visibilite.py) : chacun choisit pour ses cours, matières, révisions et campagnes.
+-- Privé par défaut. Un élément public ne se lit par les autres comptes que sur les pages « Partagés »
+-- (claunote.partages = '1'), en lecture seule : les autres pages, et « Tout voir » de l'admin, ne changent pas.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS public BOOLEAN;                     -- NULL : comme sa matière
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT false;  -- avec ses révisions
+CREATE OR REPLACE FUNCTION claunote_partages() RETURNS BOOLEAN LANGUAGE sql STABLE AS
+$$ SELECT coalesce(current_setting('claunote.partages', true), '') = '1' $$;
+-- SECURITY DEFINER : lit la matière ou la campagne du propriétaire, quel que soit le compte de la requête
+CREATE OR REPLACE FUNCTION claunote_document_public(proprio INT, choix BOOLEAN, niv TEXT, mat TEXT)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
+$$ SELECT coalesce(choix, EXISTS (SELECT 1 FROM matieres_publiques m
+                                  WHERE m.compte_id = proprio AND m.niveau = niv AND m.matiere = mat)) $$;
+CREATE OR REPLACE FUNCTION claunote_campagne_publique(k INT) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public AS $$ SELECT coalesce((SELECT public FROM campagnes WHERE id = k), false) $$;
+CREATE OR REPLACE FUNCTION claunote_revision_publique(rev INT) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public AS
+$$ SELECT EXISTS (SELECT 1 FROM revisions r LEFT JOIN campagnes k ON k.id = r.campagne_id
+                  WHERE r.id = rev AND r.statut = 'pret' AND (r.public OR coalesce(k.public, false))) $$;
+-- Politiques en plus de par_compte (elles s'additionnent) : lecture seule, jamais écrire chez un autre
+DROP POLICY IF EXISTS partage ON documents;
+CREATE POLICY partage ON documents FOR SELECT
+    USING (claunote_partages() AND statut = 'classe' AND claunote_document_public(compte_id, public, niveau, matiere));
+DROP POLICY IF EXISTS partage ON revisions;
+CREATE POLICY partage ON revisions FOR SELECT
+    USING (claunote_partages() AND statut = 'pret' AND (public OR claunote_campagne_publique(campagne_id)));
+DROP POLICY IF EXISTS partage ON campagnes;
+CREATE POLICY partage ON campagnes FOR SELECT USING (claunote_partages() AND public);
+DROP POLICY IF EXISTS partage ON cartes;
+CREATE POLICY partage ON cartes FOR SELECT USING (claunote_partages() AND claunote_revision_publique(revision_id));
 -- Fichiers sur la VM (stockage local, stockage_local.py) : un identifiant stable par chemin, comme les ID kDrive.
 -- Les numéros commencent à 10^12 : jamais confondus avec un ID kDrive.
 CREATE SEQUENCE IF NOT EXISTS fichiers_locaux_id START 1000000000000;
@@ -610,6 +657,7 @@ def _verifier(conn):
 # Compte pour lequel on travaille : (id, tout voir). None : le worker, le démarrage, les pages sans connexion,
 # qui voient tout. Posé par le site à chaque requête connectée et par le worker le temps d'un travail.
 _compte: contextvars.ContextVar[tuple[int, bool] | None] = contextvars.ContextVar("compte", default=None)
+_partages: contextvars.ContextVar[bool] = contextvars.ContextVar("partages", default=False)
 _etat_connexion: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()   # connexion → contexte déjà posé
 
 
@@ -633,16 +681,28 @@ def compte_actuel() -> int | None:
     return ctx[0] if ctx else None
 
 
+@contextmanager
+def partages():
+    """Le temps du bloc, la base montre en plus, en lecture seule, ce que les autres comptes ont rendu public."""
+    jeton = _partages.set(True)
+    try:
+        yield
+    finally:
+        _partages.reset(jeton)
+
+
 def _appliquer_compte(conn):
     voulu = _compte.get()
+    if voulu is not None:
+        voulu = (*voulu, _partages.get())
     if _etat_connexion.get(conn, ()) == voulu:
         return
     if voulu is None:
-        conn.execute("RESET ROLE; RESET claunote.compte; RESET claunote.tout")
+        conn.execute("RESET ROLE; RESET claunote.compte; RESET claunote.tout; RESET claunote.partages")
     else:
         # Entiers uniquement (jamais de texte venu d'une requête) : pas d'injection possible
         conn.execute(f"SET ROLE claunote_compte; SET claunote.compte = '{int(voulu[0])}'; "
-                     f"SET claunote.tout = '{1 if voulu[1] else 0}'")
+                     f"SET claunote.tout = '{1 if voulu[1] else 0}'; SET claunote.partages = '{1 if voulu[2] else 0}'")
     _etat_connexion[conn] = voulu
 
 
@@ -949,6 +1009,11 @@ def fusionner_matieres(niveau: str, anciennes: list[str], nouvelle: str) -> int:
         c.execute("UPDATE conversations SET matiere = %s WHERE niveau = %s AND matiere = ANY(%s)",
                   (nouvelle, niveau, anciennes))
         _poser_regles(c, niveau, anciennes, nouvelle)
+        # Une matière publique le reste sous son nouveau nom
+        c.execute("""INSERT INTO matieres_publiques (compte_id, niveau, matiere)
+                     SELECT DISTINCT compte_id, niveau, %s FROM matieres_publiques WHERE niveau = %s AND matiere = ANY(%s)
+                     ON CONFLICT DO NOTHING""", (nouvelle, niveau, anciennes))
+        c.execute("DELETE FROM matieres_publiques WHERE niveau = %s AND matiere = ANY(%s)", (niveau, anciennes))
     return n
 
 
@@ -1106,12 +1171,13 @@ def revision(rev_id: int):
 def revisions(limite: int = 30):
     with connect() as c:
         return c.execute("SELECT id, genre, sujet, statut, date_eval, cree_le FROM revisions "
-                         "ORDER BY cree_le DESC LIMIT %s", (limite,)).fetchall()
+                         "WHERE archive_le IS NULL ORDER BY cree_le DESC LIMIT %s", (limite,)).fetchall()
 
 
 def historique(genre: str = "", matiere: str = "", q: str = "", limite: int = 20, decalage: int = 0):
     """Révisions déjà générées, filtrées ; renvoie (lignes, total)."""
-    where = "WHERE (%(genre)s = '' OR r.genre = %(genre)s) AND (%(matiere)s = '' OR r.matiere = %(matiere)s) " \
+    where = "WHERE r.archive_le IS NULL " \
+            "AND (%(genre)s = '' OR r.genre = %(genre)s) AND (%(matiere)s = '' OR r.matiere = %(matiere)s) " \
             "AND (%(q)s = '' OR r.sujet ILIKE '%%' || %(q)s || '%%' OR k.titre ILIKE '%%' || %(q)s || '%%')"
     p = {"genre": genre, "matiere": matiere, "q": q.strip(), "limite": limite, "decalage": decalage}
     with connect() as c:
@@ -1129,7 +1195,7 @@ def compte_revisions() -> dict:
     """Nombre de révisions par genre, et combien sont en préparation."""
     with connect() as c:
         rows = c.execute("SELECT genre, count(*) AS n, count(*) FILTER (WHERE statut = 'en_attente') AS attente "
-                         "FROM revisions GROUP BY genre").fetchall()
+                         "FROM revisions WHERE archive_le IS NULL GROUP BY genre").fetchall()
     return {"genres": {r["genre"]: r["n"] for r in rows}, "attente": sum(r["attente"] for r in rows),
             "total": sum(r["n"] for r in rows)}
 
@@ -1266,14 +1332,14 @@ def campagnes(limite: int = 20):
             """SELECT k.*, count(r.id) AS nb, count(r.id) FILTER (WHERE r.statut = 'pret') AS pretes,
                       count(r.id) FILTER (WHERE r.fait_le IS NOT NULL) AS faites
                FROM campagnes k LEFT JOIN revisions r ON r.campagne_id = k.id
-               GROUP BY k.id ORDER BY k.fin >= current_date DESC, k.debut DESC, k.id DESC LIMIT %s""",
+               WHERE k.archive_le IS NULL GROUP BY k.id ORDER BY k.fin >= current_date DESC, k.debut DESC, k.id DESC LIMIT %s""",
             (limite,)).fetchall()
 
 
 def campagne_du_jour(jour):
     """Campagne en cours (ou qui commence bientôt) dont le programme est prêt."""
     with connect() as c:
-        return c.execute("SELECT * FROM campagnes WHERE statut = 'pret' AND fin >= %s AND debut <= %s + 7 "
+        return c.execute("SELECT * FROM campagnes WHERE statut = 'pret' AND archive_le IS NULL AND fin >= %s AND debut <= %s + 7 "
                          "ORDER BY debut, id LIMIT 1", (jour, jour)).fetchone()
 
 
@@ -1323,6 +1389,8 @@ def supprimer_campagne(campagne_id: int, avec_revisions: bool = True):
 # Carte à revoir : son échéance FSRS est passée (ou dans moins de 20 min, comme Anki), sinon sa date SM-2
 A_REVOIR = ("COALESCE(k.echeance, k.prochaine::timestamp AT TIME ZONE 'Europe/Paris') "
             "<= now() + interval '20 minutes'")
+# Paquet archivé : ses cartes ne reviennent plus (ni dans « à revoir », ni dans les rappels)
+ACTIVE = "k.revision_id IN (SELECT id FROM revisions WHERE archive_le IS NULL)"
 
 def creer_cartes(rev_id: int, cartes: list[dict]):
     with connect() as c, c.transaction():
@@ -1340,14 +1408,15 @@ def paquets():
                       count(k.id) FILTER (WHERE {A_REVOIR}) AS a_revoir,
                       count(k.id) FILTER (WHERE k.vue_le IS NULL) AS nouvelles
                FROM revisions r JOIN cartes k ON k.revision_id = r.id
-               GROUP BY r.id ORDER BY a_revoir DESC, r.cree_le DESC""").fetchall()
+               WHERE r.archive_le IS NULL GROUP BY r.id ORDER BY a_revoir DESC, r.cree_le DESC""").fetchall()
 
 
 def cartes(rev_id: int | None = None):
     with connect() as c:
         return c.execute(
             """SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
-               WHERE %s::int IS NULL OR k.revision_id = %s ORDER BY r.id, k.id""", (rev_id, rev_id)).fetchall()
+               WHERE (%s::int IS NULL AND r.archive_le IS NULL) OR k.revision_id = %s ORDER BY r.id, k.id""",
+            (rev_id, rev_id)).fetchall()
 
 
 def prochaine_carte(rev_id: int | None = None):
@@ -1355,7 +1424,7 @@ def prochaine_carte(rev_id: int | None = None):
     with connect() as c:
         return c.execute(
             f"""SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
-               WHERE {A_REVOIR} AND (%s::int IS NULL OR k.revision_id = %s)
+               WHERE {A_REVOIR} AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s)
                ORDER BY COALESCE(k.echeance, k.prochaine::timestamptz) > now(), k.vue_le IS NULL,
                         COALESCE(k.echeance, k.prochaine::timestamptz), k.vue_le NULLS FIRST, k.id
                LIMIT 1""",
@@ -1380,7 +1449,96 @@ def maj_carte(carte_id: int, note: int, m: dict):
 def nb_cartes_a_revoir(rev_id: int | None = None) -> int:
     with connect() as c:
         return c.execute(f"SELECT count(*) AS n FROM cartes k WHERE {A_REVOIR} "
-                         "AND (%s::int IS NULL OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
+                         f"AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
+
+
+# --- Archivage (archivage.py décide quoi proposer) -----------------------------
+
+def noter_ouverture(rev_id: int):
+    with connect() as c:
+        c.execute("UPDATE revisions SET ouverte_le = now() WHERE id = %s", (rev_id,))
+
+
+def candidats_archivage():
+    """Révisions et campagnes pas archivées, avec ce qu'il faut pour juger si elles servent encore.
+
+    Une révision d'une campagne pas archivée n'est pas candidate seule : elle part avec sa campagne."""
+    with connect() as c:
+        revisions = c.execute(
+            """SELECT r.id, r.genre, r.sujet, r.matiere, r.statut, r.date_eval, r.cree_le, r.ouverte_le, r.fait_le,
+                      r.garder_jusqu_au,
+                      count(k.id) AS nb_cartes, count(k.id) FILTER (WHERE """ + A_REVOIR + """) AS cartes_dues,
+                      max(k.vue_le) AS derniere_revue,
+                      EXISTS (SELECT 1 FROM pronote_evenements e WHERE e.revision_id = r.id AND e.le >= now())
+                        AS evaluation_a_venir
+               FROM revisions r LEFT JOIN cartes k ON k.revision_id = r.id
+               WHERE r.archive_le IS NULL AND r.statut <> 'en_attente'
+                 AND (r.campagne_id IS NULL OR EXISTS (SELECT 1 FROM campagnes x WHERE x.id = r.campagne_id
+                                                       AND x.archive_le IS NOT NULL))
+               GROUP BY r.id ORDER BY r.cree_le""").fetchall()
+        campagnes = c.execute(
+            """SELECT k.id, k.titre, k.debut, k.fin, k.statut, k.garder_jusqu_au, k.cree_le, count(r.id) AS nb,
+                      count(r.id) FILTER (WHERE r.fait_le IS NOT NULL) AS faites
+               FROM campagnes k LEFT JOIN revisions r ON r.campagne_id = k.id
+               WHERE k.archive_le IS NULL AND k.statut <> 'en_attente' GROUP BY k.id ORDER BY k.fin""").fetchall()
+    return revisions, campagnes
+
+
+def archiver(revisions: list[int] = (), campagnes: list[int] = ()) -> int:
+    """Archive (une campagne emporte ses supports) ; renvoie le nombre d'éléments archivés."""
+    with connect() as c, c.transaction():
+        n = c.execute("UPDATE campagnes SET archive_le = now() WHERE id = ANY(%s) AND archive_le IS NULL",
+                      (list(campagnes),)).rowcount
+        c.execute("UPDATE revisions SET archive_le = now() WHERE campagne_id = ANY(%s) AND archive_le IS NULL",
+                  (list(campagnes),))
+        n += c.execute("UPDATE revisions SET archive_le = now() WHERE id = ANY(%s) AND archive_le IS NULL",
+                       (list(revisions),)).rowcount
+    return n
+
+
+def restaurer(revisions: list[int] = (), campagnes: list[int] = (), garder_jours: int = 60):
+    """Sort des archives (une campagne avec ses supports), sans reproposer avant `garder_jours`."""
+    with connect() as c, c.transaction():
+        c.execute("UPDATE campagnes SET archive_le = NULL, garder_jusqu_au = now() + make_interval(days => %s) "
+                  "WHERE id = ANY(%s)", (garder_jours, list(campagnes)))
+        c.execute("UPDATE revisions SET archive_le = NULL, garder_jusqu_au = now() + make_interval(days => %s) "
+                  "WHERE id = ANY(%s) OR campagne_id = ANY(%s)", (garder_jours, list(revisions), list(campagnes)))
+
+
+def garder(revisions: list[int] = (), campagnes: list[int] = (), jours: int = 60):
+    """« Garder » sur une proposition d'archivage : plus reproposé avant `jours`."""
+    with connect() as c:
+        c.execute("UPDATE revisions SET garder_jusqu_au = now() + make_interval(days => %s) WHERE id = ANY(%s)",
+                  (jours, list(revisions)))
+        c.execute("UPDATE campagnes SET garder_jusqu_au = now() + make_interval(days => %s) WHERE id = ANY(%s)",
+                  (jours, list(campagnes)))
+
+
+def archives():
+    """Ce qui est archivé : campagnes (avec leur nombre de supports) et révisions hors campagne archivée."""
+    with connect() as c:
+        campagnes = c.execute(
+            """SELECT k.id, k.titre, k.debut, k.fin, k.archive_le, count(r.id) AS nb
+               FROM campagnes k LEFT JOIN revisions r ON r.campagne_id = k.id
+               WHERE k.archive_le IS NOT NULL GROUP BY k.id ORDER BY k.archive_le DESC, k.id DESC""").fetchall()
+        revisions = c.execute(
+            """SELECT r.id, r.genre, r.sujet, r.matiere, r.niveau, r.cree_le, r.archive_le, r.score, r.fait_le,
+                      (SELECT count(*) FROM cartes k WHERE k.revision_id = r.id) AS nb_cartes
+               FROM revisions r
+               WHERE r.archive_le IS NOT NULL AND (r.campagne_id IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM campagnes x WHERE x.id = r.campagne_id AND x.archive_le IS NOT NULL))
+               ORDER BY r.archive_le DESC, r.id DESC""").fetchall()
+    return campagnes, revisions
+
+
+def supprimer_archives(revisions: list[int] = (), campagnes: list[int] = ()) -> int:
+    """Suppression définitive, seulement de ce qui est déjà archivé (rien d'actif par erreur)."""
+    with connect() as c, c.transaction():
+        n = c.execute("DELETE FROM revisions WHERE archive_le IS NOT NULL AND (id = ANY(%s) OR campagne_id = ANY(%s))",
+                      (list(revisions), list(campagnes))).rowcount
+        n += c.execute("DELETE FROM campagnes WHERE archive_le IS NOT NULL AND id = ANY(%s)",
+                       (list(campagnes),)).rowcount
+    return n
 
 
 # --- Clés d'accès (Face ID) ---------------------------------------------------
@@ -2366,11 +2524,11 @@ def articles_ajouter(flux_id: int, items: list[dict], annonce: bool) -> int:
     with connect() as c:
         for i in items:
             r = c.execute(
-                """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, sujets, tri, annonce)
+                """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, sujets, tri, annonce, image)
                    VALUES (%(flux)s, %(cle)s, %(lien)s, %(titre)s, %(extrait)s, %(publie_le)s, %(sujets)s,
-                           %(tri)s, %(annonce)s)
+                           %(tri)s, %(annonce)s, %(image)s)
                    ON CONFLICT (cle) DO NOTHING RETURNING id""",
-                {"flux": flux_id, "annonce": annonce, "tri": "attente", "sujets": [], **i}).fetchone()
+                {"flux": flux_id, "annonce": annonce, "tri": "attente", "sujets": [], "image": "", **i}).fetchone()
             n += r is not None
     return n
 
@@ -2387,8 +2545,8 @@ def articles_trier(resultats: list[dict]):
     with connect() as c:
         for r in resultats:
             c.execute("UPDATE articles SET tri = %(tri)s, sujets = %(sujets)s, score = %(score)s, "
-                      "pourquoi = %(pourquoi)s, alerte = %(alerte)s, evenement = %(evenement)s WHERE id = %(id)s",
-                      {"alerte": False, "evenement": None, **r})
+                      "pourquoi = %(pourquoi)s, alerte = %(alerte)s, evenement = %(evenement)s, notion = %(notion)s "
+                      "WHERE id = %(id)s", {"alerte": False, "evenement": None, "notion": None, **r})
 
 
 def articles_a_annoncer():
@@ -2406,6 +2564,35 @@ def alertes_recentes(jours: int = 7) -> list[str]:
             "SELECT evenement, max(publie_le) AS le FROM articles WHERE alerte AND evenement IS NOT NULL "
             "AND publie_le > now() - make_interval(days => %s) GROUP BY evenement ORDER BY le DESC LIMIT 40",
             (jours,)).fetchall()]
+
+
+def evenements_recents(jours: int = 3, limite: int = 80) -> list[str]:
+    """Étiquettes des informations des derniers jours : la même info chez un autre site reçoit la même."""
+    with connect() as c:
+        return [r["evenement"] for r in c.execute(
+            "SELECT evenement, max(publie_le) AS le FROM articles WHERE evenement IS NOT NULL "
+            "AND publie_le > now() - make_interval(days => %s) GROUP BY evenement ORDER BY le DESC LIMIT %s",
+            (jours, limite)).fetchall()]
+
+
+def articles_pour_point(heures: int = 24, seuil: float = 0.6, limite: int = 14):
+    """Les articles importants des dernières heures, pour « L'essentiel » (les alertes d'abord)."""
+    with connect() as c:
+        return c.execute(
+            f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source FROM articles a JOIN flux f ON f.id = a.flux_id
+                WHERE a.tri = 'ia' AND a.publie_le > now() - make_interval(hours => %(heures)s)
+                  AND (a.alerte OR (a.score >= %(seuil)s AND {PERTINENT}))
+                ORDER BY a.alerte DESC, a.score DESC, a.publie_le DESC LIMIT %(limite)s""",
+            {"heures": heures, "seuil": max(seuil, SEUIL_POUR_TOI), "limite": limite}).fetchall()
+
+
+def articles_par_ids(ids: list[int]):
+    if not ids:
+        return []
+    with connect() as c:
+        return c.execute(
+            """SELECT a.id, a.titre, a.lien, a.lu, a.alerte, coalesce(nullif(f.titre, ''), f.site) AS source
+               FROM articles a JOIN flux f ON f.id = a.flux_id WHERE a.id = ANY(%s)""", (ids,)).fetchall()
 
 
 def articles_annonces(ids: list[int]):
@@ -2741,3 +2928,113 @@ def copie_kdrive_faite(chemin: str, taille: int, mtime: float, kdrive_id: int | 
         c.execute("INSERT INTO copies_kdrive (chemin, taille, mtime, kdrive_id) VALUES (%s, %s, %s, %s) "
                   "ON CONFLICT (chemin) DO UPDATE SET taille = EXCLUDED.taille, mtime = EXCLUDED.mtime, "
                   "kdrive_id = EXCLUDED.kdrive_id, copie_le = now()", (chemin, taille, mtime, kdrive_id))
+
+
+# --- Public ou privé (visibilite.py) ---------------------------------------------------
+# Changer la visibilité : seulement ses propres éléments (même en « Tout voir », l'admin ne choisit pas pour les autres)
+
+TABLES_VISIBILITE = {"documents", "revisions", "campagnes"}
+
+
+def changer_visibilite(table: str, element_id: int, public: bool | None) -> bool:
+    """public None (documents seulement) : comme sa matière. False si l'élément n'est pas à ce compte."""
+    if table not in TABLES_VISIBILITE or (public is None and table != "documents"):
+        raise ValueError(table)
+    with connect() as c:
+        return c.execute(f"UPDATE {table} SET public = %s WHERE id = %s AND compte_id = claunote_compte() RETURNING id",
+                         (public, element_id)).fetchone() is not None
+
+
+def matieres_publiques() -> set[tuple[str, str]]:
+    """(niveau, matière) rendues publiques par ce compte."""
+    with connect() as c:
+        return {(r["niveau"], r["matiere"]) for r in c.execute(
+            "SELECT niveau, matiere FROM matieres_publiques WHERE compte_id = claunote_compte()").fetchall()}
+
+
+def rendre_matiere(niveau: str, matiere: str, public: bool):
+    with connect() as c:
+        if public:
+            c.execute("INSERT INTO matieres_publiques (compte_id, niveau, matiere) VALUES (claunote_compte(), %s, %s) "
+                      "ON CONFLICT DO NOTHING", (niveau, matiere))
+        else:
+            c.execute("DELETE FROM matieres_publiques WHERE compte_id = claunote_compte() AND niveau = %s "
+                      "AND matiere = %s", (niveau, matiere))
+
+
+def plusieurs_comptes() -> bool:
+    """Le partage n'a de sens qu'à plusieurs : seul sur l'environnement, les boutons restent cachés."""
+    with connect() as c:
+        return c.execute("SELECT count(*) > 1 AS v FROM comptes WHERE actif").fetchone()["v"]
+
+
+# Pages « Partagés » : ce que les AUTRES comptes ont rendu public, en lecture seule. Les conditions sont redites
+# ici (pas seulement dans la base) : avec « Tout voir », l'admin y voit la même chose que les autres.
+_AUTEUR = "coalesce(nullif(a.nom, ''), a.identifiant) AS auteur"
+_DOC_PUBLIC = ("d.statut = 'classe' AND d.compte_id <> claunote_compte() "
+               "AND claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere)")
+_REV_PUBLIQUE = ("r.statut = 'pret' AND r.compte_id <> claunote_compte() "
+                 "AND (r.public OR claunote_campagne_publique(r.campagne_id))")
+
+
+def partages_documents():
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT d.id, d.titre, d.nom, d.niveau, d.matiere, d.type, d.chapitre, d.date_doc, d.compte_id, {_AUTEUR}
+                FROM documents d JOIN comptes a ON a.id = d.compte_id WHERE {_DOC_PUBLIC}
+                ORDER BY auteur, d.niveau DESC, d.matiere, d.type, d.date_doc DESC NULLS LAST, d.id DESC""").fetchall()
+
+
+def partages_revisions():
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT r.id, r.genre, r.sujet, r.niveau, r.matiere, r.cree_le, r.campagne_id, r.compte_id, {_AUTEUR}
+                FROM revisions r JOIN comptes a ON a.id = r.compte_id WHERE {_REV_PUBLIQUE}
+                ORDER BY r.cree_le DESC, r.id DESC""").fetchall()
+
+
+def partages_campagnes():
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT k.id, k.titre, k.debut, k.fin, k.compte_id, {_AUTEUR}
+                FROM campagnes k JOIN comptes a ON a.id = k.compte_id
+                WHERE k.public AND k.compte_id <> claunote_compte() ORDER BY k.debut DESC, k.id DESC""").fetchall()
+
+
+def document_partage(doc_id: int):
+    with partages(), connect() as c:
+        return c.execute(f"SELECT d.*, {_AUTEUR} FROM documents d JOIN comptes a ON a.id = d.compte_id "
+                         f"WHERE d.id = %s AND {_DOC_PUBLIC}", (doc_id,)).fetchone()
+
+
+def revision_partagee(rev_id: int):
+    with partages(), connect() as c:
+        return c.execute(f"SELECT r.*, {_AUTEUR} FROM revisions r JOIN comptes a ON a.id = r.compte_id "
+                         f"WHERE r.id = %s AND {_REV_PUBLIQUE}", (rev_id,)).fetchone()
+
+
+def cartes_partagees(rev_id: int):
+    with partages(), connect() as c:
+        return c.execute("SELECT recto, verso FROM cartes WHERE revision_id = %s AND claunote_revision_publique(%s) "
+                         "ORDER BY id", (rev_id, rev_id)).fetchall()
+
+
+def campagne_partagee(campagne_id: int):
+    """La campagne publique et ses révisions prêtes."""
+    with partages(), connect() as c:
+        k = c.execute(f"SELECT k.*, {_AUTEUR} FROM campagnes k JOIN comptes a ON a.id = k.compte_id "
+                      "WHERE k.id = %s AND k.public AND k.compte_id <> claunote_compte()", (campagne_id,)).fetchone()
+        if k is None:
+            return None, []
+        revs = c.execute("SELECT id, genre, sujet, matiere, niveau FROM revisions WHERE campagne_id = %s "
+                         "AND statut = 'pret' ORDER BY matiere NULLS LAST, id", (campagne_id,)).fetchall()
+        return k, revs
+
+
+def documents_partages(ids: list[int]):
+    """Sources d'une révision partagée : seulement celles qui sont publiques elles aussi."""
+    with partages(), connect() as c:
+        rows = c.execute(f"SELECT d.id, d.titre, d.nom FROM documents d WHERE d.id = ANY(%s) AND {_DOC_PUBLIC}",
+                         (ids,)).fetchall()
+    par_id = {r["id"]: r for r in rows}
+    return [par_id[i] for i in ids if i in par_id]

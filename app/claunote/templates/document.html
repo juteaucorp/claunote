@@ -18,6 +18,8 @@
   {% if doc.modele == 'local' %} · lu sans Claude{% if doc.relire %} (relecture par Claude prévue){% endif %}
   {% elif doc.modele %} · lu par {{ doc.modele|capitalize }}{% endif %}
 </p>
+{% if doc.statut == 'classe' and partage_possible() and a_moi(doc) %}{% from "_visibilite.html" import visibilite with context %}
+{{ visibilite('/doc/' ~ doc.id ~ '/visibilite', doc.public, matiere_publique) }}{% endif %}
 {% if doc.avis %}<p class="doux">{{ doc.avis }}</p>{% endif %}
 {% if doc.statut == 'classe' %}
 <form method="post" action="/reviser" class="carte">

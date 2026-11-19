@@ -5,28 +5,31 @@
 <h1>Bibliothèque</h1>
 {% set attente = nb_a_verifier() %}
 {% if attente %}
-<div class="carte accent"><strong>{{ attente }} document{{ 's' if attente > 1 }} à vérifier.</strong>
-  Classement incertain ou analyse en échec : <a href="/a-verifier">règle-les</a> en un clic.</div>
+<a class="carte accent ligne-alerte" href="/a-verifier"><strong>{{ attente }} document{{ 's' if attente > 1 }} à vérifier</strong> ›</a>
 {% endif %}
 {% set doublons = nb_matieres_en_double() %}
 {% if doublons %}
-<div class="carte accent"><strong>{{ doublons }} groupe{{ 's' if doublons > 1 }} de matières en double</strong>
-  (ex. « Maths » et « Mathématiques » la même année) : <a href="/organiser/matieres">fusionne-les</a>.</div>
+<a class="carte accent ligne-alerte" href="/organiser/matieres"><strong>{{ doublons }} groupe{{ 's' if doublons > 1 }} de matières en double</strong> à fusionner ›</a>
 {% endif %}
 {% if not niveaux %}
 <div class="carte">Aucun document classé pour l'instant. <a href="/deposer">Dépose des scans</a> ici,
   ou dans <code>Etudes/inbox</code> sur kDrive.</div>
 {% endif %}
 {% if nb_hors_cours %}
-<p class="doux">📁 <a href="/hors-cours">Hors cours</a> : {{ nb_hors_cours }} document{{ 's' if nb_hors_cours > 1 }}
-  administratif{{ 's' if nb_hors_cours > 1 }} ou sans intérêt pour réviser, rangé{{ 's' if nb_hors_cours > 1 }} à part.</p>
+<p class="doux">📁 <a href="/hors-cours">Hors cours</a> · {{ nb_hors_cours }} document{{ 's' if nb_hors_cours > 1 }} rangé{{ 's' if nb_hors_cours > 1 }} à part</p>
+{% endif %}
+{% if partage %}
+<p class="doux">🌐 <a href="/partages">Partagés par les autres comptes</a> · tes cours restent privés tant que tu ne touches pas 🔒</p>
 {% endif %}
 {% for niveau in niveaux %}
 <h2>{{ niveau }}</h2>
 <div class="grille">
   {% for matiere, types in arbre[niveau].items() %}
   <div class="carte">
-    <strong>{{ matiere }}</strong>
+    <div class="tete-matiere"><strong>{{ matiere }}</strong>
+    {% if partage %}{% set pub = (niveau, matiere) in publiques %}
+    <form method="post" action="/bibliotheque/visibilite"><input type="hidden" name="niveau" value="{{ niveau }}"><input type="hidden" name="matiere" value="{{ matiere }}">
+      <button name="valeur" value="{{ 'prive' if pub else 'public' }}" class="bouton-visibilite" title="{{ 'Matière publique : les autres comptes lisent ses cours. Toucher pour la rendre privée.' if pub else 'Matière privée. Toucher pour la rendre publique : les autres comptes liront ses cours (sans les modifier).' }}" aria-label="{{ 'Rendre privée' if pub else 'Rendre publique' }}">{{ '🌐' if pub else '🔒' }}</button></form>{% endif %}</div>
     <div class="pastilles">
       {% for t in types %}
       <a href="/liste?niveau={{ niveau|urlencode }}&matiere={{ matiere|urlencode }}&type={{ t.type|urlencode }}">{{ t.type }} · {{ t.n }}</a>
@@ -36,4 +39,10 @@
   {% endfor %}
 </div>
 {% endfor %}
+<style>
+  .ligne-alerte { display: block; padding: 10px 16px; color: inherit; text-decoration: none; }
+  .tete-matiere { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .tete-matiere form { margin: 0; }
+  .bouton-visibilite { padding: 0 6px; background: none; border: none; font-size: 1rem; cursor: pointer; }
+</style>
 {% endblock %}

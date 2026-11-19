@@ -1,0 +1,16 @@
+{# Public ou privé d'un élément à soi. public : True, False, ou None (cours : comme sa matière, matiere_publique) #}
+<style>
+  .visibilite { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0 12px; font-size: .9rem; }
+  .visibilite button { padding: 3px 12px; font-size: .85rem; }
+  .visibilite button.lien { background: none; border: none; text-decoration: underline; color: var(--texte-doux, inherit); }
+  .visibilite .etat.public { color: var(--accent-fonce); }
+</style>
+{% macro visibilite(action, public, matiere_publique=None) %}
+{% set public = none if public is undefined else public %}
+{% set effectif = matiere_publique if public is none else public %}
+<form method="post" action="{{ action }}" class="visibilite" title="Public : les autres comptes de l'environnement peuvent le lire (sans le modifier). Privé : toi seul{{ ' (et l’admin)' if not est_admin() }}.">
+  <span class="etat {{ 'public' if effectif }}">{{ '🌐 Public' if effectif else '🔒 Privé' }}{% if public is none and matiere_publique is not none %} <small>(comme la matière)</small>{% endif %}</span>
+  <button name="valeur" value="{{ 'prive' if effectif else 'public' }}">{{ 'Rendre privé' if effectif else 'Rendre public' }}</button>
+  {% if public is not none and matiere_publique is not none %}<button name="valeur" value="matiere" class="lien">Comme la matière</button>{% endif %}
+</form>
+{% endmacro %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}{{ campagne.titre }}{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/partages">Partagés</a> › Campagne</p>
+<h1>{{ campagne.titre }}</h1>
+<p class="doux">🌐 Partagé par <strong>{{ campagne.auteur }}</strong> · lecture seule
+  · du {{ campagne.debut.strftime('%d/%m') }} au {{ campagne.fin.strftime('%d/%m/%Y') }}</p>
+{% if campagne.epreuves %}
+<p class="doux">{{ icone('examen', 16) }} Épreuves :
+  {% for e in campagne.epreuves %}<strong>{{ e.matiere }}</strong> {% if e.date %}{{ (e.date|jour_iso).strftime('%d/%m') }}{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</p>
+{% endif %}
+{% if revs %}
+<div class="carte"><ul class="liste-partages">
+  {% for r in revs %}<li><a href="/partages/revision/{{ r.id }}">{{ icone(r.genre, 15) }} {{ r.sujet }}</a>
+    <span class="doux">· {{ genres[r.genre] }}{% if r.matiere %} · {{ r.matiere }}{% endif %}</span></li>{% endfor %}
+</ul></div>
+{% else %}<div class="carte doux">Aucun support prêt pour l'instant.</div>{% endif %}
+<style>.liste-partages { margin: 0; padding-left: 18px; } .liste-partages li { margin: 6px 0; }</style>
+{% endblock %}

@@ -39,14 +39,14 @@ MDP_MIN = 10
 PAGES = [
     ("/comptes", "admin"), ("/securite", "admin"), ("/mise-a-jour", "admin"), ("/appareils/", "admin"),
     ("/analyses", "admin"), ("/import", "admin"), ("/inbox", "admin"), ("/scan", "admin"),
-    ("/claude/reessayer", "admin"), ("/installation", "admin"), ("/reglages", "admin"), ("/organiser/matieres", "organiser"), ("/actualites/sources", "actualites"),
+    ("/claude/reessayer", "admin"), ("/installation", "admin"), ("/reglages/installation", "admin"), ("/organiser/matieres", "organiser"), ("/actualites/sources", "actualites"),
     ("/deposer", "deposer"),
     ("/a-verifier", "organiser"), ("/organiser", "organiser"), ("/hors-cours", "bibliotheque"),
     ("/reviser", "reviser"), ("/revision/", "reviser"), ("/campagne", "reviser"), ("/demander", "reviser"),
-    ("/formule", "reviser"), ("/cartes", "reviser"), ("/progression", "reviser"),
+    ("/formule", "reviser"), ("/cartes", "reviser"), ("/archives", "reviser"), ("/progression", "reviser"),
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
-    ("/piece/", "reviser"),
+    ("/piece/", "reviser"), ("/partages", "bibliotheque"),
 ]
 ACTIONS_DOC = {"classer", "hors-cours", "supprimer", "reessayer"}
 

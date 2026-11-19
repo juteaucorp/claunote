@@ -24,12 +24,23 @@
   {% if ajout_ia %}<span class="etat" title="Tes cours ne couvraient pas tout : l'IA a complété, chaque ajout est marqué">✚ Complété hors de tes cours</span>{% endif %}
   {% if rev.strict %}<span class="etat" title="Demandé sans rien ajouter hors de tes cours">Strictement tes cours</span>{% endif %}
 </p>
+{% if rev.statut == 'pret' and partage_possible() and a_moi(rev) %}{% from "_visibilite.html" import visibilite with context %}
+{{ visibilite('/revision/' ~ rev.id ~ '/visibilite', rev.public) }}{% endif %}
 {% if ajout_ia %}<p class="doux">Les passages marqués {{ HORS_COURS }} ou dans un encadré « Hors de tes cours » ne viennent pas de tes cours : l'IA les a ajoutés d'après le programme officiel. À vérifier avec ton prof en cas de doute.</p>{% endif %}
 {% if sans_texte %}<details class="carte"><summary>⚠️ {{ sans_texte|length }} cours pas encore lu{{ 's' if sans_texte|length > 1 }} par l'IA : ignoré{{ 's' if sans_texte|length > 1 }} ici</summary>
   <p class="doux">Classé{{ 's' if sans_texte|length > 1 }} sans transcription (analyse en erreur ou classement à la main). Ouvre-le{{ 's' if sans_texte|length > 1 }} et relance l'analyse pour qu'il{{ 's' if sans_texte|length > 1 }} serve{{ 'nt' if sans_texte|length > 1 }} aux prochaines révisions.</p>
   <ul>{% for d in sans_texte %}<li><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a></li>{% endfor %}</ul>
 </details>{% endif %}
 
+{% if rev.archive_le %}
+<form class="carte accent rangee" method="post" action="/archives/restaurer">
+  <span class="pastille-genre">{{ icone('archive') }}</span>
+  <div class="corps"><strong>Archivée le {{ (rev.archive_le|paris)[:10] }}</strong>
+    <div class="doux">Hors de l'historique{{ ' et des flashcards à revoir' if rev.genre == 'cartes' }}.</div></div>
+  <input type="hidden" name="cle" value="revision:{{ rev.id }}"><input type="hidden" name="retour" value="/revision/{{ rev.id }}">
+  <button class="principal">Restaurer</button>
+</form>
+{% endif %}
 {% if rev.statut == 'pret' %}
 {% set nom_pdf = (genres[rev.genre] ~ ' ' ~ rev.sujet)|replace('/', '-') ~ '.pdf' %}
 <div class="barre-actions">
@@ -50,6 +61,7 @@
       {% endif %}
       {% if rev.genre == 'cartes' %}<a href="/cartes/anki?paquet={{ rev.id }}" download>{{ icone('cartes', 18) }} Exporter vers Anki</a>{% endif %}
       <form method="post" action="/revision/{{ rev.id }}/relancer" onsubmit="return confirm('Refaire ce support ? L\'actuel sera remplacé.')"><button>{{ icone('relancer', 18) }} Régénérer</button></form>
+      {% if not rev.archive_le %}<form method="post" action="/revision/{{ rev.id }}/archiver"><button>{{ icone('archive', 18) }} Archiver</button></form>{% endif %}
       <form method="post" action="/revision/{{ rev.id }}/supprimer" onsubmit="return confirm('Supprimer ce support ?')"><button class="danger">{{ icone('corbeille', 18) }} Supprimer</button></form>
     </div>
   </details>
