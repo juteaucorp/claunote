@@ -401,7 +401,10 @@ CREATE TABLE IF NOT EXISTS articles (
 CREATE INDEX IF NOT EXISTS articles_publie ON articles (publie_le DESC);
 CREATE INDEX IF NOT EXISTS articles_attente ON articles (id) WHERE tri = 'attente' OR NOT annonce;
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS alerte BOOLEAN NOT NULL DEFAULT false;  -- rare et grave (IA)
-ALTER TABLE articles ADD COLUMN IF NOT EXISTS evenement TEXT;  -- même événement relayé par plusieurs sites
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS evenement TEXT;  -- même information relayée par plusieurs sites
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS image TEXT NOT NULL DEFAULT '';  -- illustration donnée par le flux
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS notion TEXT;     -- notion du BTS qu'il illustre (IA) : lien vers le cours
+CREATE INDEX IF NOT EXISTS articles_evenement ON articles (evenement, publie_le DESC) WHERE evenement IS NOT NULL;
 -- Journal de sécurité (securite.py) : connexions, appareils, refus, alertes ; gardé 180 jours
 CREATE TABLE IF NOT EXISTS securite (
     id           SERIAL PRIMARY KEY,
@@ -2278,11 +2281,11 @@ def articles_ajouter(flux_id: int, items: list[dict], annonce: bool) -> int:
     with connect() as c:
         for i in items:
             r = c.execute(
-                """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, sujets, tri, annonce)
+                """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, sujets, tri, annonce, image)
                    VALUES (%(flux)s, %(cle)s, %(lien)s, %(titre)s, %(extrait)s, %(publie_le)s, %(sujets)s,
-                           %(tri)s, %(annonce)s)
+                           %(tri)s, %(annonce)s, %(image)s)
                    ON CONFLICT (cle) DO NOTHING RETURNING id""",
-                {"flux": flux_id, "annonce": annonce, "tri": "attente", "sujets": [], **i}).fetchone()
+                {"flux": flux_id, "annonce": annonce, "tri": "attente", "sujets": [], "image": "", **i}).fetchone()
             n += r is not None
     return n
 
@@ -2299,8 +2302,8 @@ def articles_trier(resultats: list[dict]):
     with connect() as c:
         for r in resultats:
             c.execute("UPDATE articles SET tri = %(tri)s, sujets = %(sujets)s, score = %(score)s, "
-                      "pourquoi = %(pourquoi)s, alerte = %(alerte)s, evenement = %(evenement)s WHERE id = %(id)s",
-                      {"alerte": False, "evenement": None, **r})
+                      "pourquoi = %(pourquoi)s, alerte = %(alerte)s, evenement = %(evenement)s, notion = %(notion)s "
+                      "WHERE id = %(id)s", {"alerte": False, "evenement": None, "notion": None, **r})
 
 
 def articles_a_annoncer():
@@ -2318,6 +2321,35 @@ def alertes_recentes(jours: int = 7) -> list[str]:
             "SELECT evenement, max(publie_le) AS le FROM articles WHERE alerte AND evenement IS NOT NULL "
             "AND publie_le > now() - make_interval(days => %s) GROUP BY evenement ORDER BY le DESC LIMIT 40",
             (jours,)).fetchall()]
+
+
+def evenements_recents(jours: int = 3, limite: int = 80) -> list[str]:
+    """Étiquettes des informations des derniers jours : la même info chez un autre site reçoit la même."""
+    with connect() as c:
+        return [r["evenement"] for r in c.execute(
+            "SELECT evenement, max(publie_le) AS le FROM articles WHERE evenement IS NOT NULL "
+            "AND publie_le > now() - make_interval(days => %s) GROUP BY evenement ORDER BY le DESC LIMIT %s",
+            (jours, limite)).fetchall()]
+
+
+def articles_pour_point(heures: int = 24, seuil: float = 0.6, limite: int = 14):
+    """Les articles importants des dernières heures, pour « L'essentiel » (les alertes d'abord)."""
+    with connect() as c:
+        return c.execute(
+            f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source FROM articles a JOIN flux f ON f.id = a.flux_id
+                WHERE a.tri = 'ia' AND a.publie_le > now() - make_interval(hours => %(heures)s)
+                  AND (a.alerte OR (a.score >= %(seuil)s AND {PERTINENT}))
+                ORDER BY a.alerte DESC, a.score DESC, a.publie_le DESC LIMIT %(limite)s""",
+            {"heures": heures, "seuil": max(seuil, SEUIL_POUR_TOI), "limite": limite}).fetchall()
+
+
+def articles_par_ids(ids: list[int]):
+    if not ids:
+        return []
+    with connect() as c:
+        return c.execute(
+            """SELECT a.id, a.titre, a.lien, a.lu, a.alerte, coalesce(nullif(f.titre, ''), f.site) AS source
+               FROM articles a JOIN flux f ON f.id = a.flux_id WHERE a.id = ANY(%s)""", (ids,)).fetchall()
 
 
 def articles_annonces(ids: list[int]):

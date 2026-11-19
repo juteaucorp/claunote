@@ -2,8 +2,15 @@
 
     flux RSS / Atom ──┐                          ┌─► page Actualités : résumé en une phrase (« Pour toi », tout…)
     (sites ajoutés)   ├─► relevé toutes les ─► articles ─► tri par l'IA (Haiku, par lots de 40) ─┤
-    Google Actualités ┘   30 min (ETag)      (dédup par lien)  sinon mots-clés                    └─► notification si
-    (recherche d'un sujet)                                                                           ALERTE (rare, grave)
+    Google Actualités ┘   30 min (ETag)      (dédup par lien)  sinon mots-clés                    ├─► notification si
+    (recherche d'un sujet)                                                                        │   ALERTE (rare, grave)
+                                                                                                  └─► « L'essentiel » :
+                                                                         le point du jour en 3 à 5 phrases (Opus)
+
+- Plus intéressant à lire : l'IA donne à chaque article une étiquette d'événement (la même info chez trois sites
+  = une seule carte « aussi chez… ») et la notion du BTS qu'il illustre (VLAN, Active Directory…), reliée à ton
+  cours sur ce sujet s'il y en a un ; l'image de l'article passe par le site (vignette réduite, jamais de
+  chargement direct depuis un site tiers).
 
 - Dédup : un article = son lien nettoyé (sans utm_…, sans #) ; le même dans deux flux n'apparaît qu'une fois.
 - Pas de spam : à son premier relevé, un flux n'annonce rien ; seule une « alerte » (jugée par l'IA : grosse
@@ -35,6 +42,10 @@ FRAIS = 14                # jours : au-delà, un article n'est pas envoyé à l'
 SANS_IA_APRES = 3 * 3600  # Claude absent plus longtemps : tri par mots-clés pour ne pas bloquer
 SEUIL_IMPORTANT = 0.75   # badge « Important » sur la page (les notifications, elles, ne partent que pour une alerte)
 AGE_NOTIF = 2             # jours : un article plus vieux ne sonne jamais (flux qui republie ses archives)
+POINT_TOUTES = 3 * 3600   # « L'essentiel » refait au plus toutes les 3 h (ou tout de suite pour une alerte)
+POINT_FENETRE = 24        # heures d'actualité prises en compte pour le point du jour
+POINT_SEUIL = 0.6         # importance minimale d'un article pour entrer dans le point
+POINT_MAX = 14            # articles proposés à l'IA pour le point
 UA = "Mozilla/5.0 (compatible; Claunote/1.0; lecteur RSS personnel)"
 DEFAUT = {"ia": True}
 
@@ -91,10 +102,26 @@ Pour chaque article :
   hôpital, des millions de personnes) ; faille critique activement exploitée dans un produit très répandu
   (Fortinet, Cisco, Ivanti, Microsoft, VMware, Citrix…) ; panne mondiale majeure. Quelques-unes par semaine
   au plus ; dans le doute, false. Un tutoriel, une mise à jour courante, une faille non exploitée : false ;
-- "evenement" : si alerte, une étiquette courte de l'événement en minuscules avec tirets (« fuite-france-travail »,
-  « fortios-cve-2026-24858 »), la même pour tous les articles qui parlent du même événement ; sinon "".
+- "evenement" : une étiquette courte de l'information en minuscules avec tirets (« fuite-france-travail »,
+  « fortios-cve-2026-24858 », « windows-server-2025-maj-novembre »), LA MÊME pour tous les articles qui
+  racontent la même information (même sur des sites différents) ; "" si hors sujet ;
+- "notion" : la notion du programme de BTS SIO SISR que l'article illustre, en 1 à 4 mots, comme dans un cours
+  (« VLAN », « Active Directory », « chiffrement TLS », « sauvegarde 3-2-1 », « RGPD ») ; "" si aucune.
 Réponds seulement en JSON, un objet par article, tous les articles :
-[{{"id": 12, "sujets": ["S1"], "score": 0.9, "resume": "...", "alerte": true, "evenement": "..."}}]"""
+[{{"id": 12, "sujets": ["S1"], "score": 0.9, "resume": "...", "alerte": true, "evenement": "...", "notion": "..."}}]"""
+
+PROMPT_POINT = """Tu fais « L'essentiel » de la veille d'un étudiant en BTS SIO option SISR (infrastructures,
+réseaux, systèmes, cybersécurité) : ce qu'il doit savoir de l'actualité des dernières 24 heures, en 30 secondes.
+Sur l'entrée : les articles importants, un par ligne en JSON (id, source, titre, resume, alerte, notion).
+Écris de 3 à 5 points, du plus important au moins important :
+- un point = UNE information (regroupe les articles qui parlent de la même chose), 25 mots au plus, en français,
+  style dépêche : le fait, qui est touché, l'ampleur, et l'action à faire s'il y en a une ;
+- pas de titre, pas d'introduction, pas de « cet article », pas de point sans fait concret ;
+- "ids" : les articles dont vient le point (au moins un, uniquement ceux de l'entrée).
+Puis "a_retenir" : une phrase (20 mots au plus) qui relie l'actualité du jour au programme du BTS SISR
+(« Révise les VLAN : la faille Cisco du jour passe par un mauvais cloisonnement ») ; "" si rien de pertinent.
+Réponds seulement en JSON :
+{"points": [{"texte": "...", "ids": [12, 15]}], "a_retenir": "..."}"""
 
 def log(msg: str):
     print(f"actualités : {msg}", flush=True)
@@ -235,6 +262,29 @@ def _date(entree) -> dt.datetime:
         return maintenant
 
 
+IMG = re.compile(r"<img\b[^>]*?\bsrc=[\"']([^\"']+)", re.I)
+
+
+def image_article(e, lien: str = "") -> str:
+    """L'illustration d'un article : media:thumbnail / media:content, pièce jointe image, ou 1re <img> du texte."""
+    candidats = []
+    for m in list(e.get("media_thumbnail") or []) + list(e.get("media_content") or []):
+        genre = (m.get("type") or "").lower()
+        if m.get("medium") in (None, "", "image") and not genre.startswith(("video", "audio")):
+            candidats.append(m.get("url"))
+    for l in e.get("links") or []:
+        if l.get("rel") == "enclosure" and (l.get("type") or "").lower().startswith("image/"):
+            candidats.append(l.get("href"))
+    for brut in [e.get("summary") or ""] + [c.get("value", "") for c in (e.get("content") or [])]:
+        candidats += IMG.findall(brut)
+    for c in candidats:
+        url = lien_sur(urljoin(lien, html.unescape(c or "").strip())) if c else ""
+        # pas les pixels espions ni les émojis : un nom de fichier qui ressemble à une vraie image
+        if url and len(url) <= 1000 and not re.search(r"(pixel|tracking|feedburner|emoji|gravatar|1x1)", url, re.I):
+            return url
+    return ""
+
+
 def lire_flux(contenu: bytes, flux_id: int = 0) -> tuple[dict, list[dict]]:
     """Contenu d'un flux → (infos du flux, articles prêts pour la base)."""
     f = feedparser.parse(contenu)
@@ -254,7 +304,7 @@ def lire_flux(contenu: bytes, flux_id: int = 0) -> tuple[dict, list[dict]]:
         if not resume and e.get("content"):
             resume = e.content[0].get("value", "")
         items.append({"cle": cle, "lien": lien, "titre": titre or lien, "extrait": texte_simple(resume),
-                      "publie_le": _date(e)})
+                      "publie_le": _date(e), "image": image_article(e, lien)})
     infos = {"titre": texte_simple(f.feed.get("title"), 120), "site": lien_sur(f.feed.get("link"))}
     return infos, items
 
@@ -364,7 +414,7 @@ def prompt(sujets: list[dict], deja: list[str] | None = None) -> str:
     lignes = [f"{code} — {s['nom']} : {s['description'] or s['nom']}"
               + (f" (mots-clés : {', '.join(s['mots_cles'])})" if s["mots_cles"] else "")
               for code, s in zip(_codes(sujets), sujets)]
-    connus = (f"\nAlertes déjà repérées ces 7 derniers jours (réutilise l'étiquette si c'est le même événement) : "
+    connus = (f"\nÉtiquettes déjà données ces derniers jours (réutilise la même si c'est la même information) : "
               f"{', '.join(deja)}\n" if deja else "")
     return PROMPT.format(sujets="\n".join(lignes), deja=connus)
 
@@ -394,9 +444,12 @@ def lire_reponse(texte: str, ids: set[int], codes: dict[str, int]) -> dict[int, 
             continue
         sujets = [codes[c] for c in (d.get("sujets") or []) if isinstance(c, str) and c in codes]
         alerte = d.get("alerte") is True and bool(sujets)
+        hors_sujet = not sujets and score < 0.3
+        notion = re.sub(r"\s+", " ", str(d.get("notion") or "")).strip(" .«»\"'")[:60]
         resultats[i] = {"id": i, "tri": "ia", "sujets": sujets, "score": max(0.0, min(score, 1.0)),
                         "pourquoi": str(d.get("resume") or d.get("pourquoi") or "").strip()[:220] or None,
-                        "alerte": alerte, "evenement": _etiquette(d.get("evenement")) if alerte else None}
+                        "alerte": alerte, "evenement": None if hors_sujet else _etiquette(d.get("evenement")),
+                        "notion": None if hors_sujet else notion or None}
     if not resultats:
         raise agent.ErreurAgent("réponse sans aucun article reconnu")
     return resultats
@@ -404,7 +457,7 @@ def lire_reponse(texte: str, ids: set[int], codes: dict[str, int]) -> dict[int, 
 
 def _sans_ia(a: dict, sujets: list[dict]) -> dict:
     return {"id": a["id"], "tri": "mots_cles", "sujets": par_mots_cles(sujets, a), "score": None, "pourquoi": None,
-            "alerte": False, "evenement": None}
+            "alerte": False, "evenement": None, "notion": None}
 
 
 def trier(claude_ok) -> int:
@@ -432,7 +485,8 @@ def trier(claude_ok) -> int:
         db.articles_trier(trop_vieux)
         return len(sans) + len(trop_vieux)
     codes = _codes(sujets)
-    consigne = prompt(sujets, db.alertes_recentes())
+    alertes = db.alertes_recentes()
+    consigne = prompt(sujets, alertes + [e for e in db.evenements_recents() if e not in alertes])
     faits = len(sans)
     for debut in range(0, len(a_ia), LOT):
         lot = a_ia[debut:debut + LOT]
@@ -448,6 +502,191 @@ def trier(claude_ok) -> int:
         db.articles_trier([resultats.get(a["id"]) or _sans_ia(a, sujets) for a in lot])
         faits += len(lot)
     return faits
+
+
+# --- « L'essentiel » : le point du jour -------------------------------------------------
+
+def point() -> dict | None:
+    """Le dernier point du jour : {le, ids, points: [{texte, ids}], a_retenir, modele} (points vide : rien à montrer)."""
+    try:
+        p = json.loads(db.etat_valeur("actualites_point") or "null")
+    except ValueError:
+        return None
+    return p if isinstance(p, dict) else None
+
+
+def lire_point(texte: str, ids: set[int]) -> dict:
+    debut, fin = texte.find("{"), texte.rfind("}")
+    try:
+        d = json.loads(texte[debut:fin + 1]) if debut >= 0 else None
+    except ValueError:
+        d = None
+    if not isinstance(d, dict) or not isinstance(d.get("points"), list):
+        raise agent.ErreurAgent("point du jour illisible")
+    points = []
+    for p in d["points"][:5]:
+        if not isinstance(p, dict) or not str(p.get("texte") or "").strip():
+            continue
+        cites = [int(i) for i in (p.get("ids") or []) if str(i).isdigit() and int(i) in ids]
+        if cites:
+            points.append({"texte": re.sub(r"\s+", " ", str(p["texte"])).strip()[:240], "ids": cites[:4]})
+    if not points:
+        raise agent.ErreurAgent("point du jour sans aucun point relié aux articles")
+    return {"points": points, "a_retenir": re.sub(r"\s+", " ", str(d.get("a_retenir") or "")).strip()[:200]}
+
+
+def faire_point(claude_ok, maintenant: float | None = None) -> bool:
+    """Refait « L'essentiel » quand de nouveaux articles importants sont arrivés (au plus toutes les 3 h,
+    tout de suite pour une alerte). Sans Claude, l'ancien point reste affiché : rien n'est inventé."""
+    maintenant = maintenant or time.time()
+    if not reglages()["ia"] or local.reglages()["mode"] == "toujours":
+        return False
+    candidats = db.articles_pour_point(POINT_FENETRE, POINT_SEUIL, POINT_MAX)
+    if len(candidats) < 2:
+        return False
+    ancien = point() or {}
+    ids = sorted(a["id"] for a in candidats)
+    nouveaux = set(ids) - set(ancien.get("ids") or [])
+    if not nouveaux:
+        return False
+    alerte_neuve = any(a["alerte"] for a in candidats if a["id"] in nouveaux)
+    if not alerte_neuve and maintenant - float(ancien.get("le") or 0) < POINT_TOUTES:
+        return False
+    if not claude_ok():
+        return False
+    entree = "\n".join(json.dumps({"id": a["id"], "source": a["source"], "titre": a["titre"],
+                                   "resume": a["pourquoi"] or a["extrait"][:200], "alerte": bool(a["alerte"]),
+                                   "notion": a.get("notion") or ""}, ensure_ascii=False) for a in candidats)
+    try:
+        lu, modele = agent.demander("actualites_point", PROMPT_POINT, Path(tempfile.gettempdir()), entree=entree,
+                                    timeout=300, lire=lambda t: lire_point(t, set(ids)))
+    except agent.ErreurAgent as e:
+        log(f"point du jour impossible ({e}) : l'ancien reste affiché")
+        # pas de nouvel essai à chaque tour : on attend la prochaine fenêtre de 3 h
+        db.etat_ecrire("actualites_point", json.dumps({**ancien, "le": maintenant}, ensure_ascii=False))
+        return False
+    db.etat_ecrire("actualites_point", json.dumps({**lu, "le": maintenant, "ids": ids, "modele": modele},
+                                                  ensure_ascii=False))
+    log(f"point du jour refait ({len(lu['points'])} points, {modele})")
+    return True
+
+
+# --- Affichage : même info regroupée, lien avec les cours ---------------------------------
+
+def regrouper(liste: list[dict]) -> list[dict]:
+    """La même information chez plusieurs sites = une seule carte (la plus récente), les autres en « aussi chez »."""
+    cartes, par_evenement = [], {}
+    for a in liste:
+        a = {**a, "aussi": [], "image_id": a["id"]}
+        cle = a.get("evenement")
+        if cle and cle in par_evenement:
+            tete = par_evenement[cle]   # la plus récente (la liste est triée du plus récent au plus ancien)
+            tete["aussi"].append({"id": a["id"], "source": a["source"], "lien": a["lien"], "titre": a["titre"]})
+            tete["lu"] = tete["lu"] and a["lu"]
+            tete["alerte"] = bool(tete.get("alerte") or a.get("alerte"))
+            tete["score"] = max(tete.get("score") or 0, a.get("score") or 0) if tete.get("tri") == "ia" else tete["score"]
+            tete["noms_sujets"] = list(dict.fromkeys([*(tete.get("noms_sujets") or []), *(a.get("noms_sujets") or [])]))
+            tete["notion"] = tete.get("notion") or a.get("notion")
+            if not tete.get("image") and a.get("image"):
+                tete["image"], tete["image_id"] = a["image"], a["id"]
+            continue
+        if cle:
+            par_evenement[cle] = a
+        cartes.append(a)
+    return cartes
+
+
+def cours_lies(notions: list[str], limite: int = 12) -> dict[str, dict]:
+    """Notion du BTS → ton cours le plus proche (recherche plein texte), pour « Revoir ton cours »."""
+    trouves = {}
+    for n in list(dict.fromkeys(n for n in notions if n))[:limite]:
+        try:
+            r = db.recherche(n, 1)
+        except Exception as e:   # recherche impossible : la page s'affiche sans le lien
+            log(f"cours lié à « {n} » introuvable : {e}")
+            continue
+        if r:
+            trouves[n] = r[0]
+    return trouves
+
+
+# --- Vignettes : l'image de l'article, passée par le site ---------------------------------
+
+VIGNETTE_MAX = 4 * 1024 * 1024   # octets téléchargés au plus
+VIGNETTE_COTE = 480              # pixels (côté le plus long) de la vignette gardée
+VIGNETTES = Path(tempfile.gettempdir()) / "claunote-vignettes"
+
+
+def _hote_public(url: str) -> bool:
+    """Jamais une adresse du réseau local (la VM, le routeur…) : seulement des sites sur Internet."""
+    import ipaddress
+    import socket
+    hote = urlsplit(url).hostname
+    if not hote:
+        return False
+    try:
+        adresses = {i[4][0] for i in socket.getaddrinfo(hote, None)}
+    except OSError:
+        return False
+    return bool(adresses) and all(ipaddress.ip_address(a.split("%")[0]).is_global for a in adresses)
+
+
+def telecharger_image(url: str, client: httpx.Client | None = None, verifier_hote=_hote_public) -> bytes | None:
+    """Image d'un site tiers → vignette JPEG réduite (ou None) : redirections vérifiées une à une, taille bornée,
+    contenu décodé par Pillow (un SVG, une page HTML ou un fichier piégé ne passent pas)."""
+    from io import BytesIO
+
+    from PIL import Image
+    c = client or httpx.Client(timeout=10, follow_redirects=False, headers={"User-Agent": UA, "Accept": "image/*"})
+    try:
+        for _ in range(4):
+            if not lien_sur(url) or not verifier_hote(url):
+                return None
+            with c.stream("GET", url) as r:
+                if r.is_redirect:
+                    url = urljoin(url, r.headers.get("location", ""))
+                    continue
+                if r.status_code != 200 or not r.headers.get("content-type", "").lower().startswith("image/"):
+                    return None
+                donnees = bytearray()
+                for morceau in r.iter_bytes():
+                    donnees += morceau
+                    if len(donnees) > VIGNETTE_MAX:
+                        return None
+            break
+        else:
+            return None
+        Image.MAX_IMAGE_PIXELS = 40_000_000
+        with Image.open(BytesIO(bytes(donnees))) as im:
+            if im.format not in ("JPEG", "PNG", "WEBP", "GIF", "AVIF"):
+                return None
+            im.seek(0)
+            im = im.convert("RGB")
+            if min(im.size) < 40:          # pixel espion, icône
+                return None
+            im.thumbnail((VIGNETTE_COTE, VIGNETTE_COTE))
+            sortie = BytesIO()
+            im.save(sortie, "JPEG", quality=78, optimize=True)
+            return sortie.getvalue()
+    except (httpx.HTTPError, OSError, ValueError, Image.DecompressionBombError):
+        return None
+    finally:
+        if client is None:
+            c.close()
+
+
+def vignette(url: str) -> bytes | None:
+    """Vignette en cache (fichier vide = image refusée, pas retéléchargée)."""
+    fichier = VIGNETTES / (hashlib.sha256(url.encode()).hexdigest() + ".jpg")
+    if fichier.exists():
+        return fichier.read_bytes() or None
+    image = telecharger_image(url)
+    try:
+        VIGNETTES.mkdir(parents=True, exist_ok=True)
+        fichier.write_bytes(image or b"")
+    except OSError:
+        pass
+    return image
 
 
 # --- Notifications ------------------------------------------------------------------
@@ -497,3 +736,4 @@ def tour(claude_ok, maintenant: float | None = None):
         relever()
     trier(claude_ok)
     annoncer()
+    faire_point(claude_ok)

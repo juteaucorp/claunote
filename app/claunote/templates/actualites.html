@@ -25,6 +25,24 @@
 <p class="filtre">Flux : <strong>{{ flux_nom }}</strong> · <a href="/actualites?vue=tout">voir tous les flux</a></p>
 {% endif %}
 
+{% if essentiel %}
+<section class="carte essentiel" aria-labelledby="titre-essentiel">
+  <div class="tete">
+    <h2 id="titre-essentiel">{{ icone('actualites', 20) }}L'essentiel</h2>
+    <span class="doux">fait à {{ essentiel.le_txt }}</span>
+  </div>
+  <ol>
+    {% for p in essentiel.points %}
+    <li class="{{ 'alerte' if p.articles|selectattr('alerte')|list }}">
+      <p>{{ p.texte }}</p>
+      <div class="sources doux">{% for a in p.articles %}{% if a.lien %}<a href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}" title="{{ a.titre }}">{{ a.source }}</a>{% else %}<a href="#a{{ a.id }}">{{ a.source }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% if essentiel.a_retenir %}<p class="bts"><strong>Pour ton BTS</strong> {{ essentiel.a_retenir }}</p>{% endif %}
+</section>
+{% endif %}
+
 {% if not flux_liste %}
 <div class="carte vide">
   <p><strong>Aucun flux pour l'instant.</strong></p>
@@ -66,8 +84,13 @@
       {% else %}<span class="titre">{{ a.titre }}</span>{% endif %}
       {% if a.pourquoi %}<p class="pourquoi">{{ a.pourquoi }}</p>
       {% elif a.extrait and a.extrait != a.titre %}<p class="extrait doux">{{ a.extrait }}</p>{% endif %}
-      {% if a.noms_sujets %}<div class="sujets">{% for n in a.noms_sujets %}<span>{{ n }}</span>{% endfor %}</div>{% endif %}
+      {% if a.aussi %}<p class="aussi doux">Aussi chez {% for x in a.aussi[:4] %}{% if x.lien %}<a href="{{ x.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ x.id }}" title="{{ x.titre }}">{{ x.source }}</a>{% else %}{{ x.source }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if a.aussi|length > 4 %} et {{ a.aussi|length - 4 }} autre{{ 's' if a.aussi|length > 5 }}{% endif %}</p>{% endif %}
+      {% set c = cours.get(a.notion) if a.notion else none %}
+      {% if a.noms_sujets or a.notion %}<div class="sujets">
+        {% if a.notion %}{% if c %}<a class="notion" href="/doc/{{ c.id }}" title="Revoir ton cours : {{ c.titre or c.nom }}">{{ icone('cours', 14) }}{{ a.notion }} · ton cours</a>{% else %}<span class="notion" title="Notion du BTS">{{ icone('cours', 14) }}{{ a.notion }}</span>{% endif %}{% endif %}
+        {% for n in a.noms_sujets %}<span>{{ n }}</span>{% endfor %}</div>{% endif %}
     </div>
+    {% if a.image %}<img class="vignette" src="/actualites/{{ a.image_id }}/image" alt="" loading="lazy" decoding="async" width="88" height="88">{% endif %}
     <div class="fin">{% include "_actualite_favori.html" %}</div>
   </li>
   {% endfor %}
@@ -124,8 +147,35 @@
   .tout-lu button { display: inline-flex; align-items: center; gap: 6px; }
   @media (max-width: 760px) { .actus li.cible { margin: 0 -16px; padding-left: 16px; padding-right: 16px; } }
   @media (max-width: 420px) { .entete-actu .actions span { display: none; } }
+  .essentiel { padding: 16px 20px; margin-bottom: 8px; border-color: var(--accent); background: linear-gradient(180deg, var(--accent-pale), var(--carte) 70%); }
+  .essentiel .tete { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .essentiel h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 1.1rem; color: var(--accent-fonce); }
+  .essentiel .tete .doux { font-size: .8rem; }
+  .essentiel ol { margin: 10px 0 0; padding: 0; list-style: none; counter-reset: pt; display: grid; gap: 10px; }
+  .essentiel li { counter-increment: pt; display: grid; grid-template-columns: 24px 1fr; column-gap: 8px; }
+  .essentiel li::before { content: counter(pt); grid-row: span 2; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff;
+    font-size: .78rem; font-weight: 700; display: grid; place-items: center; margin-top: 1px; }
+  .essentiel li.alerte::before { background: var(--alerte); content: "!"; }
+  .essentiel li p, .essentiel li.alerte p { margin: 0; line-height: 1.4; color: var(--texte); }
+  .essentiel .sources { font-size: .8rem; margin-top: 2px; }
+  .essentiel .sources a { color: inherit; }
+  .essentiel .bts { margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--bord); font-size: .92rem; }
+  .essentiel .bts strong { color: var(--accent-fonce); margin-right: 4px; }
+  @media (max-width: 760px) { .essentiel { padding: 14px 16px; } }
+  .actus .aussi { margin: 4px 0 0; font-size: .82rem; }
+  .actus .aussi a { color: inherit; }
+  .actus .sujets .notion { display: inline-flex; align-items: center; gap: 4px; border-color: var(--accent); color: var(--accent-fonce); text-decoration: none;
+    font-size: .75rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--accent); }
+  .actus .sujets a.notion:hover { background: var(--accent-pale); }
+  .actus .sujets span.notion { border-color: var(--bord); color: var(--doux); }
+  .actus .vignette { flex: none; width: 88px; height: 88px; object-fit: cover; border-radius: 10px; background: var(--bord); margin-top: 2px; }
+  @media (max-width: 420px) { .actus .vignette { width: 64px; height: 64px; } }
 </style>
 <script>
+  // Image refusée ou introuvable : la place est rendue au texte
+  document.addEventListener("error", (e) => {
+    if (e.target.classList && e.target.classList.contains("vignette")) e.target.remove();
+  }, true);
   // Article ouvert = lu (sans attendre, même si l'onglet change aussitôt)
   document.addEventListener("click", (e) => {
     const lien = e.target.closest && e.target.closest("a[data-lu]");
