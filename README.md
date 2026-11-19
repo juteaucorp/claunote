@@ -124,6 +124,17 @@ jeton Claude, avec « Tester » → Cloudflare → Pronote). Les jetons sont **c
 à part (volume Docker `secrets`) et **jamais réaffichés**. Tout se modifie ensuite dans *Réglages → Installation* ;
 un réglage fait sur le site passe avant celui du `.env`.
 
+**Où sont les fichiers** (au choix dans l'assistant) :
+
+| Choix | Scans et cours rangés | À prévoir |
+| --- | --- | --- |
+| **kDrive** | sur kDrive (Infomaniak) | un jeton API et deux dossiers (ou « Créer les dossiers pour moi ») |
+| **Sur la VM** | dans le volume Docker `fichiers` (`Inbox/`, `Etudes/`) | de la place disque et **ta propre sauvegarde** ; `FICHIERS_HOTE=/chemin` dans `.env` pour un autre disque |
+| **Les deux** | sur la VM, **copie de `Etudes/` sur kDrive** toutes les heures | les deux ; la copie ne supprime jamais rien sur kDrive |
+
+Ce choix se fait **à l'installation** : une fois des documents rangés, le site refuse d'en changer (leurs
+fichiers deviendraient introuvables). Sur la VM, un document supprimé va dans `.corbeille/`, vidée après 30 jours.
+
 > Sauvegarde le volume `secrets` avec la base : sans la clé, les jetons enregistrés sur le site sont à recoller.
 
 À la main, sans l'assistant :

@@ -109,3 +109,14 @@ def test_reglages_jamais_lisibles_au_nom_d_un_compte(base):
             c.execute("SELECT * FROM reglages").fetchall()
     db.reglage_effacer("KDRIVE_ID")
     assert db.reglages() == []
+
+
+def test_fichiers_sur_la_vm_numeros_stables(base):
+    a, b = db.fichier_local_id("Inbox/2024"), db.fichier_local_id("Inbox/2024/tp.pdf")
+    autre = db.fichier_local_id("Inbox/2024-bis/x.pdf")   # même début de nom : ne doit pas suivre
+    assert a >= 10**12 and db.fichier_local_id("Inbox/2024") == a
+    db.fichiers_locaux_deplacer("Inbox/2024", "Etudes/2024")
+    assert db.fichier_local_chemin(b) == "Etudes/2024/tp.pdf" and db.fichier_local_chemin(a) == "Etudes/2024"
+    assert db.fichier_local_chemin(autre) == "Inbox/2024-bis/x.pdf"
+    db.copie_kdrive_faite("BTS1/x.pdf", 3, 1.5, 9)
+    assert db.copies_kdrive()["BTS1/x.pdf"]["kdrive_id"] == 9

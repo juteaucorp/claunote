@@ -142,6 +142,25 @@ def kdrive_configure() -> bool:
     return all(os.environ.get(k) for k in ("KDRIVE_TOKEN", "KDRIVE_ID", "KDRIVE_ETUDES_ID", "KDRIVE_INBOX_ID"))
 
 
+def copie_kdrive_configuree() -> bool:
+    """« Les deux » : la copie de sauvegarde n'a besoin que du jeton, du kDrive et d'un dossier."""
+    return all(os.environ.get(k) for k in ("KDRIVE_TOKEN", "KDRIVE_ID", "KDRIVE_ETUDES_ID"))
+
+
+def stockage_pret() -> bool:
+    """Le worker peut-il travailler ? Sur la VM : toujours ; avec kDrive : une fois kDrive réglé."""
+    s = stockage()
+    return True if s == "local" else copie_kdrive_configuree() if s == "les_deux" else kdrive_configure()
+
+
+def dossiers() -> tuple[int, int]:
+    """(cours rangés, inbox) du stockage choisi : numéros kDrive, ou ceux des dossiers de la VM."""
+    if stockage() in ("local", "les_deux"):
+        from claunote.stockage_local import Local
+        return Local.from_env().racines()
+    return int(os.environ.get("KDRIVE_ETUDES_ID") or 0), int(os.environ.get("KDRIVE_INBOX_ID") or 0)
+
+
 # --- Cloudflare : le jeton dans un fichier lu par cloudflared (--token-file) --------------
 
 def ecrire_jeton_tunnel(jeton: str):

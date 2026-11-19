@@ -28,7 +28,8 @@ from starlette.datastructures import FormData
 
 from claunote import (actualites, agent, anki, appareils, auth, carte_mentale, cles, comptes, db, decoupage, demande,
                       disque, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
-                      pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible)
+                      pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
+                      stockage_local)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -45,6 +46,8 @@ async def lifespan(app):
     app.state.limiteur = auth.Limiteur()
     comptes.migrer()   # installation d'avant les comptes : son identifiant et son mot de passe font l'admin
     installation.detecter()   # installation neuve : l'assistant s'ouvre ; installation existante : rien d'imposé
+    if reglages.stockage() != "kdrive":
+        _appliquer_reglages()   # fichiers sur la VM : numéros des dossiers Inbox et Etudes
     agent.journal = _noter_appel  # les appels faits par le site (Demander, matières) vont sur la page État
     if (db.compte(1) or {}).get("mdp_defaut"):
         print("ATTENTION : mot de passe par défaut (admin / claunote), "
@@ -707,9 +710,18 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
 def _appliquer_reglages():
     """Le site prend les nouveaux réglages tout de suite ; le worker voit « reglages_version » et redémarre."""
     global INBOX_ID, ETUDES_ID
-    INBOX_ID = int(os.environ.get("KDRIVE_INBOX_ID") or 0)
-    ETUDES_ID = int(os.environ.get("KDRIVE_ETUDES_ID") or 0)
+    try:
+        ETUDES_ID, INBOX_ID = reglages.dossiers()
+    except OSError as e:   # dossier des fichiers de la VM pas monté
+        print(f"dossiers du stockage illisibles : {e}", flush=True)
     agent.rafraichir_env()
+
+
+def _json_ou_rien(texte):
+    try:
+        return json.loads(texte) if texte else None
+    except ValueError:
+        return None
 
 
 def _page_installation(request: Request, etape: str | None, statut: int = 200, **plus):
@@ -717,7 +729,8 @@ def _page_installation(request: Request, etape: str | None, statut: int = 200, *
         "etape": etape, "etapes": installation.ETAPES, "noms": installation.NOMS,
         "precedente": installation.precedente(etape) if etape else None,
         "r": reglages.etat(), "stockages": reglages.STOCKAGES, "stockage": reglages.stockage(),
-        "kdrive_ok": reglages.kdrive_configure(), "disque": disque.etat(), "besoins": disque.BESOINS,
+        "kdrive_ok": reglages.stockage_pret(), "fichiers_dir": str(stockage_local.dossier()),
+        "copie_kdrive": _json_ou_rien(db.etat_valeur("copie_kdrive")), "disque": disque.etat(), "besoins": disque.BESOINS,
         "besoin_total": disque.BESOIN_INSTALLATION, "tunnel_actif": maj.tunnel_actif(), "maj_present": maj.present(),
         "analyse": local.reglages(), "compte_admin": db.compte(moi()["id"]), "a_faire": installation.a_faire(),
         **plus}, status_code=statut)
@@ -769,11 +782,28 @@ def _etape_compte(request: Request, form: FormData) -> tuple[str | None, str | N
 
 
 def _etape_stockage(request: Request, form: FormData, action: str) -> tuple[str | None, str | None, dict]:
+    """kdrive : tout sur kDrive ; local : tout sur la VM ; les_deux : sur la VM + copie de Etudes/ sur kDrive."""
     choix = form.get("stockage") or "kdrive"
     if choix not in reglages.STOCKAGES:
         return None, "Choix de stockage inconnu.", {}
-    if choix != "kdrive":
-        return None, "Les fichiers sur la VM arrivent bientôt : pour l'instant, choisis kDrive.", {}
+    if choix != reglages.stockage():
+        with db.sans_compte():
+            deja = db.nb_documents()
+        if deja:   # leurs fichiers sont là où ils ont été rangés : changer les rendrait introuvables
+            return None, (f"Il y a déjà {deja} document(s) rangé(s) avec « {reglages.STOCKAGES[reglages.stockage()]} » : "
+                          "changer de stockage les rendrait introuvables. Ce choix se fait à l'installation."), {}
+    compte_id = moi()["id"]
+    if choix == "local":
+        if action == "tester":
+            d = disque.etat(str(stockage_local.dossier()))
+            return (d["phrase"] if d else "Espace du dossier des fichiers inconnu."), None, {}
+        try:
+            stockage_local.Local.from_env()   # crée Inbox, Etudes et la corbeille
+        except OSError as e:
+            return None, f"Dossier des fichiers inutilisable ({stockage_local.dossier()}) : {e}", {}
+        reglages.ecrire("STOCKAGE", choix, compte_id)
+        _noter_reglage(request, "fichiers sur la VM")
+        return f"Fichiers sur la VM, dans {stockage_local.dossier()}.", None, {}
     jeton = installation.secret_ou_garde("KDRIVE_TOKEN", form.get("kdrive_token"))
     ids = {}
     for cle, nom in (("KDRIVE_ID", "Numéro du kDrive"), ("KDRIVE_ETUDES_ID", "Dossier des cours"),
@@ -781,6 +811,8 @@ def _etape_stockage(request: Request, form: FormData, action: str) -> tuple[str 
         ids[cle], erreur = installation.nombre(form.get(cle.lower()), nom)
         if erreur:
             return None, erreur, {}
+    if choix == "les_deux":
+        ids.pop("KDRIVE_INBOX_ID")   # les scans arrivent sur la VM : kDrive ne garde que la copie
     if not jeton or not ids["KDRIVE_ID"]:
         return None, "Il faut le jeton API et le numéro du kDrive.", {}
     if action == "creer_dossiers":
@@ -788,26 +820,33 @@ def _etape_stockage(request: Request, form: FormData, action: str) -> tuple[str 
             etudes, inbox = reglages.creer_dossiers_kdrive(jeton, ids["KDRIVE_ID"])
         except Exception as e:
             return None, f"kDrive refuse : {str(e)[:200]}", {}
-        ids["KDRIVE_ETUDES_ID"], ids["KDRIVE_INBOX_ID"] = str(etudes), str(inbox)
+        ids["KDRIVE_ETUDES_ID"] = str(etudes)
+        if "KDRIVE_INBOX_ID" in ids:
+            ids["KDRIVE_INBOX_ID"] = str(inbox)
     elif action == "tester":
-        ok, texte, racine = reglages.tester_kdrive(jeton, ids["KDRIVE_ID"], *(int(ids[k]) for k in (
-            "KDRIVE_ETUDES_ID", "KDRIVE_INBOX_ID") if ids[k]))
+        ok, texte, racine = reglages.tester_kdrive(jeton, ids["KDRIVE_ID"], *(int(v) for k, v in ids.items()
+                                                                               if k != "KDRIVE_ID" and v))
         return (texte, None, {"racine": racine, "saisi": ids}) if ok else (None, texte, {"saisi": ids})
-    if not ids["KDRIVE_ETUDES_ID"] or not ids["KDRIVE_INBOX_ID"]:
-        return None, "Choisis les deux dossiers (ou « Créer les dossiers »).", {"saisi": ids}
-    ok, texte, _ = reglages.tester_kdrive(jeton, ids["KDRIVE_ID"], int(ids["KDRIVE_ETUDES_ID"]),
-                                          int(ids["KDRIVE_INBOX_ID"]))
+    if not all(ids.values()):
+        return None, ("Choisis le dossier de la copie (ou « Créer les dossiers »)." if choix == "les_deux"
+                      else "Choisis les deux dossiers (ou « Créer les dossiers »)."), {"saisi": ids}
+    ok, texte, _ = reglages.tester_kdrive(jeton, ids["KDRIVE_ID"], *(int(v) for k, v in ids.items() if k != "KDRIVE_ID"))
     if not ok:
         return None, texte + " Rien n'a été enregistré.", {"saisi": ids}
-    compte_id = moi()["id"]
+    if choix == "les_deux":
+        try:
+            stockage_local.Local.from_env()
+        except OSError as e:
+            return None, f"Dossier des fichiers inutilisable ({stockage_local.dossier()}) : {e}", {"saisi": ids}
     reglages.ecrire("STOCKAGE", choix, compte_id)
     if (form.get("kdrive_token") or "").strip():
         reglages.ecrire("KDRIVE_TOKEN", jeton, compte_id)
     for cle, valeur in ids.items():
         reglages.ecrire(cle, valeur, compte_id)
-    _noter_reglage(request, "stockage kDrive")
+    _noter_reglage(request, "stockage " + reglages.STOCKAGES[choix])
     cree = " Dossiers Claunote/Etudes et Claunote/Inbox prêts." if action == "creer_dossiers" else ""
-    return f"kDrive enregistré.{cree} {texte}", None, {}
+    quoi = "Fichiers sur la VM, copie de sauvegarde sur kDrive toutes les heures." if choix == "les_deux" else "kDrive enregistré."
+    return f"{quoi}{cree} {texte}", None, {}
 
 
 def _etape_claude(request: Request, form: FormData, action: str) -> tuple[str | None, str | None]:

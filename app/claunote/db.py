@@ -532,6 +532,21 @@ BEGIN
         END IF;
     END LOOP;
 END $$;
+-- Fichiers sur la VM (stockage local, stockage_local.py) : un identifiant stable par chemin, comme les ID kDrive.
+-- Les numéros commencent à 10^12 : jamais confondus avec un ID kDrive.
+CREATE SEQUENCE IF NOT EXISTS fichiers_locaux_id START 1000000000000;
+CREATE TABLE IF NOT EXISTS fichiers_locaux (
+    id     BIGINT PRIMARY KEY DEFAULT nextval('fichiers_locaux_id'),
+    chemin TEXT UNIQUE NOT NULL   -- relatif au dossier des fichiers (FICHIERS_DIR) ; « . » pour la racine
+);
+-- « Les deux » : ce qui a déjà été copié sur kDrive (copie de sauvegarde, dans un seul sens)
+CREATE TABLE IF NOT EXISTS copies_kdrive (
+    chemin    TEXT PRIMARY KEY,
+    taille    BIGINT NOT NULL,
+    mtime     DOUBLE PRECISION NOT NULL,
+    kdrive_id BIGINT,
+    copie_le  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 -- Réglages de l'installation (reglages.py) : choisis sur le site, secrets chiffrés avec une clé hors de la base
 CREATE TABLE IF NOT EXISTS reglages (
     cle      TEXT PRIMARY KEY,
@@ -2599,3 +2614,42 @@ def reglage_effacer(cle: str):
         c.execute("DELETE FROM reglages WHERE cle = %s", (cle,))
         c.execute("INSERT INTO etat VALUES ('reglages_version', %s) ON CONFLICT (cle) DO UPDATE SET valeur = EXCLUDED.valeur",
                   (str(time.time()),))
+
+
+# --- Fichiers sur la VM (stockage_local.py) ------------------------------------------------
+
+def fichier_local_id(chemin: str) -> int:
+    with sans_compte(), connect() as c:
+        ligne = c.execute("SELECT id FROM fichiers_locaux WHERE chemin = %s", (chemin,)).fetchone()
+        if ligne:
+            return ligne["id"]
+        return c.execute("INSERT INTO fichiers_locaux (chemin) VALUES (%s) ON CONFLICT (chemin) DO UPDATE "
+                         "SET chemin = EXCLUDED.chemin RETURNING id", (chemin,)).fetchone()["id"]
+
+
+def fichier_local_chemin(fichier_id: int) -> str | None:
+    with sans_compte(), connect() as c:
+        ligne = c.execute("SELECT chemin FROM fichiers_locaux WHERE id = %s", (fichier_id,)).fetchone()
+        return ligne["chemin"] if ligne else None
+
+
+def fichiers_locaux_deplacer(ancien: str, nouveau: str):
+    """Un fichier ou un dossier a changé de chemin : lui et tout son contenu gardent leurs identifiants."""
+    with sans_compte(), connect() as c:
+        c.execute("DELETE FROM fichiers_locaux WHERE chemin = %s OR left(chemin, length(%s) + 1) = %s || '/'",
+                  (nouveau, nouveau, nouveau))   # un ancien fichier du même nom, déjà parti
+        c.execute("UPDATE fichiers_locaux SET chemin = %s || substr(chemin, length(%s) + 1) "
+                  "WHERE chemin = %s OR left(chemin, length(%s) + 1) = %s || '/'",
+                  (nouveau, ancien, ancien, ancien, ancien))
+
+
+def copies_kdrive() -> dict[str, dict]:
+    with sans_compte(), connect() as c:
+        return {r["chemin"]: r for r in c.execute("SELECT * FROM copies_kdrive").fetchall()}
+
+
+def copie_kdrive_faite(chemin: str, taille: int, mtime: float, kdrive_id: int | None):
+    with sans_compte(), connect() as c:
+        c.execute("INSERT INTO copies_kdrive (chemin, taille, mtime, kdrive_id) VALUES (%s, %s, %s, %s) "
+                  "ON CONFLICT (chemin) DO UPDATE SET taille = EXCLUDED.taille, mtime = EXCLUDED.mtime, "
+                  "kdrive_id = EXCLUDED.kdrive_id, copie_le = now()", (chemin, taille, mtime, kdrive_id))

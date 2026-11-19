@@ -33,7 +33,8 @@ from pathlib import Path, PurePosixPath
 import httpx
 
 from claunote import (actualites, agent, comptes, db, decoupage, disque, importation, index, lecture, local, modeles,
-                      notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible)
+                      notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
+                      stockage_local)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
                             SansForfait, analyser)
 from claunote.kdrive import KDrive, KDriveIndisponible
@@ -1397,6 +1398,31 @@ def surveiller_disque():
                     if e["niveau"] == "critique" else "💽 Peu de place sur le disque", e["phrase"], "/etat")
 
 
+COPIE_KDRIVE = 3600        # « les deux » : copie de sauvegarde vers kDrive toutes les heures
+_copie = {"le": float("-inf")}
+
+
+def entretien_local(kd):
+    """Fichiers sur la VM : corbeille vidée après 30 jours ; « les deux » : copie de Etudes/ sur kDrive.
+    Une panne de kDrive ne gêne que la copie, jamais le travail sur la VM."""
+    if not isinstance(kd, stockage_local.Local) or time.monotonic() - _copie["le"] < COPIE_KDRIVE:
+        return
+    _copie["le"] = time.monotonic()
+    purges = kd.purger_corbeille()
+    if purges:
+        log(f"corbeille de la VM : {purges} élément(s) de plus de 30 jours effacé(s)")
+    if reglages.stockage() != "les_deux" or not reglages.copie_kdrive_configuree():
+        return
+    try:
+        n = kd.copier_vers_kdrive(KDrive.distant(), int(os.environ["KDRIVE_ETUDES_ID"]), ARRET)
+        if n:
+            log(f"copie kDrive : {n} fichier(s) copié(s)")
+        db.etat_ecrire("copie_kdrive", json.dumps({"le": _iso(time.time()), "copies": n, "erreur": None}))
+    except (KDriveIndisponible, httpx.HTTPError, OSError) as e:
+        log(f"copie kDrive impossible, nouvel essai dans 1 h : {e}")
+        db.etat_ecrire("copie_kdrive", json.dumps({"le": _iso(time.time()), "copies": 0, "erreur": str(e)[:200]}))
+
+
 def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     """Un passage du worker. Renvoie l'heure du dernier nettoyage de l'inbox."""
     etape("disque", surveiller_disque)
@@ -1426,6 +1452,8 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
         if claude_ok and not ETAT["reste"] and not ARRET.is_set():
             etape("relectures par Claude", relire_avec_claude, kd)
     indexer_si_calme()
+    if not ARRET.is_set():
+        etape("entretien des fichiers de la VM", entretien_local, kd)
     if time.monotonic() - dernier_nettoyage > NETTOYAGE and KDRIVE.disponible() and not ARRET.is_set():
         etape("nettoyage", nettoyer_inbox, kd)
         return time.monotonic()
@@ -1457,14 +1485,14 @@ def relancer(pourquoi: str):
     os.execv(sys.executable, [sys.executable, "-m", "claunote.worker"])
 
 
-def attendre_kdrive() -> bool:
-    """Installation neuve : kDrive pas encore réglé. On attend les réglages du site (assistant d'installation).
+def attendre_stockage() -> bool:
+    """Installation neuve : stockage pas encore réglé. On attend les réglages du site (assistant d'installation).
     Faux si le worker doit s'arrêter."""
     global INBOX_ID, ETUDES_ID
     signale = False
-    while not reglages.kdrive_configure():
+    while not reglages.stockage_pret():
         if not signale:
-            log("kDrive pas encore configuré : en attente des réglages du site (assistant d'installation)")
+            log("stockage pas encore configuré : en attente des réglages du site (assistant d'installation)")
             signale = True
         if ARRET.wait(15):
             return False
@@ -1472,8 +1500,7 @@ def attendre_kdrive() -> bool:
             reglages.charger_dans_env()
         except Exception as e:
             log(f"réglages illisibles : {e}")
-    INBOX_ID = int(os.environ["KDRIVE_INBOX_ID"])
-    ETUDES_ID = int(os.environ["KDRIVE_ETUDES_ID"])
+    ETUDES_ID, INBOX_ID = reglages.dossiers()
     agent.rafraichir_env()
     return True
 
@@ -1490,7 +1517,7 @@ def main():
             if ARRET.wait(5):
                 return
     reglages.charger_dans_env()   # la base répond maintenant : ses réglages passent avant le .env
-    if not attendre_kdrive():
+    if not attendre_stockage():
         return
     version_reglages = db.etat_valeur("reglages_version")
     agent.journal = noter_appel

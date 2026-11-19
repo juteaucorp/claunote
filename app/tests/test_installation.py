@@ -124,8 +124,25 @@ def test_kdrive_teste_avant_d_enregistrer(client, base_reglages, monkeypatch):
     assert r.status_code == 200 and "Claunote/Etudes" in r.text
     assert main.INBOX_ID == 502 and main.ETUDES_ID == 501 and reglages.kdrive_configure()
     assert base_reglages["KDRIVE_TOKEN"]["chiffre"] and "bon-jeton" not in r.text
+    # Déjà des documents (8) : changer de stockage les rendrait introuvables
     r = client.post("/installation/stockage", data={**donnees, "stockage": "local", "kdrive_token": ""})
-    assert r.status_code == 400   # PR suivante : stockage sur la VM
+    assert r.status_code == 400 and "introuvables" in r.text
+
+
+def test_fichiers_sur_la_vm(client, base_reglages, monkeypatch, tmp_path):
+    monkeypatch.setattr(db, "nb_documents", lambda: 0)
+    monkeypatch.setenv("FICHIERS_DIR", str(tmp_path / "fichiers"))
+    ids = {}
+    monkeypatch.setattr(db, "fichier_local_id", lambda chemin: ids.setdefault(chemin, 10**12 + len(ids)))
+    r = client.post("/installation/stockage", data={"stockage": "local"}, follow_redirects=False)
+    assert r.status_code == 303 and os.environ["STOCKAGE"] == "local" and reglages.stockage_pret()
+    assert (tmp_path / "fichiers" / "Inbox").is_dir() and main.INBOX_ID == ids["Inbox"]
+    # Les deux : la VM + une copie sur kDrive, sans dossier inbox kDrive
+    monkeypatch.setattr(reglages, "tester_kdrive", lambda jeton, drive, *ids_: (True, "Connexion à kDrive réussie.", []))
+    r = client.post("/installation/stockage", data={"stockage": "les_deux", "kdrive_token": "jeton", "kdrive_id": "42",
+                                                    "kdrive_etudes_id": "7", "retour": "reglages"})
+    assert r.status_code == 200 and "copie de sauvegarde" in r.text and reglages.stockage_pret()
+    assert "KDRIVE_INBOX_ID" not in base_reglages and base_reglages["KDRIVE_ETUDES_ID"]["valeur"] == "7"
 
 
 def test_cloudflare_allume_le_tunnel_par_le_service_maj(client, base_reglages, monkeypatch):
