@@ -290,7 +290,7 @@
 {% set evals = nb_evaluations_proches() if peut('agenda') else 0 %}
 {% set a_importer = nb_import_a_confirmer() if est_admin() else 0 %}
 {% set attente = nb_a_verifier() + a_importer %}
-{% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
+{% set rubrique = 'accueil' if chemin == '/' else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours', '/partages')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
 {% set admin = est_admin() %}
 {% set en_pause = analyses_en_pause() if admin else False %}
 {% macro liens_plus() %}

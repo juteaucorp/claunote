@@ -21,12 +21,18 @@
 <p class="doux">📁 <a href="/hors-cours">Hors cours</a> : {{ nb_hors_cours }} document{{ 's' if nb_hors_cours > 1 }}
   administratif{{ 's' if nb_hors_cours > 1 }} ou sans intérêt pour réviser, rangé{{ 's' if nb_hors_cours > 1 }} à part.</p>
 {% endif %}
+{% if partage %}
+<p class="doux">🌐 <a href="/partages">Partagés par les autres comptes</a> · tes cours sont privés tant que tu ne les rends pas publics (🔒 / 🌐 sur chaque matière ou chaque cours).</p>
+{% endif %}
 {% for niveau in niveaux %}
 <h2>{{ niveau }}</h2>
 <div class="grille">
   {% for matiere, types in arbre[niveau].items() %}
   <div class="carte">
-    <strong>{{ matiere }}</strong>
+    <div class="tete-matiere"><strong>{{ matiere }}</strong>
+    {% if partage %}{% set pub = (niveau, matiere) in publiques %}
+    <form method="post" action="/bibliotheque/visibilite"><input type="hidden" name="niveau" value="{{ niveau }}"><input type="hidden" name="matiere" value="{{ matiere }}">
+      <button name="valeur" value="{{ 'prive' if pub else 'public' }}" class="bouton-visibilite" title="{{ 'Matière publique : les autres comptes lisent ses cours. Toucher pour la rendre privée.' if pub else 'Matière privée. Toucher pour la rendre publique : les autres comptes liront ses cours (sans les modifier).' }}" aria-label="{{ 'Rendre privée' if pub else 'Rendre publique' }}">{{ '🌐' if pub else '🔒' }}</button></form>{% endif %}</div>
     <div class="pastilles">
       {% for t in types %}
       <a href="/liste?niveau={{ niveau|urlencode }}&matiere={{ matiere|urlencode }}&type={{ t.type|urlencode }}">{{ t.type }} · {{ t.n }}</a>
@@ -36,4 +42,9 @@
   {% endfor %}
 </div>
 {% endfor %}
+<style>
+  .tete-matiere { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .tete-matiere form { margin: 0; }
+  .bouton-visibilite { padding: 0 6px; background: none; border: none; font-size: 1rem; cursor: pointer; }
+</style>
 {% endblock %}
