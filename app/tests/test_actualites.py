@@ -55,6 +55,7 @@ class Base:
         monkeypatch.setattr(db, "abonnements", lambda: [{"endpoint": "x"}] if self.abonnes else [])
         monkeypatch.setattr(db, "notifier", lambda *a, **k: self.notifs.append(a) or True)
         monkeypatch.setattr(db, "etat_valeur", lambda k: None)
+        monkeypatch.setattr(db, "formations_actuelles", lambda: ["BTS Services informatiques aux organisations"])
         monkeypatch.setattr(db, "alertes_recentes", lambda jours=7: ["fuite-france-travail"])
         monkeypatch.setattr(db, "evenements_recents", lambda jours=3, limite=80: ["fuite-france-travail", "proxmox-9-1"])
         monkeypatch.setattr(ac.local, "reglages", lambda: {"mode": "local_d_abord"})
@@ -255,6 +256,7 @@ def test_passage_en_sisr_garde_les_sujets_modifies(monkeypatch):
     monkeypatch.setattr(db, "sujet_supprimer", retires.append)
     monkeypatch.setattr(db, "sujet_ajouter", lambda nom, d, m: ajoutes.append(nom))
     monkeypatch.setattr(db, "articles_retrier", lambda: 0)
+    monkeypatch.setattr(db, "sujet_maj", lambda i, **k: pytest.fail("descriptions déjà modifiées : gardées"))
     flux = []
     monkeypatch.setattr(db, "flux_ajouter", lambda url, titre, site: flux.append(titre))
     ac.initialiser()
@@ -305,6 +307,7 @@ class Point:
         monkeypatch.setattr(db, "etat_valeur", self.etat.get)
         monkeypatch.setattr(db, "etat_ecrire", lambda k, v: self.etat.update({k: v}))
         monkeypatch.setattr(db, "articles_pour_point", lambda h, s, n: candidats)
+        monkeypatch.setattr(db, "formations_actuelles", lambda: [])
         monkeypatch.setattr(ac.local, "reglages", lambda: {"mode": "local_d_abord"})
 
         def demander(tache, prompt, cwd, entree=None, timeout=0, lire=None, **k):
@@ -321,7 +324,7 @@ def test_point_du_jour(monkeypatch):
     assert p.appels == [("actualites_point", [1, 3])]
     point = ac.point()
     assert point["points"] == [{"texte": "Fuite chez X : 2 M de comptes.", "ids": [1, 3]}]   # ids inventés retirés
-    assert point["a_retenir"] == "Révise le RGPD." and point["ids"] == [1, 3] and point["modele"] == "opus"
+    assert "a_retenir" not in point and point["ids"] == [1, 3] and point["modele"] == "opus"
     assert not ac.faire_point(lambda: True, 10_060)      # rien de neuf : pas de nouvel appel
     c.append(carte(5))
     assert not ac.faire_point(lambda: True, 10_060)      # du neuf, mais le dernier point date d'une minute
@@ -405,7 +408,9 @@ def test_page_actualites_essentiel_regroupement_et_cours(client, monkeypatch):
                                                   "points": [{"texte": "Fuite chez X.", "ids": [1]}]})
     r = client.get("/actualites")
     assert r.status_code == 200
-    assert "L'essentiel" in r.text and "Fuite chez X." in r.text and "Révise le RGPD." in r.text
+    assert "L'essentiel" in r.text and "Fuite chez X." in r.text
+    assert "Pour ton BTS" not in r.text and "Révise le RGPD." not in r.text   # outil pour toutes les formations
+    assert r.text.index("Fuite chez X.") < r.text.index("Tout marquer comme lu") < r.text.index('id="a1"')
     assert "Aussi chez" in r.text and ">Numerama</a>" in r.text and r.text.count('id="a2"') == 0   # regroupé
     assert 'href="/doc/55"' in r.text and "VLAN · ton cours" in r.text     # lié à ton cours
     assert 'src="/actualites/1/image"' in r.text
@@ -419,3 +424,89 @@ def test_image_d_un_article(client, monkeypatch):
     r = client.get("/actualites/1/image")
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content == b"\xff\xd8jpeg"
     assert client.get("/actualites/2/image").status_code == 404
+
+
+# --- Toutes formations, notification du jour ----------------------------------------------
+
+def test_consignes_sans_rien_de_propre_au_bts(monkeypatch):
+    for texte in (ac.PROMPT, ac.PROMPT_POINT, *(d for _, d, _ in ac.SUJETS_DEFAUT)):
+        assert "BTS" not in texte and "SISR" not in texte
+    monkeypatch.setattr(db, "formations_actuelles", lambda: ["Terminale générale"])
+    assert "Sa formation : Terminale générale." in ac.prompt(SUJETS)
+    monkeypatch.setattr(db, "formations_actuelles", lambda: [])
+    assert "Sa formation" not in ac.prompt(SUJETS)   # non renseignée : l'IA se fie aux sujets suivis
+
+
+def test_descriptions_bts_rendues_neutres_si_intactes(monkeypatch):
+    etat, maj = {}, {}
+    monkeypatch.setattr(db, "etat_valeur", etat.get)
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
+    monkeypatch.setattr(db, "sujets", lambda: [{"id": 1, "nom": "Réseaux", "description": ac.DESCRIPTIONS_BTS["Réseaux"]},
+                                               {"id": 2, "nom": "Systèmes et virtualisation", "description": "À moi"}])
+    monkeypatch.setattr(db, "sujet_maj", lambda i, **k: maj.update({i: k["description"]}))
+    ac.descriptions_neutres()
+    assert maj == {1: ac.SUJETS_DEFAUT[1][1]}   # celle qui a été modifiée est gardée
+    ac.descriptions_neutres()
+    assert len(maj) == 1
+
+
+class Quotidien:
+    def __init__(self, monkeypatch, etat=None, nouvelles=0):
+        self.etat, self.notifs = dict(etat or {}), []
+        monkeypatch.setattr(db, "etat_valeur", self.etat.get)
+        monkeypatch.setattr(db, "etat_ecrire", lambda k, v: self.etat.update({k: v}))
+        monkeypatch.setattr(db, "nb_actualites_nouvelles", lambda: nouvelles)
+        monkeypatch.setattr(db, "notifier", lambda *a: self.notifs.append(a) or True)
+        monkeypatch.setattr(notifications, "preferences", lambda: {"actualites": True})
+
+
+def paris(jour, h, m=0):
+    return dt.datetime(2026, 11, jour, h, m, tzinfo=notifications.PARIS)
+
+
+def test_heure_du_jour_apprise_de_tes_lectures(monkeypatch):
+    q = Quotidien(monkeypatch)
+    assert ac.heure_quotidienne()[0] == ac.QUOTIDIEN_DEFAUT          # pas encore d'habitudes : 7 h 30
+    for jour in range(1, 7):
+        ac.noter_lecture(paris(jour, 12, 10))
+        ac.noter_lecture(paris(jour, 12, 40))                       # même heure, même jour : compté une fois
+        if jour % 2:
+            ac.noter_lecture(paris(jour, 21))
+    assert json.loads(q.etat["actualites_lectures"])["2026-11-01"] == [12, 21]
+    heure, pourquoi = ac.heure_quotidienne()
+    assert heure == dt.time(12, 0) and "vers 12 h (6 jours sur 6)" in pourquoi
+    ac.noter_lecture(paris(30, 8))                                   # plus de 28 jours : oubliés
+    assert "2026-11-01" not in json.loads(q.etat["actualites_lectures"])
+    q.etat["actualites"] = json.dumps({"quotidien": "18:15"})
+    assert ac.heure_quotidienne() == (dt.time(18, 15), "heure choisie")
+    q.etat["actualites"] = json.dumps({"quotidien": "non"})
+    assert ac.heure_quotidienne()[0] is None
+
+
+def test_notification_du_jour(monkeypatch):
+    point = {"le": paris(20, 6).timestamp(), "ids": [1, 2],
+             "points": [{"texte": "Faille FortiOS exploitée.", "ids": [1]}, {"texte": "Fuite chez X.", "ids": [2]},
+                        {"texte": "Troisième.", "ids": [2]}]}
+    q = Quotidien(monkeypatch, {"actualites_point": json.dumps(point)})
+    assert not ac.quotidien(paris(20, 7, 0))                         # avant 7 h 30
+    assert ac.quotidien(paris(20, 7, 31))
+    assert q.notifs == [("actu-jour:2026-11-20", "📰 L'essentiel : 3 infos du jour",
+                         "Faille FortiOS exploitée. · Fuite chez X.", "/actualites")]
+    assert not ac.quotidien(paris(20, 9))                            # une seule par jour
+    assert not ac.quotidien(paris(21, 11)) and len(q.notifs) == 1    # worker arrêté à l'heure prévue : pas le soir
+
+
+def test_notification_du_jour_sans_point(monkeypatch):
+    q = Quotidien(monkeypatch, nouvelles=4)
+    assert ac.quotidien(paris(20, 8))
+    assert q.notifs[0][1] == "📰 4 articles pour toi"
+    q = Quotidien(monkeypatch, nouvelles=0)
+    assert not ac.quotidien(paris(20, 8)) and q.notifs == []          # rien à dire : rien n'est envoyé
+
+
+def test_reglage_notification_du_jour(client, monkeypatch):
+    client.post("/actualites/reglages", data={"ia": "true", "notifs": "true", "quotidien": "heure", "heure": "06:45"},
+                follow_redirects=False)
+    assert json.loads(client.etat["actualites"])["quotidien"] == "06:45"
+    client.post("/actualites/reglages", data={"quotidien": "heure", "heure": "pas une heure"}, follow_redirects=False)
+    assert json.loads(client.etat["actualites"])["quotidien"] == "auto"

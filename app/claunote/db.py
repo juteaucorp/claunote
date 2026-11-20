@@ -1055,6 +1055,23 @@ def formations() -> list[dict]:
         return c.execute("SELECT * FROM formations ORDER BY niveau").fetchall()
 
 
+def formations_actuelles() -> list[str]:
+    """Pour les actualités (communes à tous les comptes) : la formation de l'année la plus avancée de chaque
+    compte, l'intitulé officiel s'il est connu ; les admins d'abord."""
+    ordre = ["6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale", "BTS1", "BTS2"]
+    with connect() as c:
+        lignes = c.execute("""SELECT f.compte_id, f.niveau, f.nom, f.referentiel->>'formation' AS officiel,
+                                     coalesce(k.role = 'admin', false) AS admin
+                              FROM formations f LEFT JOIN comptes k ON k.id = f.compte_id""").fetchall()
+    meilleures = {}
+    for f in lignes:
+        rang = ordre.index(f["niveau"]) if f["niveau"] in ordre else -1
+        if f["compte_id"] not in meilleures or rang > meilleures[f["compte_id"]][0]:
+            meilleures[f["compte_id"]] = (rang, f)
+    tri = sorted(meilleures.values(), key=lambda x: (not x[1]["admin"], x[1]["compte_id"]))
+    return list(dict.fromkeys((f["officiel"] or f["nom"]).strip() for _, f in tri if (f["officiel"] or f["nom"]).strip()))
+
+
 def definir_formation(niveau: str, nom: str):
     """Nouvelle formation (ou nouveau nom) : référentiel à (re)chercher par le worker. Nom vide : oubliée."""
     with connect() as c:
