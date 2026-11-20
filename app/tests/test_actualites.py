@@ -260,7 +260,7 @@ def test_passage_en_sisr_garde_les_sujets_modifies(monkeypatch):
     flux = []
     monkeypatch.setattr(db, "flux_ajouter", lambda url, titre, site: flux.append(titre))
     ac.initialiser()
-    assert flux == ["Numerama", "01net"]   # nouveaux flux proposés une fois aux installations existantes
+    assert flux == ["Numerama", "01net", "Clubic"]   # nouveaux flux proposés une fois aux installations existantes
     assert retires == [2]   # « Réseaux et systèmes » a été modifié : gardé
     assert ajoutes == ["Cybersécurité", "Réseaux", "Systèmes et virtualisation"]
     ac.initialiser()        # une seule fois
