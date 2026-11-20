@@ -1845,14 +1845,21 @@ def notification_connue(cle: str) -> bool:
         return c.execute("SELECT 1 FROM notifications WHERE cle = %s", (cle,)).fetchone() is not None
 
 
-def reserver_notifications():
+def reserver_notifications(seulement: tuple[str, ...] | None = None):
     """Prend la file d'un coup (statut « envoi ») : un second worker, ou un tour suivant, ne peut
-    pas renvoyer les mêmes. Un arrêt en plein envoi en perd au pire une, jamais de doublon."""
+    pas renvoyer les mêmes. Un arrêt en plein envoi en perd au pire une, jamais de doublon.
+
+    `seulement` : préfixes de clé à prendre (en cours ou au travail, seules les urgentes partent)."""
     with connect() as c:
+        # 20 h : une notification de la veille au soir peut attendre le silence puis une journée de travail
         c.execute("UPDATE notifications SET statut = 'ignore', erreur = 'trop ancienne' "
-                  "WHERE statut = 'attente' AND cree_le <= now() - interval '12 hours'")
-        return sorted(c.execute("UPDATE notifications SET statut = 'envoi' WHERE statut = 'attente' "
-                                "RETURNING *").fetchall(), key=lambda n: n["id"])
+                  "WHERE statut = 'attente' AND cree_le <= now() - interval '20 hours'")
+        filtre, params = "", ()
+        if seulement is not None:
+            # Préfixes terminés par « : » (« jour: ») : comparés au début de la clé
+            filtre, params = " AND split_part(cle, ':', 1) || ':' = ANY(%s)", (list(seulement),)
+        return sorted(c.execute("UPDATE notifications SET statut = 'envoi' WHERE statut = 'attente'" + filtre
+                                + " RETURNING *", params).fetchall(), key=lambda n: n["id"])
 
 
 def maj_notification(notif_id: int, statut: str, erreur: str | None = None):

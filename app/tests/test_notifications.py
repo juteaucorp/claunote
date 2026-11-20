@@ -29,8 +29,9 @@ class Base:
                           "statut": statut}
         return True
 
-    def reserver(self):
-        pris = [n for n in self.file.values() if n["statut"] == "attente"]
+    def reserver(self, seulement=None):
+        pris = [n for n in self.file.values() if n["statut"] == "attente"
+                and (seulement is None or n["cle"].split(":")[0] + ":" in seulement)]
         for n in pris:
             n["statut"] = "envoi"
         return pris
