@@ -65,8 +65,9 @@ FLUX_DEFAUT = [
     ("https://www.lemondeinformatique.fr/flux-rss/thematique/toutes-les-actualites/rss.xml", "Le Monde Informatique"),
     ("https://www.numerama.com/feed/", "Numerama"),
     ("https://www.01net.com/feed/", "01net"),
+    ("https://www.clubic.com/feed/news.rss", "Clubic"),
 ]
-FLUX_AJOUTES = {"actualites_flux_2": ["Numerama", "01net"]}   # ajoutés après coup aux installations existantes
+FLUX_AJOUTES = {"actualites_flux_2": ["Numerama", "01net"], "actualites_flux_3": ["Clubic"]}   # ajoutés après coup aux installations existantes
 SUJETS_DEFAUT = [   # sélection de départ (informatique), à changer sur la page Sources selon ta formation
     ("Cybersécurité", "Failles critiques à corriger, cyberattaques marquantes, rançongiciels, fuites de données, "
      "recommandations de l'ANSSI.",
