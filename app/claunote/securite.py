@@ -149,7 +149,7 @@ def alerter(type: str, titre: str, corps: str, evenement: int | None = None) -> 
             return False
         _derniere_alerte[type] = maintenant
     from claunote import notifications   # import tardif : notifications importe pronote et revision
-    if not notifications.preferences().get("securite", True):
+    if not notifications.preferences(None).get("securite", True):   # réglage des admins
         return False
     try:
         notif = db.notification_directe(f"securite:{type}:{time.time_ns()}", f"🔒 {titre}", corps[:300], "/securite")
@@ -210,6 +210,8 @@ def echec(type: str, request, detail: str = ""):
         file_ip.append(maintenant)
         _vider(file_ip, BAN_FENETRE, maintenant)
         n_ip = len(file_ip)
+        for vieille in [k for k, f in _echecs_ip.items() if not f or maintenant - f[-1] > BAN_FENETRE]:
+            _echecs_ip.pop(vieille, None)   # adresses sans échec depuis 24 h : oubliées (mémoire bornée)
         if n == 1:
             _paliers_faits["echecs"].clear()
         palier = next((p for p in PALIERS_ECHECS if n >= p and p not in _paliers_faits["echecs"]), None)

@@ -270,3 +270,28 @@ def test_menage_propose_le_dimanche(base, monkeypatch):
     props.pop()                                              # trop peu la semaine suivante : rien n'est envoyé
     nt.planifier(dimanche + dt.timedelta(days=7))
     assert [n["statut"] for c, n in base.file.items() if c.startswith("archivage:")] == ["attente", "ignore"]
+
+
+def test_reglages_par_compte(base):
+    """Un invité règle ses propres notifications : il ne touche plus aux heures de silence de l'admin."""
+    nt.enregistrer_preferences({"heure": "19:15"})
+    with db.pour_compte(2):
+        nt.enregistrer_preferences({**nt.preferences(), "silence_debut": "20:00", "rappel": False})
+        assert nt.preferences()["silence_debut"] == "20:00"
+    assert json.loads(base.etat["notifications:2"])["rappel"] is False
+    admin = nt.preferences(None)
+    assert admin["heure"] == "19:15" and admin["silence_debut"] == "22:00" and admin["rappel"] is True
+    with db.pour_compte(1):   # l'admin d'origine garde son ancienne clé
+        assert nt.preferences()["heure"] == "19:15"
+
+
+def test_silence_d_un_invite_respecte(base, monkeypatch):
+    remis = []
+    monkeypatch.setattr(db, "remettre_en_attente", remis.extend)
+    monkeypatch.setattr(nt, "envoyer_a_tous", lambda *a, **k: (1, []))
+    base.etat["notifications:2"] = json.dumps({"silence_debut": "08:00", "silence_fin": "12:00"})
+    base.notifier("a", "Pour l'admin", "x", "/")
+    base.notifier("b", "Pour l'invité", "y", "/")
+    base.file["b"]["compte_id"] = 2
+    nt.vider_file(LUNDI.replace(hour=9))
+    assert base.file["a"]["statut"] == "envoye" and remis == [base.file["b"]["id"]]

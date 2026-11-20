@@ -551,7 +551,7 @@ BEGIN
     FOREACH t IN ARRAY ARRAY['documents', 'passages', 'revisions', 'campagnes', 'cartes', 'revues_cartes',
                              'conversations', 'messages', 'pieces_jointes', 'pronote_evenements', 'pronote_notes',
                              'pronote_documents', 'cles_acces', 'sensibles', 'decoupages', 'formations',
-                             'matieres_regles', 'matieres_publiques'] LOOP
+                             'matieres_regles', 'matieres_publiques', 'matieres_distinctes'] LOOP
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
                        AND table_name = t AND column_name = 'compte_id') THEN
             EXECUTE format('ALTER TABLE %I ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE', t);
@@ -572,6 +572,13 @@ BEGIN
                            'WITH CHECK (compte_id = claunote_compte() OR claunote_tout())', t);
         END IF;
     END LOOP;
+END $$;
+-- Matières « laissées telles quelles » : à chaque compte les siennes (un invité n'efface plus celles de l'admin)
+DO $$ BEGIN
+    IF (SELECT array_length(conkey, 1) FROM pg_constraint WHERE conname = 'matieres_distinctes_pkey') = 3 THEN
+        ALTER TABLE matieres_distinctes DROP CONSTRAINT matieres_distinctes_pkey;
+        ALTER TABLE matieres_distinctes ADD PRIMARY KEY (compte_id, niveau, a, b);
+    END IF;
 END $$;
 -- Public ou privé (visibilite.py) : chacun choisit pour ses cours, matières, révisions et campagnes.
 -- Privé par défaut. Un élément public ne se lit par les autres comptes que sur les pages « Partagés »
@@ -1677,6 +1684,13 @@ def etat_valeur(cle: str):
     return _etat["valeurs"].get(cle)
 
 
+def etat_frais(cle: str):
+    """Valeur lue en base à l'instant (pas le cache de 2 s) : avant de la modifier et de la réécrire."""
+    with connect() as c:
+        r = c.execute("SELECT valeur FROM etat WHERE cle = %s", (cle,)).fetchone()
+    return r["valeur"] if r else None
+
+
 def etat_consommer(cle: str) -> bool:
     """Vrai si la clé était posée ; la retire (demande ponctuelle du site au worker)."""
     _etat["le"] = float("-inf")
@@ -1813,7 +1827,9 @@ def enregistrer_abonnement(endpoint: str, p256dh: str, auth: str, appareil: str 
 
 def retirer_abonnement(endpoint: str):
     with connect() as c:
-        c.execute("DELETE FROM abonnements_push WHERE endpoint = %s", (endpoint,))
+        # Au nom d'un compte : seulement ses propres appareils (le worker, lui, oublie ceux qui ont expiré)
+        c.execute("DELETE FROM abonnements_push WHERE endpoint = %s "
+                  "AND (claunote_compte() IS NULL OR compte_id IS NOT DISTINCT FROM claunote_compte())", (endpoint,))
 
 
 def abonnements():
@@ -1884,6 +1900,13 @@ def reserver_notifications(seulement: tuple[str, ...] | None = None):
             filtre, params = " AND split_part(cle, ':', 1) || ':' = ANY(%s)", (list(seulement),)
         return sorted(c.execute("UPDATE notifications SET statut = 'envoi' WHERE statut = 'attente'" + filtre
                                 + " RETURNING *", params).fetchall(), key=lambda n: n["id"])
+
+
+def remettre_en_attente(ids: list[int]):
+    """Notifications réservées mais pas envoyées (heures de silence de leur compte) : de nouveau dans la file."""
+    if ids:
+        with connect() as c:
+            c.execute("UPDATE notifications SET statut = 'attente' WHERE id = ANY(%s) AND statut = 'envoi'", (ids,))
 
 
 def maj_notification(notif_id: int, statut: str, erreur: str | None = None):

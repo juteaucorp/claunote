@@ -251,3 +251,30 @@ def test_a_revoir_par_matiere(base):
     r = db.a_revoir_par_matiere()
     assert r["Réseaux"]["cartes"] == 2 and r["Réseaux"]["paquet"] == paquet
     assert r["Réseaux"]["fiche"]["id"] == fiche and r["Réseaux"]["fiche"]["sujet"] == "Réseaux : VLAN"
+
+
+def test_matieres_laissees_separees_par_compte(base):
+    """« Laisser telles quelles » et « Reproposer » d'un invité ne touchent pas aux choix de l'admin."""
+    invite = db.creer_compte("camille", "h", "invite", ["organiser"])
+    with db.pour_compte(1):
+        db.garder_distinctes("BTS1", ["Maths", "Mathématiques"])
+    with db.pour_compte(invite):
+        db.garder_distinctes("BTS1", ["Maths", "Mathématiques"])   # la même paire, chez lui
+        assert db.oublier_distinctes() == 1
+        assert db.matieres_distinctes() == {}
+    with db.pour_compte(1):
+        assert db.matieres_distinctes() == {"BTS1": {frozenset(("Maths", "Mathématiques"))}}
+
+
+def test_second_admin_synchronise_pronote(base, monkeypatch):
+    """Pronote est rangé chez le compte 1 : un autre admin qui synchronise ne bute pas sur ses lignes."""
+    from claunote import pronote
+    from tests.test_pronote import SYNCHRO, faux_service
+    monkeypatch.setattr(pronote, "PREPARATION_AUTO", False)
+    c = faux_service({("GET", "/etat"): (200, {"connecte": True}), ("POST", "/synchro"): (200, SYNCHRO)})
+    pronote.synchroniser(c)                       # le worker, puis un second admin
+    admin2 = db.creer_compte("dominique", "h", "admin", [])
+    with db.pour_compte(admin2):
+        assert pronote.synchroniser(c)["evenements"] == 3
+    with db.connect() as cx:
+        assert {r["compte_id"] for r in cx.execute("SELECT compte_id FROM pronote_evenements").fetchall()} == {1}

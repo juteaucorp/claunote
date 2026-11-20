@@ -16,6 +16,8 @@
 {% if not etat.connecte %}
   {% if etat.injoignable %}
   <div class="carte">Le service <code>pronote</code> ne tourne pas. Sur la VM : <code>docker compose up -d --build</code>.</div>
+  {% elif not est_admin() %}
+  <div class="carte">Pronote n'est pas encore relié : c'est l'admin qui le relie, pour tout le site.</div>
   {% else %}
   <p class="doux">Relie ton compte Pronote : Claunote récupère tes évaluations, devoirs et notes toutes les 3 heures
     et prépare tes révisions. {% if etat.expire %}<span class="alerte">La connexion a expiré : refais-la.</span>{% endif %}</p>
@@ -55,10 +57,10 @@
     {% if etat.etablissement %}<span class="doux"> · {{ etat.etablissement }}</span>{% endif %}
     <div class="doux">Dernière synchronisation : {{ synchro|quand if synchro else 'jamais' }}
       {% if erreurs_synchro %} · <span class="alerte">{{ erreurs_synchro }}</span>{% endif %}</div>
-    <div class="actions" style="margin-top:10px">
+    {% if est_admin() %}<div class="actions" style="margin-top:10px">
       <form method="post" action="/agenda/synchroniser"><button class="principal">Synchroniser</button></form>
       <form method="post" action="/agenda/deconnexion" onsubmit="return confirm('Déconnecter Pronote ?')"><button>Déconnecter</button></form>
-    </div>
+    </div>{% endif %}
   </div>
 
   <h2 id="emploi-du-temps">Emploi du temps</h2>

@@ -185,3 +185,14 @@ def test_disque(monkeypatch):
     assert faux(4)["niveau"] == "attention" and disque.a_signaler(disque.etat())
     assert faux(1)["niveau"] == "critique"
     assert faux(30, total=1000)["niveau"] == "attention"     # moins de 10 % libres
+
+
+def test_pronote_relie_par_l_admin_seulement(client):
+    """Pronote est celui du site : un invité avec « Agenda » le lit, mais ne peut ni le relier, ni le couper."""
+    invite, _ = _creer(_inviter(client, ["agenda"]))
+    for chemin, data in (("/agenda/connexion", {"url": "http://10.0.0.1", "identifiant": "x", "mot_de_passe": "y"}),
+                         ("/agenda/connexion-qr", {"qr": "{}", "pin": "0000"}),
+                         ("/agenda/deconnexion", {}), ("/agenda/synchroniser", {})):
+        assert invite.post(chemin, data=data).status_code == 403, chemin
+    assert comptes.droit_requis("/agenda") == "agenda"
+    assert comptes.droit_requis("/agenda/preparer", "POST") == "agenda"

@@ -46,7 +46,10 @@ class Limiteur:
     def bloque(self, ip: str) -> int:
         """Secondes de blocage restantes pour cette adresse (0 si libre)."""
         recents = [t for t in self._echecs.get(ip, []) if time.time() - t < BLOCAGE]
-        self._echecs[ip] = recents
+        if recents:
+            self._echecs[ip] = recents
+        else:   # adresse sans échec récent : oubliée (des milliers d'adresses par Internet ne remplissent pas la mémoire)
+            self._echecs.pop(ip, None)
         return int(BLOCAGE - (time.time() - recents[0])) + 1 if len(recents) >= ESSAIS_MAX else 0
 
     def echec(self, ip: str):
