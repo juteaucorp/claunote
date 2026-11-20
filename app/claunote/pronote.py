@@ -232,7 +232,15 @@ def preparer_a_venir(aujourd_hui: dt.date | None = None) -> list[int]:
 
 
 def synchroniser(client: Client | None = None) -> dict:
-    """Récupère Pronote et l'enregistre. Renvoie le résumé affiché sur le site."""
+    """Récupère Pronote et l'enregistre. Renvoie le résumé affiché sur le site.
+
+    Pronote est celui du site, rangé chez l'admin d'origine (compte 1), comme le fait le worker : un second
+    admin qui clique « Synchroniser » ne bute plus sur les lignes du compte 1 (row-level security)."""
+    with db.pour_compte(1):
+        return _synchroniser(client)
+
+
+def _synchroniser(client: Client | None = None) -> dict:
     client = client or Client()
     if not client.etat().get("connecte"):
         return {"connecte": False}

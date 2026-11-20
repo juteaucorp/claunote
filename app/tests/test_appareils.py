@@ -96,3 +96,13 @@ def test_cookie_falsifie_refuse(anonyme):
     assert appareils.reconnu(valeur)["nom"] == "iPhone"
     ident = valeur.split(".")[0]
     assert appareils.reconnu(f"{ident}.faux") is None and appareils.reconnu("rien") is None
+
+
+def test_appareil_retire_ne_revient_pas(site):
+    """« vu le » mis à jour juste après « Retirer » : l'appareil retiré n'est pas réécrit dans la liste."""
+    valeur = appareils.utiliser_code(_code(site), "iPhone volé")
+    ident = valeur.split(".")[0]
+    appareils.retirer(ident)
+    appareils._marquer_vu(ident)   # requête de cet appareil commencée avant le retrait
+    assert ident not in [a["id"] for a in appareils.liste()]
+    assert appareils.reconnu(valeur) is None

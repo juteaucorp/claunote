@@ -285,9 +285,24 @@ class FluxIllisible(Exception):
     pass
 
 
+class AdresseLocale(httpx.RequestError):
+    """Flux qui mène au réseau local (la VM, ses services Docker, le routeur…) : jamais relevé."""
+
+
+def _seulement_internet(request: httpx.Request):
+    # Vérifié à chaque requête, redirections comprises : un flux public ne peut pas renvoyer vers le réseau local
+    if not _hote_public(str(request.url)):
+        raise AdresseLocale("adresse du réseau local refusée : seulement des sites sur Internet", request=request)
+
+
 def _client() -> httpx.Client:
-    return httpx.Client(timeout=20, follow_redirects=True, headers={"User-Agent": UA, "Accept":
+    return httpx.Client(timeout=20, follow_redirects=True, event_hooks={"request": [_seulement_internet]},
+                        headers={"User-Agent": UA, "Accept":
                         "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8, */*;q=0.5"})
+
+
+def _injoignable(e: httpx.HTTPError) -> str:
+    return str(e) if isinstance(e, AdresseLocale) else f"site injoignable ({e.__class__.__name__})"
 
 
 def _date(entree) -> dt.datetime:
@@ -380,7 +395,7 @@ def decouvrir(url: str, client: httpx.Client | None = None) -> tuple[str, dict, 
     except httpx.HTTPStatusError as e:
         raise FluxIllisible(f"le site répond {e.response.status_code}") from e
     except httpx.HTTPError as e:
-        raise FluxIllisible(f"site injoignable ({e.__class__.__name__})") from e
+        raise FluxIllisible(_injoignable(e)) from e
     finally:
         if client is None:
             c.close()
@@ -403,7 +418,7 @@ def relever_un(flux: dict, sujets: list[dict], client: httpx.Client) -> int:
         infos, items = lire_flux(r.content, flux["id"])
     except (httpx.HTTPError, FluxIllisible) as e:
         message = (f"le site répond {e.response.status_code}" if isinstance(e, httpx.HTTPStatusError)
-                   else str(e) if isinstance(e, FluxIllisible) else f"site injoignable ({e.__class__.__name__})")
+                   else str(e) if isinstance(e, FluxIllisible) else _injoignable(e))
         db.flux_maj(flux["id"], releve_le=maintenant, erreur=message, echecs=flux["echecs"] + 1)
         return 0
     premier = flux["releve_le"] is None

@@ -44,6 +44,10 @@ PAGES = [
     ("/a-verifier", "organiser"), ("/organiser", "organiser"), ("/hors-cours", "bibliotheque"),
     ("/reviser", "reviser"), ("/revision/", "reviser"), ("/campagne", "reviser"), ("/demander", "reviser"),
     ("/formule", "reviser"), ("/cartes", "reviser"), ("/archives", "reviser"), ("/progression", "reviser"),
+    # Pronote est celui de l'environnement (un seul compte relié) : le relier, le couper ou le synchroniser
+    # change l'agenda de tout le monde, donc réservé à l'admin ; « agenda » ne donne que la lecture.
+    ("/agenda/connexion", "admin"), ("/agenda/connexion-qr", "admin"), ("/agenda/deconnexion", "admin"),
+    ("/agenda/synchroniser", "admin"),
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
     ("/piece/", "reviser"), ("/partages", "bibliotheque"),

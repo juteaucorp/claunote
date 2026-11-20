@@ -1200,7 +1200,7 @@ def page_securite(request: Request, gravite: str = "", page: int = 1, message: s
         "lignes": lignes, "total": total, "page": page, "pages": max(1, -(-total // PAR_PAGE_SECURITE)),
         "gravite": gravite, "gravites": GRAVITES, "libelles": {k: v[1] for k, v in securite.TYPES.items()},
         "bilan": db.securite_bilan(), "e": securite.etat(), "message": message,
-        "alertes_actives": notifications.preferences().get("securite", True), "abonnes": len(db.abonnements()),
+        "alertes_actives": notifications.preferences(None).get("securite", True), "abonnes": len(db.abonnements()),
         "appareils": appareils.liste(), "par_tunnel": appareils.par_tunnel(request.headers),
         "lien_page": lambda n: "/securite?" + urlencode({k: v for k, v in (("gravite", gravite), ("page", n)) if v})})
 
@@ -1213,7 +1213,7 @@ def securite_debloquer(request: Request):
 
 @app.post("/securite/alertes")
 def securite_alertes(actives: str = Form("")):
-    notifications.enregistrer_preferences({**notifications.preferences(), "securite": actives == "1"})
+    notifications.enregistrer_preferences({**notifications.preferences(None), "securite": actives == "1"}, None)
     return RedirectResponse("/securite", status_code=303)
 
 

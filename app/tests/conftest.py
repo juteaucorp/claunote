@@ -20,6 +20,7 @@ class FauxComptes:
 
     def installer(self, monkeypatch):
         m = monkeypatch.setattr
+        m(db, "etat_frais", lambda cle: db.etat_valeur(cle))   # même faux état que etat_valeur dans les tests
         m(db, "compte", lambda i: dict(self.comptes[i]) if i in self.comptes else None)
         m(db, "compte_par_identifiant", lambda ident: next(
             (dict(k) for k in self.comptes.values() if k["identifiant"] == ident.strip().lower()), None))

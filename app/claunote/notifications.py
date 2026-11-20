@@ -72,15 +72,27 @@ def cle_publique() -> str:
     return b64urlencode(brut)
 
 
-def preferences() -> dict:
+_COMPTE = object()
+
+
+def _cle_preferences(compte_id) -> str:
+    """Réglages de chaque compte. Ceux de l'admin d'origine (et du worker, qui ne travaille pour personne)
+    gardent leur ancienne clé ; un invité ne peut plus changer les heures de silence de l'admin."""
+    if compte_id is _COMPTE:
+        compte_id = db.compte_actuel()
+    return "notifications" if compte_id in (None, 1) else f"notifications:{int(compte_id)}"
+
+
+def preferences(compte_id=_COMPTE) -> dict:
+    """Réglages du compte de la requête (ou de `compte_id` ; None : l'admin d'origine)."""
     try:
-        return {**DEFAUT, **json.loads(db.etat_valeur("notifications") or "{}")}
+        return {**DEFAUT, **json.loads(db.etat_valeur(_cle_preferences(compte_id)) or "{}")}
     except ValueError:
         return dict(DEFAUT)
 
 
-def enregistrer_preferences(p: dict):
-    db.etat_ecrire("notifications", json.dumps({k: p[k] for k in DEFAUT if k in p}))
+def enregistrer_preferences(p: dict, compte_id=_COMPTE):
+    db.etat_ecrire(_cle_preferences(compte_id), json.dumps({k: p[k] for k in DEFAUT if k in p}))
 
 
 def _heure(texte: str) -> dt.time:
@@ -143,7 +155,7 @@ def envoyer_a_tous(titre: str, corps: str, url: str, tag: str = "", compte_id=IC
 
 
 def vider_file(maintenant: dt.datetime):
-    p = preferences()
+    p = preferences(None)
     if en_silence(maintenant, p):
         return
     occupe, _ = emploi_du_temps.occupation(maintenant) if p.get("edt", True) else (None, None)
@@ -151,6 +163,9 @@ def vider_file(maintenant: dt.datetime):
     for n in db.reserver_notifications(URGENTES if occupe else None):   # chaque compte reçoit les siennes (None : les admins)
         par_compte.setdefault(n.get("compte_id"), []).append(n)
     for compte_id, file in par_compte.items():
+        if compte_id not in (None, 1) and en_silence(maintenant, preferences(compte_id)):
+            db.remettre_en_attente([n["id"] for n in file])   # ses heures de silence à lui : elles attendent
+            continue
         _vider(file, compte_id)
 
 
@@ -264,7 +279,8 @@ def planifier(maintenant: dt.datetime):
     p = preferences()
     jour = maintenant.date()
     if p["rappel"] and maintenant >= moment_rappel(jour, p) and not db.notification_connue(f"rappel:{jour}"):
-        r = rappel_du_jour(jour)
+        with db.pour_compte(1):   # ses cartes, ses campagnes et ses cours : pas ceux des autres comptes
+            r = rappel_du_jour(jour)
         if r:
             db.notifier(f"rappel:{jour}", *r)
         else:

@@ -19,6 +19,7 @@ import json
 import os
 import secrets
 import socket
+import threading
 import time
 
 from claunote import db
@@ -31,6 +32,9 @@ ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # sans 0/O, 1/I/L
 VU_TOUTES = 600                  # « vu le » mis à jour au plus toutes les 10 min
 CLE, CLE_CODE = "appareils", "appareil_code"
 _cloudflared = {"le": float("-inf"), "ips": set()}
+# Lire, modifier, réécrire la liste d'un coup : sans ça, une requête d'un appareil (mise à jour de « vu le »)
+# pouvait réécrire l'ancienne liste juste après « Retirer » et faire revenir l'appareil retiré.
+_verrou = threading.Lock()
 
 
 def actif() -> bool:
@@ -80,9 +84,9 @@ def _maintenant() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
 
-def liste() -> list[dict]:
+def liste(frais: bool = False) -> list[dict]:
     try:
-        appareils = json.loads(db.etat_valeur(CLE) or "[]")
+        appareils = json.loads((db.etat_frais(CLE) if frais else db.etat_valeur(CLE)) or "[]")
     except ValueError:
         return []
     for a in appareils:
@@ -122,8 +126,13 @@ def code_en_cours(maintenant: float | None = None) -> float | None:
 
 def utiliser_code(code: str, nom: str, maintenant: float | None = None) -> str | None:
     """Code bon : crée l'appareil et renvoie la valeur du cookie ; sinon None."""
+    with _verrou:   # deux essais en même temps : le compteur d'échecs et l'usage unique tiennent
+        return _utiliser_code(code, nom, maintenant)
+
+
+def _utiliser_code(code: str, nom: str, maintenant: float | None) -> str | None:
     try:
-        c = json.loads(db.etat_valeur(CLE_CODE) or "null")
+        c = json.loads(db.etat_frais(CLE_CODE) or "null")
     except ValueError:
         c = None
     if not c or c["expire"] <= (maintenant or time.time()):
@@ -134,7 +143,7 @@ def utiliser_code(code: str, nom: str, maintenant: float | None = None) -> str |
         return None
     db.etat_ecrire(CLE_CODE, None)   # une seule fois
     ident, secret = secrets.token_hex(6), secrets.token_urlsafe(32)
-    _enregistrer(liste() + [{"id": ident, "nom": (nom or "Appareil").strip()[:60] or "Appareil",
+    _enregistrer(liste(frais=True) + [{"id": ident, "nom": (nom or "Appareil").strip()[:60] or "Appareil",
                              "empreinte": _empreinte(secret), "cree": _maintenant(), "vu": _maintenant()}])
     return f"{ident}.{secret}"
 
@@ -150,14 +159,24 @@ def reconnu(cookie: str | None) -> dict | None:
         if a["id"] == ident and hmac.compare_digest(a["empreinte"], _empreinte(secret)):
             vu = a.get("vu")
             if not vu or (dt.datetime.now(dt.timezone.utc) - vu).total_seconds() > VU_TOUTES:
-                a["vu"] = dt.datetime.now(dt.timezone.utc)
-                _enregistrer(appareils)
+                _marquer_vu(ident)
             return a
     return None
 
 
+def _marquer_vu(ident: str):
+    with _verrou:
+        appareils = liste(frais=True)
+        for a in appareils:
+            if a["id"] == ident:   # encore là (pas retiré entre-temps) : seulement sa date change
+                a["vu"] = dt.datetime.now(dt.timezone.utc)
+                _enregistrer(appareils)
+                return
+
+
 def retirer(ident: str):
-    _enregistrer([a for a in liste() if a["id"] != ident])
+    with _verrou:
+        _enregistrer([a for a in liste(frais=True) if a["id"] != ident])
 
 
 if __name__ == "__main__":

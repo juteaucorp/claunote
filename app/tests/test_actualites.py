@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 
+import httpx
 import pytest
 
 from claunote import actualites as ac, agent, db, main, notifications
@@ -510,3 +511,19 @@ def test_reglage_notification_du_jour(client, monkeypatch):
     assert json.loads(client.etat["actualites"])["quotidien"] == "06:45"
     client.post("/actualites/reglages", data={"quotidien": "heure", "heure": "pas une heure"}, follow_redirects=False)
     assert json.loads(client.etat["actualites"])["quotidien"] == "auto"
+
+
+def test_flux_jamais_vers_le_reseau_local(monkeypatch):
+    """Un flux ajouté par un compte ne peut pas faire lire au serveur une adresse du réseau local, même redirigé."""
+    with pytest.raises(ac.FluxIllisible, match="réseau local"):
+        ac.decouvrir("http://127.0.0.1:11434/api/tags")
+    monkeypatch.setattr(ac, "_hote_public", lambda url: "10.0.0.1" not in url)
+
+    def site(req):
+        if req.url.host == "ex.fr":
+            return httpx.Response(302, headers={"location": "http://10.0.0.1/admin"})
+        return httpx.Response(200, text=RSS)
+    c = httpx.Client(transport=httpx.MockTransport(site), follow_redirects=True,
+                     event_hooks={"request": [ac._seulement_internet]})
+    with pytest.raises(ac.FluxIllisible, match="réseau local"):
+        ac.decouvrir("https://ex.fr/flux", c)
