@@ -25,7 +25,7 @@
   {% if rev.strict %}<span class="etat" title="Demandé sans rien ajouter hors de tes cours">Strictement tes cours</span>{% endif %}
 </p>
 {% if rev.statut == 'pret' and partage_possible() and a_moi(rev) %}{% from "_visibilite.html" import visibilite with context %}
-{{ visibilite('/revision/' ~ rev.id ~ '/visibilite', rev.public) }}{% endif %}
+{{ visibilite('/revision/' ~ rev.id ~ '/visibilite', rev.public, genre='cette révision') }}{% endif %}
 {% if ajout_ia %}<p class="doux">Les passages marqués {{ HORS_COURS }} ou dans un encadré « Hors de tes cours » ne viennent pas de tes cours : l'IA les a ajoutés d'après le programme officiel. À vérifier avec ton prof en cas de doute.</p>{% endif %}
 {% if sans_texte %}<details class="carte"><summary>⚠️ {{ sans_texte|length }} cours pas encore lu{{ 's' if sans_texte|length > 1 }} par l'IA : ignoré{{ 's' if sans_texte|length > 1 }} ici</summary>
   <p class="doux">Classé{{ 's' if sans_texte|length > 1 }} sans transcription (analyse en erreur ou classement à la main). Ouvre-le{{ 's' if sans_texte|length > 1 }} et relance l'analyse pour qu'il{{ 's' if sans_texte|length > 1 }} serve{{ 'nt' if sans_texte|length > 1 }} aux prochaines révisions.</p>
