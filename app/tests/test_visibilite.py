@@ -13,7 +13,7 @@ def _a_plusieurs(faux_comptes):
 
 
 def test_seul_sur_l_environnement_rien_ne_change(client):
-    assert "Rendre public" not in client.get("/doc/1").text
+    assert "Qui peut voir" not in client.get("/doc/1").text
     r = client.get("/bibliotheque")
     assert "/bibliotheque/visibilite" not in r.text and "/partages" not in r.text
 
@@ -21,14 +21,15 @@ def test_seul_sur_l_environnement_rien_ne_change(client):
 def test_matiere_publique_depuis_la_bibliotheque(client, faux_comptes):
     _a_plusieurs(faux_comptes)
     r = client.get("/bibliotheque")
-    assert "/bibliotheque/visibilite" in r.text and "🔒" in r.text and 'href="/partages"' in r.text
+    assert "/bibliotheque/visibilite" in r.text and "🔒 Privée" in r.text and 'href="/partages"' in r.text
     r = client.post("/bibliotheque/visibilite", data={"niveau": "BTS1", "matiere": "Réseaux", "valeur": "public"},
                     follow_redirects=False)
     assert r.status_code == 303 and faux_comptes.matieres_publiques == {("BTS1", "Réseaux")}
-    assert "Rendre privée" in client.get("/bibliotheque").text
+    assert "🌐 Publique</button>" in client.get("/bibliotheque").text
     # Le cours suit sa matière tant qu'on ne choisit rien pour lui
     r = client.get("/doc/1")
-    assert "🌐 Public" in r.text and "comme la matière" in r.text and "Rendre privé" in r.text
+    assert "Qui peut voir ce cours" in r.text and "Comme la matière (publique)" in r.text
+    assert 'value="matiere" class="actif ' in r.text and "<strong>Public</strong>" in r.text   # mis en évidence
     assert client.post("/bibliotheque/visibilite", data={"niveau": "BTS1", "matiere": "Réseaux", "valeur": "x"}
                        ).status_code == 400
 
@@ -52,7 +53,7 @@ def test_seul_le_proprietaire_choisit(client, faux_comptes, monkeypatch):
     assert client.post("/campagne/1/visibilite", data={"valeur": "public"}, follow_redirects=False).status_code == 303
     # Cours d'un autre compte vu avec « Tout voir » : pas de bouton
     monkeypatch.setattr(db, "document", lambda i: {**DOC, "compte_id": 2})
-    assert "Rendre public" not in client.get("/doc/1").text
+    assert "Qui peut voir" not in client.get("/doc/1").text
 
 
 def test_pages_partages(client, faux_comptes, monkeypatch):
