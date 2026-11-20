@@ -8,7 +8,8 @@ besoin d'Internet pour les envoyer.
 Ce qui part (une file en base, une clé par notification tirée du contenu, jamais d'un id Pronote ;
 en plus, même titre + même texte en moins de 20 h = pas renvoyé, et plus de 3 d'un coup = un résumé) :
 - une fois par jour à l'heure choisie, le rappel le plus utile : évaluation proche sans fiche,
-  flashcards à revoir, fiche à relire, ou nouveaux cours sans révision ;
+  programme de campagne, de temps en temps la veille d'un cours (emploi du temps Pronote) ses flashcards
+  ou sa fiche, flashcards à revoir, fiche à relire, ou nouveaux cours sans révision ;
 - le matin d'une évaluation, un dernier rappel ;
 - le dimanche, s'il y a du ménage à faire : révisions, flashcards et campagnes qui ne servent plus,
   à archiver (archivage.py ; jamais archivé sans toi) ;
@@ -46,6 +47,7 @@ URGENTES = ("jour:", "actu-alerte:", "disque:")
 PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
          "examen": "Épreuve blanche prête"}
 JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
+JOURS_LONGS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
 def log(msg: str):
@@ -182,6 +184,41 @@ def _cartes(n: int) -> str:
     return f"{n} flashcard{'s' if n > 1 else ''} à revoir (~{max(1, round(n * 12 / 60))} min)"
 
 
+AVANCE_JOURS = 7   # une même matière n'est proposée « avant le cours » qu'une fois par semaine
+
+
+def avant_les_cours(aujourd_hui: dt.date) -> tuple[str, str, str] | None:
+    """Parfois, la veille d'un cours : revoir les flashcards ou la fiche de cette matière.
+
+    Une matière à la fois, au plus une fois par semaine chacune ; seulement si l'emploi du temps est connu."""
+    if not preferences().get("edt", True):
+        return None
+    try:
+        a = emploi_du_temps.avant_les_cours(aujourd_hui)
+        deja = json.loads(db.etat_valeur("avance_proposees") or "{}")
+    except Exception as e:
+        log(f"révisions avant les cours impossibles : {e}")
+        return None
+    if not a or not a["suggestions"]:
+        return None
+    limite = (aujourd_hui - dt.timedelta(days=AVANCE_JOURS)).isoformat()
+    for s in a["suggestions"]:
+        if deja.get(s["matiere"], "") > limite:
+            continue
+        deja = {m: j for m, j in deja.items() if j > limite} | {s["matiere"]: aujourd_hui.isoformat()}
+        db.etat_ecrire("avance_proposees", json.dumps(deja))
+        ecart = (a["date"] - aujourd_hui).days
+        quand = "Demain" if ecart == 1 else JOURS_LONGS[a["date"].weekday()].capitalize()
+        bouts = []
+        if s["cartes"]:
+            bouts.append(_cartes(s["cartes"]))
+        if s["fiche"]:
+            bouts.append(f"ta fiche « {s['fiche']['sujet']} » à relire")
+        url = f"/cartes/session?paquet={s['paquet']}" if s["cartes"] and s["paquet"] else f"/revision/{s['fiche']['id']}"
+        return (f"{quand} : {s['matiere']} à {s['debut']:%H:%M}", "Avant le cours : " + " et ".join(bouts) + ".", url)
+    return None
+
+
 def rappel_du_jour(aujourd_hui: dt.date) -> tuple[str, str, str] | None:
     """Le rappel quotidien le plus utile : (titre, texte, page à ouvrir), ou None s'il n'y a rien."""
     evals = [(e, (e["le"].astimezone(PARIS).date() - aujourd_hui).days)
@@ -202,6 +239,9 @@ def rappel_du_jour(aujourd_hui: dt.date) -> tuple[str, str, str] | None:
             quoi = " · ".join(f"{t['matiere']} ({t['duree']} min)" for t in reste[:3])
             suite = f" Et {_cartes(dues)}." if dues else ""
             return f"{campagne['titre']} : programme du jour", quoi + "." + suite, f"/campagne/{campagne['id']}"
+    avance = avant_les_cours(aujourd_hui)
+    if avance:
+        return avance
     proches = [(e, j) for e, j in evals if j <= 3 and e["revision_statut"] == "pret"]
     if dues:
         suite = f" · {proches[0][0]['matiere']} {_quand(proches[0][1])} : ta fiche est prête." if proches else ""

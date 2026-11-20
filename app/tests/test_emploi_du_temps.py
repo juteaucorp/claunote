@@ -65,7 +65,8 @@ def test_synchro_ratee_garde_l_ancien(monkeypatch):
     assert json.loads(etat["pronote_edt"]) == DONNEES
     edt.enregistrer([{"debut": "a", "fin": "b", "matiere": "M", "dispense": True, "statut": "Dispensé"}], "x", "y")
     assert json.loads(etat["pronote_edt"])["creneaux"] == [
-        {"debut": "a", "fin": "b", "matiere": "M", "dispense": True, "genre": None}]
+        {"debut": "a", "fin": "b", "matiere": "M", "dispense": True, "genre": None, "salle": None, "prof": None,
+         "statut": "Dispensé"}]
 
 
 def test_file_attend_la_fin_du_cours(monkeypatch):
@@ -88,3 +89,54 @@ def test_rappel_a_la_sortie_des_cours(monkeypatch):
     assert nt.moment_rappel(LUNDI) == h(LUNDI, 16, 40)
     etat["notifications"] = json.dumps({"edt": False})
     assert nt.moment_rappel(LUNDI) == h(LUNDI, 18)
+
+
+def test_jours_affiches_entreprise_en_un_bloc():
+    j = edt.jours(LUNDI, 7, DONNEES)
+    assert [x["date"] for x in j] == [LUNDI, MARDI]
+    assert len(j[0]["creneaux"]) == 4 and not j[0]["entreprise"]
+    mardi = j[1]["creneaux"]   # matin et après-midi : la pause de midi les sépare
+    assert j[1]["entreprise"] and [(c["debut"].hour, c["fin"].hour) for c in mardi] == [(8, 12), (13, 17)]
+
+
+def test_prochain_jour_au_lycee():
+    assert edt.prochain_jour_de_cours(LUNDI, DONNEES) is None          # mardi : entreprise, ensuite rien
+    jour, cours = edt.prochain_jour_de_cours(LUNDI - dt.timedelta(days=1), DONNEES)
+    assert jour == LUNDI and len(cours) == 4
+
+
+def _avec_reseaux(monkeypatch, fiche_ouverte=None):
+    donnees = json.loads(json.dumps(DONNEES))
+    for c in donnees["creneaux"][:2]:
+        c["matiere"] = "SISR - RESEAUX"
+    etat = {"pronote_edt": json.dumps(donnees)}
+    monkeypatch.setattr(db, "etat_valeur", lambda k: etat.get(k))
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
+    monkeypatch.setattr(db, "a_revoir_par_matiere", lambda: {
+        "Réseaux": {"cartes": 12, "paquet": 7, "fiche": {"id": 3, "sujet": "VLAN", "ouverte_le": fiche_ouverte}},
+        "CEJM": {"cartes": 4, "paquet": 9, "fiche": None}})
+    return etat
+
+
+def test_avant_les_cours(monkeypatch):
+    _avec_reseaux(monkeypatch)
+    a = edt.avant_les_cours(LUNDI - dt.timedelta(days=1))
+    assert a["date"] == LUNDI
+    assert [(s["matiere"], s["cartes"], s["fiche"]["id"]) for s in a["suggestions"]] == [("Réseaux", 12, 3)]
+    assert a["suggestions"][0]["debut"] == h(LUNDI, 8)
+
+
+def test_fiche_relue_recemment_pas_reproposee(monkeypatch):
+    _avec_reseaux(monkeypatch, fiche_ouverte=dt.datetime.now(PARIS) - dt.timedelta(days=1))
+    s = edt.avant_les_cours(LUNDI - dt.timedelta(days=1))["suggestions"][0]
+    assert s["fiche"] is None and s["cartes"] == 12
+
+
+def test_notification_avant_le_cours_une_fois_par_semaine(monkeypatch):
+    _avec_reseaux(monkeypatch)
+    dimanche = LUNDI - dt.timedelta(days=1)
+    assert nt.avant_les_cours(dimanche) == (
+        "Demain : Réseaux à 08:00", "Avant le cours : 12 flashcards à revoir (~2 min) et ta fiche « VLAN » à relire.",
+        "/cartes/session?paquet=7")
+    assert nt.avant_les_cours(dimanche) is None                        # déjà proposé cette semaine
+    assert nt.avant_les_cours(dimanche + dt.timedelta(days=7)) is None  # plus de cours connus après

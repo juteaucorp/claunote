@@ -240,3 +240,14 @@ def test_public_ou_prive(base):
         assert db.changer_visibilite("documents", vlan, None)
     with db.pour_compte(dominique):
         assert db.partages_documents() == []
+
+
+def test_a_revoir_par_matiere(base):
+    fiche = db.creer_revision("fiche", "Réseaux : VLAN", [])
+    paquet = db.creer_revision("cartes", "Réseaux : DHCP", [])
+    db.maj_revision(fiche, "pret", "# VLAN")
+    db.maj_revision(paquet, "pret", "[]")
+    db.creer_cartes(paquet, [{"recto": "a", "verso": "b"}, {"recto": "c", "verso": "d"}])
+    r = db.a_revoir_par_matiere()
+    assert r["Réseaux"]["cartes"] == 2 and r["Réseaux"]["paquet"] == paquet
+    assert r["Réseaux"]["fiche"]["id"] == fiche and r["Réseaux"]["fiche"]["sujet"] == "Réseaux : VLAN"

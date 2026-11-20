@@ -510,6 +510,27 @@ def test_agenda_connecte(agenda):
     assert "en analyse…" in r.text
 
 
+def test_agenda_emploi_du_temps(agenda, monkeypatch):
+    import json
+    from datetime import datetime, timedelta
+    from claunote import pronote
+    FauxPronote.etat_ = {"connecte": True, "nom": "MARTIN Camille", "classe": "BTS SIO 2"}
+    c1 = agenda.evs["cours:c1"]["le"]                       # le contrôle de réseaux, dans 5 jours à 8 h
+    demain = (datetime.now(pronote.PARIS) + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+    creneau = lambda d, h, m, disp=False: {"debut": d.isoformat(), "fin": (d + timedelta(hours=h)).isoformat(),
+                                           "matiere": m, "dispense": disp, "genre": "lesson", "salle": "B12", "prof": "M. Prof"}
+    edt = {"du": (demain - timedelta(days=1)).replace(hour=0).isoformat(), "au": (demain + timedelta(days=20)).isoformat(),
+           "creneaux": [creneau(demain, 2, "SISR - RESEAUX"), creneau(c1, 2, "SISR - RESEAUX"),
+                        creneau(c1 + timedelta(days=1), 4, "MATHEMATIQUES", True)]}
+    valeurs = {"pronote_synchro": "2026-10-23T14:00", "pronote_edt": json.dumps(edt)}
+    monkeypatch.setattr(db, "etat_valeur", lambda k: valeurs.get(k))
+    monkeypatch.setattr(db, "a_revoir_par_matiere", lambda: {"Réseaux": {"cartes": 5, "paquet": 7, "fiche": None}})
+    r = agenda.get("/agenda")
+    assert r.status_code == 200 and "Emploi du temps" in r.text and "B12 · M. Prof" in r.text
+    assert "Contrôle</span>" in r.text and "En entreprise" in r.text and "Dispensé" in r.text
+    assert "À revoir avant tes cours de demain" in r.text and 'href="/cartes/session?paquet=7"' in r.text
+
+
 def test_agenda_service_absent(agenda, monkeypatch):
     from claunote import pronote
 

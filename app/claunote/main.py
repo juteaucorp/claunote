@@ -3239,7 +3239,25 @@ def _agenda(request: Request, erreur: str | None = None, message: str | None = N
                 "documents": db.documents_pronote(30),
                 "notes": db.notes_recentes(15), "synchro": db.etat_valeur("pronote_synchro"),
                 "erreurs_synchro": db.etat_valeur("pronote_erreurs"), "paris": pronote.PARIS}
+        ctx |= _emploi_du_temps(evaluations)
     return templates.TemplateResponse(request, "agenda.html", ctx)
+
+
+def _emploi_du_temps(evaluations: list[dict]) -> dict:
+    """Emploi du temps des 2 semaines (contrôles repérés) et quoi revoir avant les prochains cours."""
+    maintenant = dt.datetime.now(pronote.PARIS)
+    try:
+        jours = emploi_du_temps.jours(maintenant.date(), 14)
+    except Exception:
+        return {"edt_jours": []}
+    controles = {(e["matiere"], e["le"].astimezone(pronote.PARIS).replace(second=0, microsecond=0))
+                 for e in evaluations if e["id"].startswith("cours:")}
+    for j in jours:
+        for c in j["creneaux"]:
+            c["controle"] = (c.get("matiere"), c["debut"].replace(second=0, microsecond=0)) in controles
+            c["maintenant"] = c["debut"] <= maintenant < c["fin"]
+    return {"edt_jours": jours, "maintenant": maintenant,
+            "avance": _sans_erreur(lambda: emploi_du_temps.avant_les_cours(maintenant.date()))}
 
 
 def _demander_documents():
