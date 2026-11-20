@@ -222,6 +222,26 @@ export function extraireControles(edt) {
     }));
 }
 
+const DISPENSE = /dispens/iu;
+
+/**
+ * Emploi du temps (cours, activités, retenues) : les créneaux où l'élève est occupé.
+ * `dispense` : cours marqué « Dispensé » (en alternance, ce sont les heures en entreprise).
+ */
+export function extraireEmploiDuTemps(edt) {
+  return edt.classes
+    .filter((c) => !c.canceled && c.startDate instanceof Date && c.endDate instanceof Date)
+    .map((c) => ({
+      debut: iso(c.startDate),
+      fin: iso(c.endDate),
+      genre: c.is,
+      matiere: c.subject?.name ?? c.title ?? "",
+      dispense: Boolean(c.exempted) || DISPENSE.test(c.status ?? ""),
+      statut: c.status ?? "",
+    }))
+    .sort((a, b) => a.debut.localeCompare(b.debut));
+}
+
 export function extraireNotes(apercu, periode) {
   return {
     periode: periode?.name ?? null,
@@ -341,13 +361,15 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
       const devoirs = await section("devoirs", async () =>
         extraireDevoirs(await pawnote.assignmentsFromIntervals(session, debut, fin)), erreurs);
 
-      const controles = await section("emploi du temps", async () => {
-        const edt = await pawnote.timetableFromIntervals(session, debut, fin);
-        pawnote.parseTimetable(session, edt, {
+      const edt = await section("emploi du temps", async () => {
+        const brut = await pawnote.timetableFromIntervals(session, debut, fin);
+        pawnote.parseTimetable(session, brut, {
           withSuperposedCanceledClasses: false, withCanceledClasses: false, withPlannedClasses: true,
         });
-        return extraireControles(edt);
+        return brut;
       }, erreurs);
+      const controles = edt ? extraireControles(edt) : null;
+      const emploi_du_temps = edt ? extraireEmploiDuTemps(edt) : null;
 
       const notes = await section("notes", async () => {
         const onglet = session.userResource.tabs.get(pawnote.TabLocation.Grades);
@@ -359,7 +381,7 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
         return extraireNotes(await pawnote.gradesOverview(session, periode), periode);
       }, erreurs);
 
-      return { devoirs, controles, notes, erreurs, du: iso(debut), au: iso(fin) };
+      return { devoirs, controles, emploi_du_temps, notes, erreurs, du: iso(debut), au: iso(fin) };
     }),
 
     /**

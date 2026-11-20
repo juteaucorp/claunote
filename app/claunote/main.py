@@ -27,7 +27,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
 from claunote import (actualites, agent, anki, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande,
-                      disque, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
+                      disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
@@ -2940,6 +2940,8 @@ def certificat():
 def page_notifications(request: Request, message: str = ""):
     return templates.TemplateResponse(request, "notifications.html", {
         "p": notifications.preferences(), "appareils": db.abonnements(),
+        "edt": emploi_du_temps.resume(dt.datetime.now(pronote.PARIS),
+                                      notifications._heure(notifications.preferences()["heure"])),
         "recentes": db.notifications_recentes(8), "cle": notifications.cle_publique(),
         "message": message, "adresse": adresse_https()})
 
@@ -2983,7 +2985,7 @@ def tester_notification():
 def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("22:00"),
                          silence_fin: str = Form("07:30"), rappel: bool = Form(False), pronote_: bool = Form(False,
                          alias="pronote"), revisions: bool = Form(False),
-                         actualites_: bool = Form(False, alias="actualites")):
+                         actualites_: bool = Form(False, alias="actualites"), edt: bool = Form(False)):
     for h in (heure, silence_debut, silence_fin):
         try:
             dt.time.fromisoformat(h)
@@ -2992,7 +2994,7 @@ def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("
     notifications.enregistrer_preferences({**notifications.preferences(), "heure": heure, "silence_debut": silence_debut,
                                            "silence_fin": silence_fin, "rappel": rappel,
                                            "pronote": pronote_, "revisions": revisions,
-                                           "actualites": actualites_})
+                                           "actualites": actualites_, "edt": edt})
     return RedirectResponse("/notifications?message=Réglages+enregistrés", status_code=303)
 
 

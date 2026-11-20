@@ -15,6 +15,10 @@ en plus, même titre + même texte en moins de 20 h = pas renvoyé, et plus de 3
 - tout de suite : révision prête, nouveau contrôle annoncé sur Pronote, documents des profs,
   actualités importantes des sujets suivis (actualites.py).
 Rien ne part pendant les heures de silence : la file attend le matin.
+Calé sur l'emploi du temps Pronote (emploi_du_temps.py) : rien ne sonne pendant un cours ni au travail
+(heures « Dispensé » en alternance), la file attend la pause, midi ou la fin de journée ; le rappel du jour
+part à la sortie des cours. Seules les urgentes passent quand même : le matin d'un contrôle, les alertes
+graves des actualités, le disque plein.
 """
 import datetime as dt
 import json
@@ -27,7 +31,7 @@ from py_vapid.utils import b64urlencode
 from cryptography.hazmat.primitives import serialization
 from pywebpush import WebPushException, webpush
 
-from claunote import archivage, db, pronote, revision
+from claunote import archivage, db, emploi_du_temps, pronote, revision
 
 PARIS = pronote.PARIS
 CONTACT = os.environ.get("CLAUNOTE_PUSH_CONTACT") or "mailto:claunote@example.com"
@@ -35,7 +39,10 @@ DUREE_VIE = 12 * 3600   # Apple/Google gardent le message 12 h si le téléphone
 INTERVALLE = 30         # secondes entre deux tours de la boucle
 MAX_PAR_TOUR = 3        # au-delà, les notifications du tour partent en un seul résumé
 DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
-          "rappel": True, "pronote": True, "revisions": True, "actualites": True, "securite": True}
+          "rappel": True, "pronote": True, "revisions": True, "actualites": True, "securite": True,
+          "edt": True}
+# Partent même en cours ou au travail : elles n'ont plus de sens plus tard
+URGENTES = ("jour:", "actu-alerte:", "disque:")
 PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
          "examen": "Épreuve blanche prête"}
 JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
@@ -137,8 +144,9 @@ def vider_file(maintenant: dt.datetime):
     p = preferences()
     if en_silence(maintenant, p):
         return
+    occupe, _ = emploi_du_temps.occupation(maintenant) if p.get("edt", True) else (None, None)
     par_compte: dict = {}
-    for n in db.reserver_notifications():   # chaque compte reçoit les siennes (None : les admins)
+    for n in db.reserver_notifications(URGENTES if occupe else None):   # chaque compte reçoit les siennes (None : les admins)
         par_compte.setdefault(n.get("compte_id"), []).append(n)
     for compte_id, file in par_compte.items():
         _vider(file, compte_id)
@@ -215,7 +223,7 @@ def planifier(maintenant: dt.datetime):
     """Ajoute à la file les rappels du jour quand c'est l'heure (une seule fois par jour)."""
     p = preferences()
     jour = maintenant.date()
-    if p["rappel"] and maintenant.time() >= _heure(p["heure"]) and not db.notification_connue(f"rappel:{jour}"):
+    if p["rappel"] and maintenant >= moment_rappel(jour, p) and not db.notification_connue(f"rappel:{jour}"):
         r = rappel_du_jour(jour)
         if r:
             db.notifier(f"rappel:{jour}", *r)
@@ -233,6 +241,14 @@ def planifier(maintenant: dt.datetime):
 
 
 DIMANCHE = 6
+
+
+def moment_rappel(jour: dt.date, p: dict | None = None) -> dt.datetime:
+    """L'heure choisie ; calée sur l'emploi du temps, plus tôt si les cours finissent avant."""
+    p = p or preferences()
+    if p.get("edt", True):
+        return emploi_du_temps.heure_rappel(jour, _heure(p["heure"]))[0]
+    return dt.datetime.combine(jour, _heure(p["heure"]), PARIS)
 
 
 def proposer_archivage(maintenant: dt.datetime):

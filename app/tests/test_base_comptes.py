@@ -88,6 +88,13 @@ def test_notifications_a_leur_compte(base):
     assert [n["compte_id"] for n in db.reserver_notifications()] == [invite]
 
 
+def test_en_cours_seules_les_urgentes_partent(base):
+    db.notifier("revision:2", "Fiche prête", "DHCP")
+    db.notifier("jour:MATHS:2026-10-26T10:00", "MATHS aujourd'hui à 10:00")
+    assert [n["cle"] for n in db.reserver_notifications(("jour:", "actu-alerte:"))] == ["jour:MATHS:2026-10-26T10:00"]
+    assert [n["cle"] for n in db.reserver_notifications()] == ["revision:2"]   # à la pause
+
+
 def test_admin_d_origine_et_invitations(base):
     assert db.compte(1)["role"] == "admin"
     import datetime as dt

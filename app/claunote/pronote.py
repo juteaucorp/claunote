@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from claunote import db
+from claunote import db, emploi_du_temps
 from claunote.agent import NIVEAUX
 
 URL = os.environ.get("PRONOTE_URL", "http://pronote:3000")
@@ -242,6 +242,7 @@ def synchroniser(client: Client | None = None) -> dict:
     evs = evenements(d)
     db.enregistrer_pronote(evs, date_locale(d["du"]), sources,
                            notes["notes"] if notes else None, notes["periode"] if notes else None)
+    emploi_du_temps.enregistrer(d.get("emploi_du_temps"), d.get("du"), d.get("au"))  # pour caler les notifications
     db.etat_ecrire("pronote_synchro", dt.datetime.now(PARIS).isoformat(timespec="minutes"))
     db.etat_ecrire("pronote_erreurs", " ; ".join(d.get("erreurs") or []) or None)
     preparees = preparer_a_venir() if PREPARATION_AUTO else []

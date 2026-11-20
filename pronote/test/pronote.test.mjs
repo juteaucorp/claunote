@@ -65,6 +65,10 @@ function fauxPawnote({ refuser = false } = {}) {
           { is: "lesson", id: "c2", subject: maths, test: false, canceled: false, startDate: new Date(), endDate: new Date() },
           { is: "lesson", id: "c3", subject: maths, test: true, canceled: true, startDate: new Date(), endDate: new Date() },
           { is: "activity", id: "a1", title: "Sortie" },
+          { is: "lesson", id: "c4", subject: maths, test: false, canceled: false, exempted: true, status: "Dispensé",
+            startDate: new Date("2026-10-29T07:00:00Z"), endDate: new Date("2026-10-29T09:00:00Z") },
+          { is: "lesson", id: "c5", subject: reseau, test: false, canceled: false, status: "Élève dispensé",
+            startDate: new Date("2026-10-29T12:00:00Z"), endDate: new Date("2026-10-29T13:00:00Z") },
         ],
       };
     },
@@ -132,6 +136,10 @@ test("synchro : jeton renouvelé, contrôles, devoirs et notes de la période en
   assert.ok(jeton.deviceUUID);
   assert.deepEqual(r.controles.map((c) => c.id), ["c1"]);
   assert.equal(r.controles[0].matiere, "SISR - RESEAUX");
+  // Emploi du temps : sans les cours annulés ni les créneaux sans heure ; « Dispensé » = en entreprise
+  assert.deepEqual(r.emploi_du_temps.map((c) => [c.matiere, c.dispense]),
+    [["SISR - RESEAUX", false], ["MATHEMATIQUES", true], ["SISR - RESEAUX", true], ["MATHEMATIQUES", false]]);
+  assert.equal(r.emploi_du_temps[1].fin, "2026-10-29T09:00:00.000Z");
   assert.equal(r.devoirs[0].pour_le, "2026-10-27T07:00:00.000Z");
   assert.deepEqual(r.devoirs[0].themes, ["Suites"]);
   assert.equal(r.notes.periode, "Semestre 1");

@@ -37,6 +37,12 @@
     <input type="checkbox" name="actualites" value="true" {{ 'checked' if p.actualites }}></label>
   <p class="heure">Silence de <input type="time" name="silence_debut" value="{{ p.silence_debut }}" required>
     à <input type="time" name="silence_fin" value="{{ p.silence_fin }}" required></p>
+  <label class="interrupteur"><span><strong>Caler sur l'emploi du temps Pronote</strong><br>
+    <span class="doux">Rien ne sonne en cours ni en entreprise (heures « Dispensé ») : ça attend la pause, midi
+      ou la fin de journée. Le rappel du jour part à la sortie des cours s'ils finissent avant l'heure choisie.
+      Le matin d'un contrôle et les alertes graves passent quand même.</span>
+    {% if edt %}<br><span class="doux edt">{{ edt }}</span>{% endif %}</span>
+    <input type="checkbox" name="edt" value="true" {{ 'checked' if p.edt }}></label>
   <p class="doux">Pendant le silence, rien ne sonne : les notifications attendent le matin.
     Sauf les <a href="/securite">alertes de sécurité</a>, qui partent tout de suite.</p>
   <button class="principal">Enregistrer</button>
