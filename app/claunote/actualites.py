@@ -6,11 +6,15 @@
     (recherche d'un sujet)                                                                        │   ALERTE (rare, grave)
                                                                                                   └─► « L'essentiel » :
                                                                          le point du jour en 3 à 5 phrases (Opus)
+                                                                         + une notification par jour, à l'heure
+                                                                           où tu lis d'habitude tes actualités
 
 - Plus intéressant à lire : l'IA donne à chaque article une étiquette d'événement (la même info chez trois sites
-  = une seule carte « aussi chez… ») et la notion du BTS qu'il illustre (VLAN, Active Directory…), reliée à ton
+  = une seule carte « aussi chez… ») et la notion de ta formation qu'il illustre (VLAN, RGPD…), reliée à ton
   cours sur ce sujet s'il y en a un ; l'image de l'article passe par le site (vignette réduite, jamais de
   chargement direct depuis un site tiers).
+- Pour toutes les formations : rien n'est propre au BTS dans les consignes de l'IA ; elle s'appuie sur la formation
+  renseignée (page Matières, formations.py) et sur tes sujets suivis.
 
 - Dédup : un article = son lien nettoyé (sans utm_…, sans #) ; le même dans deux flux n'apparaît qu'une fois.
 - Pas de spam : à son premier relevé, un flux n'annonce rien ; seule une « alerte » (jugée par l'IA : grosse
@@ -47,7 +51,10 @@ POINT_FENETRE = 24        # heures d'actualité prises en compte pour le point d
 POINT_SEUIL = 0.6         # importance minimale d'un article pour entrer dans le point
 POINT_MAX = 14            # articles proposés à l'IA pour le point
 UA = "Mozilla/5.0 (compatible; Claunote/1.0; lecteur RSS personnel)"
-DEFAUT = {"ia": True}
+DEFAUT = {"ia": True, "quotidien": "auto"}   # quotidien : "auto" (ton heure de lecture), "HH:MM" ou "non"
+QUOTIDIEN_DEFAUT = dt.time(7, 30)   # heure de la notification du jour tant qu'on ne sait pas quand tu lis
+QUOTIDIEN_JOURS = 28                # jours d'habitudes de lecture gardés
+QUOTIDIEN_MIN = 5                   # jours de lecture qu'il faut pour choisir l'heure toute seule
 
 FLUX_DEFAUT = [
     ("https://www.cert.ssi.gouv.fr/alerte/feed/", "CERT-FR : alertes de sécurité"),
@@ -60,22 +67,30 @@ FLUX_DEFAUT = [
     ("https://www.01net.com/feed/", "01net"),
 ]
 FLUX_AJOUTES = {"actualites_flux_2": ["Numerama", "01net"]}   # ajoutés après coup aux installations existantes
-SUJETS_DEFAUT = [   # option SISR du BTS SIO : infrastructure, réseau, sécurité
+SUJETS_DEFAUT = [   # sélection de départ (informatique), à changer sur la page Sources selon ta formation
     ("Cybersécurité", "Failles critiques à corriger, cyberattaques marquantes, rançongiciels, fuites de données, "
      "recommandations de l'ANSSI.",
      ["faille", "vulnérabilité", "CVE", "rançongiciel", "ransomware", "cyberattaque", "phishing", "hameçonnage",
       "ANSSI", "CERT-FR", "fuite de données", "zero-day", "correctif"]),
     ("Réseaux", "Équipements et protocoles réseau (Cisco, Fortinet, pfSense, routage, VLAN, Wi-Fi, IPv6, VPN, "
-     "pare-feu) : nouveautés et failles utiles à un étudiant en BTS SIO option SISR.",
+     "pare-feu) : nouveautés et failles qui comptent.",
      ["Cisco", "Fortinet", "FortiGate", "pfSense", "VLAN", "routeur", "commutateur", "switch", "Wi-Fi", "IPv6",
       "VPN", "pare-feu", "firewall", "BGP", "DNS", "DHCP"]),
     ("Systèmes et virtualisation", "Administration Windows Server, Linux, Active Directory, virtualisation "
-     "(Proxmox, VMware, Hyper-V), conteneurs, sauvegarde, supervision et cloud : ce qui sert à un admin système "
-     "débutant (BTS SIO option SISR).",
+     "(Proxmox, VMware, Hyper-V), conteneurs, sauvegarde, supervision et cloud : ce qui sert à un admin "
+     "système.",
      ["Windows Server", "Linux", "Debian", "Ubuntu", "Active Directory", "Proxmox", "VMware", "Hyper-V", "Docker",
       "Kubernetes", "Veeam", "sauvegarde", "Zabbix", "GLPI", "Ansible", "Azure", "Microsoft 365"]),
 ]
 # Sujets de départ d'avant (PR #52) : remplacés par ceux de l'option SISR s'ils n'ont pas été modifiés
+# Descriptions de départ qui parlaient du BTS SIO (PR #53) : rendues neutres si elles n'ont pas été modifiées
+DESCRIPTIONS_BTS = {
+    "Réseaux": "Équipements et protocoles réseau (Cisco, Fortinet, pfSense, routage, VLAN, Wi-Fi, IPv6, VPN, "
+               "pare-feu) : nouveautés et failles utiles à un étudiant en BTS SIO option SISR.",
+    "Systèmes et virtualisation": "Administration Windows Server, Linux, Active Directory, virtualisation "
+                                  "(Proxmox, VMware, Hyper-V), conteneurs, sauvegarde, supervision et cloud : ce qui "
+                                  "sert à un admin système débutant (BTS SIO option SISR).",
+}
 ANCIENS_DEFAUT = {
     "Réseaux et systèmes": "Administration Windows Server, Linux, Active Directory, réseau (Cisco, VLAN, Wi-Fi), "
                            "virtualisation et cloud : nouveautés utiles à un étudiant de BTS SIO.",
@@ -83,45 +98,55 @@ ANCIENS_DEFAUT = {
                      "IA pour développer.",
 }
 
-PROMPT = """Tu fais la veille d'actualités d'un étudiant en BTS SIO option SISR (infrastructures, réseaux,
-systèmes et cybersécurité ; lycée en France). Il veut du condensé, rapide à lire, et n'être alerté que pour le
-rare et le grave.
-Ses sujets suivis :
+PROMPT = """Tu fais la veille d'actualités d'un élève ou d'un étudiant, en France. Il veut du condensé, rapide à
+lire, et n'être alerté que pour le rare et le grave.
+{formation}Ses sujets suivis :
 {sujets}
 {deja}
 Sur l'entrée : des articles, un par ligne en JSON (id, source, titre, extrait).
 Pour chaque article :
 - "sujets" : les codes des sujets qu'il concerne VRAIMENT (pas un simple mot en commun ; [] si aucun) ;
-- "score" : son importance pour cet étudiant, de 0 à 1 (0,9 : événement majeur ; 0,6 : intéressant ;
-  0,3 : anecdotique ; 0 : hors sujet, pub, promo, bon plan, test de produit) ;
+- "score" : son importance pour lui, d'après ses sujets et sa formation, de 0 à 1 (0,9 : événement majeur ;
+  0,6 : intéressant ; 0,3 : anecdotique ; 0 : hors sujet, pub, promo, bon plan, test de produit) ;
 - "resume" : en français, style dépêche, 20 mots au plus : ce qui s'est passé, qui est touché, l'ampleur, et
   s'il y a quelque chose à faire (« Mettre à jour FortiOS en 7.4.5 »). Chiffres concrets, pas de « cet article »
   ni de formule creuse. Vide si hors sujet ;
-- "alerte" : true SEULEMENT pour un événement rare et grave qu'un futur admin réseau doit connaître le jour
-  même : piratage ou fuite massive d'une grande organisation (France Travail, Crédit Mutuel, un opérateur, un
-  hôpital, des millions de personnes) ; faille critique activement exploitée dans un produit très répandu
-  (Fortinet, Cisco, Ivanti, Microsoft, VMware, Citrix…) ; panne mondiale majeure. Quelques-unes par semaine
-  au plus ; dans le doute, false. Un tutoriel, une mise à jour courante, une faille non exploitée : false ;
+- "alerte" : true SEULEMENT pour un événement rare et grave, dans ses sujets, qu'il doit connaître le jour même :
+  par exemple piratage ou fuite massive d'une grande organisation (des millions de personnes), faille critique
+  activement exploitée dans un produit très répandu, panne mondiale majeure, décision officielle qui change ses
+  examens. Quelques-unes par semaine au plus ; dans le doute, false. Un tutoriel, une mise à jour courante, une
+  faille non exploitée : false ;
 - "evenement" : une étiquette courte de l'information en minuscules avec tirets (« fuite-france-travail »,
   « fortios-cve-2026-24858 », « windows-server-2025-maj-novembre »), LA MÊME pour tous les articles qui
   racontent la même information (même sur des sites différents) ; "" si hors sujet ;
-- "notion" : la notion du programme de BTS SIO SISR que l'article illustre, en 1 à 4 mots, comme dans un cours
-  (« VLAN », « Active Directory », « chiffrement TLS », « sauvegarde 3-2-1 », « RGPD ») ; "" si aucune.
+- "notion" : la notion de cours que l'article illustre, en 1 à 4 mots, comme dans un cours de sa formation
+  (« VLAN », « chiffrement TLS », « RGPD », « inflation », « photosynthèse ») ; "" si aucune.
 Réponds seulement en JSON, un objet par article, tous les articles :
 [{{"id": 12, "sujets": ["S1"], "score": 0.9, "resume": "...", "alerte": true, "evenement": "...", "notion": "..."}}]"""
 
-PROMPT_POINT = """Tu fais « L'essentiel » de la veille d'un étudiant en BTS SIO option SISR (infrastructures,
-réseaux, systèmes, cybersécurité) : ce qu'il doit savoir de l'actualité des dernières 24 heures, en 30 secondes.
-Sur l'entrée : les articles importants, un par ligne en JSON (id, source, titre, resume, alerte, notion).
+PROMPT_POINT = """Tu fais « L'essentiel » de la veille d'un élève ou d'un étudiant : ce qu'il doit savoir de
+l'actualité des dernières 24 heures sur ses sujets, en 30 secondes.
+{formation}Sur l'entrée : les articles importants, un par ligne en JSON (id, source, titre, resume, alerte, notion).
 Écris de 3 à 5 points, du plus important au moins important :
 - un point = UNE information (regroupe les articles qui parlent de la même chose), 25 mots au plus, en français,
   style dépêche : le fait, qui est touché, l'ampleur, et l'action à faire s'il y en a une ;
 - pas de titre, pas d'introduction, pas de « cet article », pas de point sans fait concret ;
 - "ids" : les articles dont vient le point (au moins un, uniquement ceux de l'entrée).
-Puis "a_retenir" : une phrase (20 mots au plus) qui relie l'actualité du jour au programme du BTS SISR
-(« Révise les VLAN : la faille Cisco du jour passe par un mauvais cloisonnement ») ; "" si rien de pertinent.
 Réponds seulement en JSON :
-{"points": [{"texte": "...", "ids": [12, 15]}], "a_retenir": "..."}"""
+{{"points": [{{"texte": "...", "ids": [12, 15]}}]}}"""
+
+
+def formation_texte() -> str:
+    """La formation suivie cette année (page Matières), pour que l'IA juge l'importance ; rien si non renseignée."""
+    try:
+        noms = db.formations_actuelles()
+    except Exception as e:   # base d'avant les formations, panne : l'IA se fie aux sujets suivis
+        log(f"formation illisible : {e}")
+        noms = []
+    if not noms:
+        return ""
+    return f"Sa formation : {' ; '.join(noms[:3])}.\n"
+
 
 def log(msg: str):
     print(f"actualités : {msg}", flush=True)
@@ -136,6 +161,17 @@ def reglages() -> dict:
 
 def enregistrer_reglages(r: dict):
     db.etat_ecrire("actualites", json.dumps({k: r[k] for k in DEFAUT if k in r}))
+
+
+def descriptions_neutres():
+    """Une fois : les descriptions de départ qui citaient le BTS SIO, si elles sont intactes, deviennent neutres."""
+    if db.etat_valeur("actualites_neutre"):
+        return
+    db.etat_ecrire("actualites_neutre", "1")
+    nouvelles = {nom: d for nom, d, _ in SUJETS_DEFAUT}
+    for s in db.sujets():
+        if DESCRIPTIONS_BTS.get(s["nom"]) == s["description"]:
+            db.sujet_maj(s["id"], description=nouvelles[s["nom"]])
 
 
 def passer_en_sisr():
@@ -177,10 +213,12 @@ def initialiser():
     """Au tout premier démarrage : une sélection de départ (modifiable sur la page Sources)."""
     if db.etat_valeur("actualites_init"):
         passer_en_sisr()
+        descriptions_neutres()
         ajouter_nouveaux_flux()
         resumes_condenses()
         return
     db.etat_ecrire("actualites_sisr", "1")
+    db.etat_ecrire("actualites_neutre", "1")
     db.etat_ecrire("actualites_resumes", "1")
     for cle in FLUX_AJOUTES:
         db.etat_ecrire(cle, "1")
@@ -416,7 +454,7 @@ def prompt(sujets: list[dict], deja: list[str] | None = None) -> str:
               for code, s in zip(_codes(sujets), sujets)]
     connus = (f"\nÉtiquettes déjà données ces derniers jours (réutilise la même si c'est la même information) : "
               f"{', '.join(deja)}\n" if deja else "")
-    return PROMPT.format(sujets="\n".join(lignes), deja=connus)
+    return PROMPT.format(sujets="\n".join(lignes), deja=connus, formation=formation_texte())
 
 
 def _etiquette(texte) -> str | None:
@@ -507,7 +545,7 @@ def trier(claude_ok) -> int:
 # --- « L'essentiel » : le point du jour -------------------------------------------------
 
 def point() -> dict | None:
-    """Le dernier point du jour : {le, ids, points: [{texte, ids}], a_retenir, modele} (points vide : rien à montrer)."""
+    """Le dernier point du jour : {le, ids, points: [{texte, ids}], modele} (points vide : rien à montrer)."""
     try:
         p = json.loads(db.etat_valeur("actualites_point") or "null")
     except ValueError:
@@ -532,7 +570,7 @@ def lire_point(texte: str, ids: set[int]) -> dict:
             points.append({"texte": re.sub(r"\s+", " ", str(p["texte"])).strip()[:240], "ids": cites[:4]})
     if not points:
         raise agent.ErreurAgent("point du jour sans aucun point relié aux articles")
-    return {"points": points, "a_retenir": re.sub(r"\s+", " ", str(d.get("a_retenir") or "")).strip()[:200]}
+    return {"points": points}
 
 
 def faire_point(claude_ok, maintenant: float | None = None) -> bool:
@@ -558,7 +596,8 @@ def faire_point(claude_ok, maintenant: float | None = None) -> bool:
                                    "resume": a["pourquoi"] or a["extrait"][:200], "alerte": bool(a["alerte"]),
                                    "notion": a.get("notion") or ""}, ensure_ascii=False) for a in candidats)
     try:
-        lu, modele = agent.demander("actualites_point", PROMPT_POINT, Path(tempfile.gettempdir()), entree=entree,
+        consigne = PROMPT_POINT.format(formation=formation_texte())
+        lu, modele = agent.demander("actualites_point", consigne, Path(tempfile.gettempdir()), entree=entree,
                                     timeout=300, lire=lambda t: lire_point(t, set(ids)))
     except agent.ErreurAgent as e:
         log(f"point du jour impossible ({e}) : l'ancien reste affiché")
@@ -597,7 +636,7 @@ def regrouper(liste: list[dict]) -> list[dict]:
 
 
 def cours_lies(notions: list[str], limite: int = 12) -> dict[str, dict]:
-    """Notion du BTS → ton cours le plus proche (recherche plein texte), pour « Revoir ton cours »."""
+    """Notion de cours → ton cours le plus proche (recherche plein texte), pour « Revoir ton cours »."""
     trouves = {}
     for n in list(dict.fromkeys(n for n in notions if n))[:limite]:
         try:
@@ -689,6 +728,81 @@ def vignette(url: str) -> bytes | None:
     return image
 
 
+# --- Notification du jour : à l'heure où tu lis tes actualités ------------------------------
+
+def _paris(maintenant: dt.datetime | None = None) -> dt.datetime:
+    return (maintenant or dt.datetime.now(dt.timezone.utc)).astimezone(notifications.PARIS)
+
+
+def _habitudes() -> dict[str, list[int]]:
+    try:
+        h = json.loads(db.etat_valeur("actualites_lectures") or "{}")
+    except ValueError:
+        return {}
+    return h if isinstance(h, dict) else {}
+
+
+def noter_lecture(maintenant: dt.datetime | None = None):
+    """Tu ouvres les Actualités (ou un article) : l'heure est notée, une fois par heure et par jour, 28 jours."""
+    m = _paris(maintenant)
+    h = _habitudes()
+    jour = m.date().isoformat()
+    if m.hour in h.get(jour, []):
+        return
+    h[jour] = sorted({*h.get(jour, []), m.hour})
+    limite = (m.date() - dt.timedelta(days=QUOTIDIEN_JOURS)).isoformat()
+    db.etat_ecrire("actualites_lectures", json.dumps({j: v for j, v in h.items() if j > limite}))
+
+
+def heure_quotidienne() -> tuple[dt.time | None, str]:
+    """(heure de la notification du jour, pourquoi) ; None : réglée sur « non »."""
+    choix = reglages().get("quotidien") or "auto"
+    if choix == "non":
+        return None, "désactivée"
+    if choix != "auto":
+        try:
+            return dt.time.fromisoformat(choix), "heure choisie"
+        except ValueError:
+            pass
+    h = _habitudes()
+    if len(h) < QUOTIDIEN_MIN:
+        return QUOTIDIEN_DEFAUT, f"le temps d'apprendre quand tu lis : {len(h)}/{QUOTIDIEN_MIN} jours"
+    # L'heure où tu lis le plus souvent (en nombre de jours) ; à égalité, la plus tôt : prévenu avant de lire
+    compte = {}
+    for heures in h.values():
+        for x in heures:
+            compte[x] = compte.get(x, 0) + 1
+    meilleure = min(compte, key=lambda x: (-compte[x], x))
+    return dt.time(meilleure, 0), f"tu lis tes actualités vers {meilleure} h ({compte[meilleure]} jours sur {len(h)})"
+
+
+def quotidien(maintenant: dt.datetime | None = None) -> bool:
+    """Une fois par jour, à l'heure choisie : « L'essentiel » (ou les articles pour toi pas encore lus).
+    Rien à dire : rien n'est envoyé. S'ajoute aux alertes, qui partent toujours tout de suite."""
+    heure, _ = heure_quotidienne()
+    m = _paris(maintenant)
+    if heure is None or m.time() < heure or not notifications.preferences().get("actualites", True):
+        return False
+    cle = f"actu-jour:{m.date().isoformat()}"
+    if db.etat_valeur("actualites_quotidien") == cle:
+        return False
+    db.etat_ecrire("actualites_quotidien", cle)
+    if m - m.replace(hour=heure.hour, minute=heure.minute, second=0, microsecond=0) > dt.timedelta(hours=3):
+        return False   # worker arrêté pendant l'heure prévue : pas de notification « du matin » le soir
+    p = point() or {}
+    frais = p.get("points") and m.timestamp() - float(p.get("le") or 0) < 20 * 3600
+    if frais:
+        titre = f"📰 L'essentiel : {len(p['points'])} info{'s' if len(p['points']) > 1 else ''} du jour"
+        corps = " · ".join(x["texte"] for x in p["points"][:2])
+    else:
+        n = db.nb_actualites_nouvelles()
+        if not n:
+            return False
+        titre = f"📰 {n} article{'s' if n > 1 else ''} pour toi"
+        corps = "Les nouveautés de tes sujets suivis t'attendent."
+    return db.notifier(cle, titre[:120], corps[:300], "/actualites")
+
+
 # --- Notifications ------------------------------------------------------------------
 
 def annoncer(maintenant: dt.datetime | None = None) -> int:
@@ -737,3 +851,4 @@ def tour(claude_ok, maintenant: float | None = None):
     trier(claude_ok)
     annoncer()
     faire_point(claude_ok)
+    quotidien()

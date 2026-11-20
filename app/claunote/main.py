@@ -3022,6 +3022,11 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
     if sujet or flux:
         vue = "tout"
     page = max(page, 1)
+    if not request.headers.get("x-rafraichir"):   # vraie visite (pas le rafraîchissement auto) : ton heure de lecture
+        try:
+            actualites.noter_lecture()
+        except Exception as e:
+            print(f"actualités : heure de lecture non notée : {e}", flush=True)
     liste, total = db.articles(vue, sujet, flux, PAR_PAGE_ACTU, (page - 1) * PAR_PAGE_ACTU)
     liste = actualites.regrouper(liste)
     cours = actualites.cours_lies([a.get("notion") for a in liste])
@@ -3080,6 +3085,7 @@ def actualite_favori(article_id: int):
 @app.post("/actualites/{article_id}/lu")
 def actualite_lue(article_id: int):
     db.article_maj(article_id, lu=True)
+    actualites.noter_lecture()
     return {"ok": True}
 
 
@@ -3099,7 +3105,8 @@ def _page_sources(request: Request, message: str = "", erreur: str = "", saisie:
     return templates.TemplateResponse(request, "actualites_sources.html", {
         "sujets": db.sujets(), "flux_liste": db.flux_liste(), "message": message, "erreur": erreur,
         "saisie": saisie or {}, "reglages": actualites.reglages(), "paris": pronote.PARIS,
-        "notifs": notifications.preferences().get("actualites", True)})
+        "notifs": notifications.preferences().get("actualites", True),
+        "quotidien": actualites.heure_quotidienne()})
 
 
 @app.get("/actualites/sources", response_class=HTMLResponse)
@@ -3200,8 +3207,15 @@ def supprimer_sujet(sujet_id: int):
 
 
 @app.post("/actualites/reglages")
-def regler_actualites(ia: bool = Form(False), notifs: bool = Form(False)):
-    actualites.enregistrer_reglages({"ia": ia})
+def regler_actualites(ia: bool = Form(False), notifs: bool = Form(False), quotidien: str = Form("auto"),
+                      heure: str = Form("")):
+    if quotidien == "heure":
+        try:
+            quotidien = dt.time.fromisoformat(heure).strftime("%H:%M")
+        except ValueError:
+            quotidien = "auto"
+    actualites.enregistrer_reglages({"ia": ia, "quotidien": quotidien if quotidien in ("auto", "non") or ":" in quotidien
+                                     else "auto"})
     notifications.enregistrer_preferences({**notifications.preferences(), "actualites": notifs})
     return RedirectResponse("/actualites/sources?message=Réglages+enregistrés#reglages", status_code=303)
 

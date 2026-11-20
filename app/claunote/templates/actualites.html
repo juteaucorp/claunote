@@ -39,8 +39,11 @@
     </li>
     {% endfor %}
   </ol>
-  {% if essentiel.a_retenir %}<p class="bts"><strong>Pour ton BTS</strong> {{ essentiel.a_retenir }}</p>{% endif %}
 </section>
+{% endif %}
+{% if groupes and vue != 'favoris' %}
+<form method="post" action="/actualites/tout-lu" class="tout-lu"><input type="hidden" name="vue" value="{{ vue }}">
+  <button class="petit">{{ icone('check', 18) }}Tout marquer comme lu</button></form>
 {% endif %}
 
 {% if not flux_liste %}
@@ -87,7 +90,7 @@
       {% if a.aussi %}<p class="aussi doux">Aussi chez {% for x in a.aussi[:4] %}{% if x.lien %}<a href="{{ x.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ x.id }}" title="{{ x.titre }}">{{ x.source }}</a>{% else %}{{ x.source }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if a.aussi|length > 4 %} et {{ a.aussi|length - 4 }} autre{{ 's' if a.aussi|length > 5 }}{% endif %}</p>{% endif %}
       {% set c = cours.get(a.notion) if a.notion else none %}
       {% if a.noms_sujets or a.notion %}<div class="sujets">
-        {% if a.notion %}{% if c %}<a class="notion" href="/doc/{{ c.id }}" title="Revoir ton cours : {{ c.titre or c.nom }}">{{ icone('cours', 14) }}{{ a.notion }} · ton cours</a>{% else %}<span class="notion" title="Notion du BTS">{{ icone('cours', 14) }}{{ a.notion }}</span>{% endif %}{% endif %}
+        {% if a.notion %}{% if c %}<a class="notion" href="/doc/{{ c.id }}" title="Revoir ton cours : {{ c.titre or c.nom }}">{{ icone('cours', 14) }}{{ a.notion }} · ton cours</a>{% else %}<span class="notion" title="Notion de cours">{{ icone('cours', 14) }}{{ a.notion }}</span>{% endif %}{% endif %}
         {% for n in a.noms_sujets %}<span>{{ n }}</span>{% endfor %}</div>{% endif %}
     </div>
     {% if a.image %}<img class="vignette" src="/actualites/{{ a.image_id }}/image" alt="" loading="lazy" decoding="async" width="88" height="88">{% endif %}
@@ -103,11 +106,6 @@
   <span class="doux">{{ (page - 1) * par + 1 }}–{{ [page * par, total]|min }} sur {{ total }}</span>
   {% if page < pages %}<a class="bouton" href="{{ lien_page(page + 1) }}">Plus anciens ›</a>{% else %}<span></span>{% endif %}
 </nav>
-{% endif %}
-
-{% if groupes and vue != 'favoris' %}
-<form method="post" action="/actualites/tout-lu" class="tout-lu"><input type="hidden" name="vue" value="{{ vue }}">
-  <button class="petit">{{ icone('check', 18) }}Tout marquer comme lu</button></form>
 {% endif %}
 
 <style>
@@ -143,7 +141,7 @@
   .favori.actif svg { fill: currentColor; }
   .vide .bouton { margin-top: 4px; }
   .pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
-  .tout-lu { margin-top: 16px; text-align: center; }
+  .tout-lu { margin: 4px 0 6px; display: flex; justify-content: flex-end; }
   .tout-lu button { display: inline-flex; align-items: center; gap: 6px; }
   @media (max-width: 760px) { .actus li.cible { margin: 0 -16px; padding-left: 16px; padding-right: 16px; } }
   @media (max-width: 420px) { .entete-actu .actions span { display: none; } }
@@ -159,8 +157,6 @@
   .essentiel li p, .essentiel li.alerte p { margin: 0; line-height: 1.4; color: var(--texte); }
   .essentiel .sources { font-size: .8rem; margin-top: 2px; }
   .essentiel .sources a { color: inherit; }
-  .essentiel .bts { margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--bord); font-size: .92rem; }
-  .essentiel .bts strong { color: var(--accent-fonce); margin-right: 4px; }
   @media (max-width: 760px) { .essentiel { padding: 14px 16px; } }
   .actus .aussi { margin: 4px 0 0; font-size: .82rem; }
   .actus .aussi a { color: inherit; }
