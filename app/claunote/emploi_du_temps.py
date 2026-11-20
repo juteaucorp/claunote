@@ -33,7 +33,7 @@ def enregistrer(creneaux: list[dict] | None, du: str | None, au: str | None):
     if creneaux is None:   # la section a échoué : on garde l'ancien plutôt que d'effacer
         return
     db.etat_ecrire("pronote_edt", json.dumps({"du": du, "au": au, "creneaux": [
-        {k: c.get(k) for k in ("debut", "fin", "matiere", "dispense", "genre")} for c in creneaux]}))
+        {k: c.get(k) for k in ("debut", "fin", "matiere", "dispense", "genre", "salle", "prof", "statut")} for c in creneaux]}))
 
 
 def _charger() -> dict:
@@ -169,3 +169,70 @@ def resume(maintenant: dt.datetime, heure_choisie: dt.time) -> str | None:
         return "Pas de cours aujourd'hui : rappel à l'heure choisie."
     moment, pourquoi = heure_rappel(m.date(), heure_choisie, d)
     return f"Aujourd'hui : {', '.join(bouts)}. Rappel du jour vers {moment:%H:%M} ({pourquoi})."
+
+
+# --- Affichage (page Agenda) et révisions proposées avant un cours -----------------------
+
+def jours(depuis: dt.date, nb: int = 14, donnees: dict | None = None) -> list[dict]:
+    """Les jours qui ont des créneaux, à partir de `depuis` : [{date, creneaux, entreprise}].
+
+    Les heures « Dispensé » qui se suivent ne font qu'un bloc « En entreprise » (sauf la pause de midi)."""
+    d = _charger() if donnees is None else donnees
+    par_jour: dict = {}
+    for c in d.get("creneaux") or []:
+        debut, fin = _date(c.get("debut")), _date(c.get("fin"))
+        if debut and fin and depuis <= debut.date() < depuis + dt.timedelta(days=nb):
+            par_jour.setdefault(debut.date(), []).append({**c, "debut": debut, "fin": fin})
+    res = []
+    for jour in sorted(par_jour):
+        creneaux = []
+        for c in sorted(par_jour[jour], key=lambda c: c["debut"]):
+            prec = creneaux[-1] if creneaux else None
+            if c.get("dispense") and prec and prec.get("dispense") and c["debut"] <= prec["fin"] + PAUSE_MIN:
+                prec["fin"] = max(prec["fin"], c["fin"])
+                continue
+            creneaux.append(dict(c))
+        res.append({"date": jour, "creneaux": creneaux,
+                     "entreprise": all(c.get("dispense") for c in creneaux)})
+    return res
+
+
+def prochain_jour_de_cours(apres: dt.date, donnees: dict | None = None, max_jours: int = 4):
+    """(date, cours non dispensés) du prochain jour au lycée après `apres`, ou None."""
+    d = _charger() if donnees is None else donnees
+    for j in jours(apres + dt.timedelta(days=1), max_jours, d):
+        cours = [c for c in j["creneaux"] if not c.get("dispense") and c.get("genre", "lesson") == "lesson"]
+        if cours:
+            return j["date"], cours
+    return None
+
+
+FICHE_RELUE = dt.timedelta(days=4)   # fiche ouverte il y a moins longtemps : pas la peine de la reproposer
+
+
+def avant_les_cours(aujourd_hui: dt.date, donnees: dict | None = None) -> dict | None:
+    """Pour le prochain jour au lycée : quoi revoir avant chaque matière (flashcards dues, fiche pas relue).
+
+    {date, suggestions: [{matiere, pronote, debut, cartes, paquet, fiche}]}, ou None sans cours à venir."""
+    from claunote.pronote import trouver_matiere   # pronote importe ce module
+    d = _charger() if donnees is None else donnees
+    prochain = prochain_jour_de_cours(aujourd_hui, d)
+    if not prochain:
+        return None
+    jour, cours = prochain
+    stock = db.a_revoir_par_matiere()
+    noms, vues, suggestions = sorted(stock), set(), []
+    maintenant = dt.datetime.now(PARIS)
+    for c in cours:
+        m = trouver_matiere(c["matiere"], noms)
+        if not m or m in vues:
+            continue
+        vues.add(m)
+        s = stock[m]
+        fiche = s.get("fiche")
+        if fiche and fiche.get("ouverte_le") and maintenant - fiche["ouverte_le"] < FICHE_RELUE:
+            fiche = None
+        if s.get("cartes") or fiche:
+            suggestions.append({"matiere": m, "pronote": c["matiere"], "debut": c["debut"], "cartes": s.get("cartes", 0),
+                                "paquet": s.get("paquet"), "fiche": fiche})
+    return {"date": jour, "suggestions": suggestions}

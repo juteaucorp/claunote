@@ -61,6 +61,57 @@
     </div>
   </div>
 
+  <h2 id="emploi-du-temps">Emploi du temps</h2>
+  {% if edt_jours %}
+  {% set aujourdhui = maintenant.date() %}
+  <div class="edt-jours" role="tablist">
+    {% for j in edt_jours %}
+    <button type="button" role="tab" class="edt-onglet{{ ' entreprise' if j.entreprise }}" data-jour="{{ j.date.isoformat() }}"
+      aria-selected="{{ 'true' if loop.first else 'false' }}">
+      <span>{{ "Auj." if j.date == aujourdhui else JOURS[j.date.weekday()] }}</span><strong>{{ j.date.day }}</strong>
+    </button>
+    {% endfor %}
+  </div>
+  {% for j in edt_jours %}
+  <div class="carte edt-jour" data-jour="{{ j.date.isoformat() }}" {{ 'hidden' if not loop.first }}>
+    <div class="doux edt-titre">{{ JOURS[j.date.weekday()]|capitalize }} {{ j.date.day }} {{ MOIS[j.date.month - 1] }}
+      {% if j.entreprise %} · en entreprise{% endif %}</div>
+    <ul class="lignes">
+      {% for c in j.creneaux %}
+      <li class="edt-creneau{{ ' dispense' if c.dispense }}{{ ' en-cours' if c.maintenant }}">
+        <div class="edt-heure">{{ c.debut.strftime('%H:%M') }}<br><span class="doux">{{ c.fin.strftime('%H:%M') }}</span></div>
+        <div class="corps">
+          {% if c.dispense %}<strong>En entreprise</strong><div class="doux">Dispensé{% if c.matiere %} · {{ c.matiere|matiere }}{% endif %}</div>
+          {% else %}<strong>{{ c.matiere|matiere }}</strong>
+            {% if c.controle %}<span class="edt-badge">Contrôle</span>{% endif %}
+            {% if c.maintenant %}<span class="edt-badge maintenant">Maintenant</span>{% endif %}
+            <div class="doux">{{ [c.salle, c.prof, c.statut]|select|join(' · ') }}</div>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+  {% if avance and avance.suggestions %}
+  <div class="carte accent" id="avant-les-cours">
+    <strong>À revoir avant tes cours {{ "de demain" if (avance.date - aujourdhui).days == 1 else "de " ~ JOURS[avance.date.weekday()] ~ " " ~ avance.date.day }}</strong>
+    <ul class="lignes">
+      {% for s in avance.suggestions %}
+      <li><div class="corps"><strong>{{ s.matiere }}</strong> <span class="doux">à {{ s.debut.strftime('%H:%M') }}</span>
+        <div class="doux">{% if s.cartes %}{{ s.cartes }} flashcard{{ 's' if s.cartes > 1 }} à revoir{% endif %}{% if s.cartes and s.fiche %} · {% endif %}{% if s.fiche %}fiche « {{ s.fiche.sujet }} »{% endif %}</div></div>
+        <div class="fin actions">
+          {% if s.cartes and s.paquet %}<a class="bouton principal" href="/cartes/session?paquet={{ s.paquet }}">Réviser</a>{% endif %}
+          {% if s.fiche %}<a class="bouton" href="/revision/{{ s.fiche.id }}">Fiche</a>{% endif %}
+        </div></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="doux">L'emploi du temps arrive à la prochaine synchronisation.</p>
+  {% endif %}
+
   <h2>Évaluations à venir</h2>
   {% for e in evaluations %}
   {% set le = e.le.astimezone(paris) %}
@@ -132,6 +183,33 @@
   <p class="doux">Pas encore de notes sur cette période.</p>
   {% endif %}
 {% endif %}
+
+<style>
+  .edt-jours { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+  .edt-jours::-webkit-scrollbar { display: none; }
+  .edt-onglet { flex: none; display: flex; flex-direction: column; align-items: center; min-width: 52px; padding: 6px 8px;
+    border-radius: 14px; line-height: 1.2; }
+  .edt-onglet span { font-size: .8em; opacity: .8; }
+  .edt-onglet.entreprise span::after { content: " 💼"; }
+  .edt-onglet[aria-selected="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .edt-titre { margin-bottom: 4px; }
+  .edt-creneau { align-items: flex-start; }
+  .edt-heure { flex: none; width: 48px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .edt-creneau.dispense .edt-heure, .edt-creneau.dispense strong { color: var(--doux); }
+  .edt-creneau.en-cours { box-shadow: inset 3px 0 0 var(--accent); }
+  .edt-badge { display: inline-block; font-size: .75em; padding: 1px 8px; border-radius: 999px; margin-left: 6px;
+    background: var(--accent); color: #fff; vertical-align: middle; }
+  .edt-badge.maintenant { background: #34c759; }
+</style>
+<script>
+  // Onglets de l'emploi du temps : un jour à la fois (sans JavaScript, le premier jour seulement)
+  for (const b of document.querySelectorAll(".edt-onglet")) {
+    b.addEventListener("click", () => {
+      for (const o of document.querySelectorAll(".edt-onglet")) o.setAttribute("aria-selected", o === b ? "true" : "false");
+      for (const j of document.querySelectorAll(".edt-jour")) j.hidden = j.dataset.jour !== b.dataset.jour;
+    });
+  }
+</script>
 
 {% if not etat.connecte and not etat.injoignable %}
 <script>

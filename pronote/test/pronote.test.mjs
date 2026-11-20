@@ -140,6 +140,8 @@ test("synchro : jeton renouvelé, contrôles, devoirs et notes de la période en
   assert.deepEqual(r.emploi_du_temps.map((c) => [c.matiere, c.dispense]),
     [["SISR - RESEAUX", false], ["MATHEMATIQUES", true], ["SISR - RESEAUX", true], ["MATHEMATIQUES", false]]);
   assert.equal(r.emploi_du_temps[1].fin, "2026-10-29T09:00:00.000Z");
+  assert.equal(r.emploi_du_temps[0].salle, "B12");
+  assert.equal(r.emploi_du_temps[0].prof, "M. Prof");
   assert.equal(r.devoirs[0].pour_le, "2026-10-27T07:00:00.000Z");
   assert.deepEqual(r.devoirs[0].themes, ["Suites"]);
   assert.equal(r.notes.periode, "Semestre 1");

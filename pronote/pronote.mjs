@@ -236,6 +236,8 @@ export function extraireEmploiDuTemps(edt) {
       fin: iso(c.endDate),
       genre: c.is,
       matiere: c.subject?.name ?? c.title ?? "",
+      salle: (c.classrooms ?? []).join(", "),
+      prof: (c.teacherNames ?? []).join(", "),
       dispense: Boolean(c.exempted) || DISPENSE.test(c.status ?? ""),
       statut: c.status ?? "",
     }))

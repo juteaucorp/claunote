@@ -1485,6 +1485,30 @@ def nb_cartes_a_revoir(rev_id: int | None = None) -> int:
                          f"AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
 
 
+def a_revoir_par_matiere() -> dict:
+    """Par matière : flashcards à revoir (et le paquet qui en a le plus), dernière fiche prête.
+
+    Sert à proposer de réviser la veille d'un cours de cette matière (emploi_du_temps.avant_les_cours)."""
+    matiere = "COALESCE(NULLIF(r.matiere, ''), NULLIF(split_part(r.sujet, ' : ', 1), r.sujet))"
+    res: dict = {}
+    with connect() as c:
+        for x in c.execute(f"""SELECT {matiere} AS matiere, r.id, count(*) AS n FROM cartes k
+                                JOIN revisions r ON r.id = k.revision_id
+                               WHERE {A_REVOIR} AND r.archive_le IS NULL AND r.statut = 'pret'
+                               GROUP BY 1, 2 ORDER BY 3 DESC""").fetchall():
+            if not x["matiere"]:
+                continue
+            m = res.setdefault(x["matiere"], {"cartes": 0, "paquet": x["id"], "fiche": None})
+            m["cartes"] += x["n"]
+        for x in c.execute(f"""SELECT DISTINCT ON (1) {matiere} AS matiere, r.id, r.sujet, r.ouverte_le
+                                 FROM revisions r WHERE r.genre = 'fiche' AND r.statut = 'pret'
+                                  AND r.archive_le IS NULL AND r.campagne_id IS NULL
+                                ORDER BY 1, r.cree_le DESC""").fetchall():
+            if x["matiere"]:
+                res.setdefault(x["matiere"], {"cartes": 0, "paquet": None, "fiche": None})["fiche"] = dict(x)
+    return res
+
+
 # --- Archivage (archivage.py décide quoi proposer) -----------------------------
 
 def noter_ouverture(rev_id: int):
