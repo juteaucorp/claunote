@@ -1,6 +1,6 @@
 # Guide d'installation détaillé
 
-Résumé et prérequis : [README](../README.md#ce-quil-te-faut). Ce guide reprend chaque étape en détail.
+Résumé et prérequis : [docs/installation.md](../docs/installation.md#ce-quil-te-faut). Ce guide reprend chaque étape en détail.
 
 Premier objectif atteint quand : un PDF déposé dans `kDrive/Etudes/inbox` depuis ton téléphone
 apparaît sur `http://<vm>:8000/inbox` (via ton VPN).
