@@ -1,16 +1,33 @@
-{# Public ou privé d'un élément à soi. public : True, False, ou None (cours : comme sa matière, matiere_publique) #}
+{# Public ou privé d'un élément à soi : choix en deux (ou trois) boutons, celui en cours mis en évidence.
+   public : True, False, ou None (cours : comme sa matière, matiere_publique). Le style est DANS la macro :
+   un {% from … import %} n'affiche rien de ce qui est en dehors. #}
+{% macro style_visibilite() %}
 <style>
-  .visibilite { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0 12px; font-size: .9rem; }
-  .visibilite button { padding: 3px 12px; font-size: .85rem; }
-  .visibilite button.lien { background: none; border: none; text-decoration: underline; color: var(--texte-doux, inherit); }
-  .visibilite .etat.public { color: var(--accent-fonce); }
+  .visibilite { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 10px 0 16px; padding: 10px 14px;
+                border: 1px solid var(--bord); border-radius: 14px; background: var(--fond-doux); }
+  .visibilite .titre-vis { font-weight: 600; }
+  .choix-vis { display: inline-flex; border: 1px solid var(--bord); border-radius: 999px; overflow: hidden; background: var(--carte); }
+  .choix-vis button { border: 0; border-radius: 0; padding: 6px 14px; background: none; color: var(--texte); font-weight: 500; }
+  .choix-vis button + button { border-left: 1px solid var(--bord); }
+  .choix-vis button:hover:not(.actif) { background: var(--accent-pale); }
+  .choix-vis button.actif { background: var(--accent); color: #fff; cursor: default; }
+  .choix-vis button.actif.prive { background: var(--texte); color: var(--carte); }
+  .visibilite .explication { color: var(--doux); font-size: .88rem; flex: 1 1 260px; }
 </style>
-{% macro visibilite(action, public, matiere_publique=None) %}
+{% endmacro %}
+
+{% macro visibilite(action, public, matiere_publique=None, genre='cet élément') %}
 {% set public = none if public is undefined else public %}
+{% set suit = public is none and matiere_publique is not none %}
 {% set effectif = matiere_publique if public is none else public %}
-<form method="post" action="{{ action }}" class="visibilite" title="Public : les autres comptes de l'environnement peuvent le lire (sans le modifier). Privé : toi seul{{ ' (et l’admin)' if not est_admin() }}.">
-  <span class="etat {{ 'public' if effectif }}">{{ '🌐 Public' if effectif else '🔒 Privé' }}{% if public is none and matiere_publique is not none %} <small>(comme la matière)</small>{% endif %}</span>
-  <button name="valeur" value="{{ 'prive' if effectif else 'public' }}">{{ 'Rendre privé' if effectif else 'Rendre public' }}</button>
-  {% if public is not none and matiere_publique is not none %}<button name="valeur" value="matiere" class="lien">Comme la matière</button>{% endif %}
+{{ style_visibilite() }}
+<form method="post" action="{{ action }}" class="visibilite" aria-label="Qui peut voir {{ genre }}">
+  <span class="titre-vis">Qui peut voir {{ genre }} ?</span>
+  <span class="choix-vis" role="group">
+    <button name="valeur" value="prive" class="prive {{ 'actif' if not effectif and not suit }}" aria-pressed="{{ 'true' if not effectif and not suit else 'false' }}">🔒 Moi seul</button>
+    <button name="valeur" value="public" class="{{ 'actif' if effectif and not suit }}" aria-pressed="{{ 'true' if effectif and not suit else 'false' }}">🌐 Tous les comptes</button>
+    {% if matiere_publique is not none %}<button name="valeur" value="matiere" class="{{ 'actif' if suit }} {{ 'prive' if suit and not effectif }}" aria-pressed="{{ 'true' if suit else 'false' }}">Comme la matière ({{ 'publique' if matiere_publique else 'privée' }})</button>{% endif %}
+  </span>
+  <span class="explication">{% if effectif %}<strong>Public</strong> : les autres comptes le lisent dans « Partagés », sans pouvoir le modifier.{% else %}<strong>Privé</strong> : toi seul{{ ' (et l’admin)' if not est_admin() }}.{% endif %}</span>
 </form>
 {% endmacro %}
