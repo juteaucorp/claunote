@@ -244,6 +244,27 @@ export function extraireEmploiDuTemps(edt) {
     .sort((a, b) => a.debut.localeCompare(b.debut));
 }
 
+/**
+ * Tous les cours de l'emploi du temps, annulés compris, pour repérer ce qui change d'une vérification
+ * à l'autre (salle, prof, cours annulé, prof absent…). `statut` : ce qu'affiche Pronote (« Prof. absent »,
+ * « Changement de salle », « Cours déplacé »…).
+ */
+export function extraireCours(edt) {
+  return edt.classes
+    .filter((c) => c.is === "lesson" && c.startDate instanceof Date && c.endDate instanceof Date)
+    .map((c) => ({
+      debut: iso(c.startDate),
+      fin: iso(c.endDate),
+      matiere: c.subject?.name ?? "",
+      salle: (c.classrooms ?? []).join(", "),
+      prof: (c.teacherNames ?? []).join(", "),
+      statut: c.status ?? "",
+      annule: Boolean(c.canceled),
+      dispense: Boolean(c.exempted) || DISPENSE.test(c.status ?? ""),
+    }))
+    .sort((a, b) => a.debut.localeCompare(b.debut));
+}
+
 export function extraireNotes(apercu, periode) {
   return {
     periode: periode?.name ?? null,
@@ -300,6 +321,26 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
     }
     return session;
   }
+
+  // Cours annulés gardés (superposés compris) : c'est ce qui permet de prévenir d'une annulation.
+  // Les contrôles et les créneaux occupés, eux, les écartent.
+  const emploiDuTemps = (session, debut, fin, erreurs) => section("emploi du temps", async () => {
+    const brut = await pawnote.timetableFromIntervals(session, debut, fin);
+    pawnote.parseTimetable(session, brut, {
+      withSuperposedCanceledClasses: true, withCanceledClasses: true, withPlannedClasses: true,
+    });
+    return brut;
+  }, erreurs);
+
+  const notesDuMoment = (session, maintenant, erreurs) => section("notes", async () => {
+    const onglet = session.userResource.tabs.get(pawnote.TabLocation.Grades);
+    if (!onglet) return null;
+    const periodes = onglet.periods ?? [];
+    const periode = periodes.find((p) => p.startDate <= maintenant && maintenant <= p.endDate)
+      ?? onglet.defaultPeriod ?? periodes.at(-1);
+    if (!periode) return null;
+    return extraireNotes(await pawnote.gradesOverview(session, periode), periode);
+  }, erreurs);
 
   async function section(nom, f, erreurs) {
     try {
@@ -363,27 +404,31 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
       const devoirs = await section("devoirs", async () =>
         extraireDevoirs(await pawnote.assignmentsFromIntervals(session, debut, fin)), erreurs);
 
-      const edt = await section("emploi du temps", async () => {
-        const brut = await pawnote.timetableFromIntervals(session, debut, fin);
-        pawnote.parseTimetable(session, brut, {
-          withSuperposedCanceledClasses: false, withCanceledClasses: false, withPlannedClasses: true,
-        });
-        return brut;
-      }, erreurs);
+      const edt = await emploiDuTemps(session, debut, fin, erreurs);
       const controles = edt ? extraireControles(edt) : null;
       const emploi_du_temps = edt ? extraireEmploiDuTemps(edt) : null;
+      const cours = edt ? extraireCours(edt) : null;
+      const notes = await notesDuMoment(session, maintenant, erreurs);
 
-      const notes = await section("notes", async () => {
-        const onglet = session.userResource.tabs.get(pawnote.TabLocation.Grades);
-        if (!onglet) return null;
-        const periodes = onglet.periods ?? [];
-        const periode = periodes.find((p) => p.startDate <= maintenant && maintenant <= p.endDate)
-          ?? onglet.defaultPeriod ?? periodes.at(-1);
-        if (!periode) return null;
-        return extraireNotes(await pawnote.gradesOverview(session, periode), periode);
-      }, erreurs);
+      return { devoirs, controles, emploi_du_temps, cours, notes, erreurs, du: iso(debut), au: iso(fin) };
+    }),
 
-      return { devoirs, controles, emploi_du_temps, notes, erreurs, du: iso(debut), au: iso(fin) };
+    /**
+     * Vérification rapide et fréquente : seulement l'emploi du temps des `jours` prochains jours et les notes,
+     * pour prévenir tout de suite d'un cours modifié ou d'une nouvelle note.
+     */
+    verification: ({ jours = 8, maintenant = new Date() } = {}) => enFile(async () => {
+      const session = await ouvrir();
+      const debut = new Date(maintenant);
+      debut.setHours(0, 0, 0, 0);
+      const fin = new Date(debut.getTime() + jours * JOUR);
+      const erreurs = [];
+      const edt = await emploiDuTemps(session, debut, fin, erreurs);
+      const notes = await notesDuMoment(session, maintenant, erreurs);
+      return {
+        emploi_du_temps: edt ? extraireEmploiDuTemps(edt) : null, cours: edt ? extraireCours(edt) : null,
+        notes, erreurs, du: iso(debut), au: iso(fin),
+      };
     }),
 
     /**

@@ -27,7 +27,9 @@
     <input type="checkbox" name="rappel" value="true" {{ 'checked' if p.rappel }}></label>
   <label class="heure">À <input type="time" name="heure" value="{{ p.heure }}" required></label>
   <label class="interrupteur"><span><strong>Pronote</strong><br>
-    <span class="doux">Nouveau contrôle annoncé, documents des profs récupérés.</span></span>
+    <span class="doux">Cours de la semaine modifié (salle, prof, prof absent, cours annulé ou déplacé), tout de suite,
+      même en cours ou au travail. Nouvelle note (vérifié toutes les 15 min en journée, et à 7 h 12). Nouveau contrôle
+      annoncé, documents des profs récupérés.</span></span>
     <input type="checkbox" name="pronote" value="true" {{ 'checked' if p.pronote }}></label>
   <label class="interrupteur"><span><strong>Révision prête</strong><br>
     <span class="doux">Ta fiche, ton quiz ou tes flashcards sont générés.</span></span>
@@ -40,7 +42,7 @@
   <label class="interrupteur"><span><strong>Caler sur l'emploi du temps Pronote</strong><br>
     <span class="doux">Rien ne sonne en cours ni en entreprise (heures « Dispensé ») : ça attend la pause, midi
       ou la fin de journée. Le rappel du jour part à la sortie des cours s'ils finissent avant l'heure choisie.
-      Le matin d'un contrôle et les alertes graves passent quand même.</span>
+      Le matin d'un contrôle, un cours modifié et les alertes graves passent quand même.</span>
     {% if edt %}<br><span class="doux edt">{{ edt }}</span>{% endif %}</span>
     <input type="checkbox" name="edt" value="true" {{ 'checked' if p.edt }}></label>
   <p class="doux">Pendant le silence, rien ne sonne : les notifications attendent le matin.

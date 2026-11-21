@@ -86,6 +86,10 @@ class Client:
     def synchro(self, jours: int = 28) -> dict:
         return self._appel("POST", "/synchro", {"jours": jours})
 
+    def verification(self, jours: int = 8) -> dict:
+        """Emploi du temps des prochains jours et notes, sans le reste : la vérification fréquente."""
+        return self._appel("POST", "/verification", {"jours": jours})
+
     def documents(self, deja: list[str]) -> dict:
         """Documents des profs pas encore récupérés (contenu en base64), par lots de 40 Mo."""
         return self._appel("POST", "/documents", {"deja": deja}, timeout=600)
@@ -251,10 +255,39 @@ def _synchroniser(client: Client | None = None) -> dict:
     db.enregistrer_pronote(evs, date_locale(d["du"]), sources,
                            notes["notes"] if notes else None, notes["periode"] if notes else None)
     emploi_du_temps.enregistrer(d.get("emploi_du_temps"), d.get("du"), d.get("au"))  # pour caler les notifications
+    _alertes(d)
     db.etat_ecrire("pronote_synchro", dt.datetime.now(PARIS).isoformat(timespec="minutes"))
     db.etat_ecrire("pronote_erreurs", " ; ".join(d.get("erreurs") or []) or None)
     preparees = preparer_a_venir() if PREPARATION_AUTO else []
     return {"connecte": True, "evenements": len(evs), "preparees": preparees, "erreurs": d.get("erreurs") or []}
+
+
+def _alertes(d: dict):
+    """Cours modifiés et nouvelles notes, comparés au relevé d'avant (alertes.py)."""
+    from claunote import alertes
+    alertes.suivre_cours(d.get("cours"), d.get("du"), d.get("au"))
+    alertes.suivre_notes(d.get("notes"))
+
+
+JOURS_VERIFICATION = 8   # la semaine qui vient, plus le jour même
+
+
+def verifier(client: Client | None = None) -> dict:
+    """Vérification rapide (toutes les 15 min en journée, et vers 7 h 10 pour les notes) : emploi du temps et
+    notes seulement. Prévient d'un cours modifié dans la semaine ou d'une nouvelle note."""
+    with db.pour_compte(1):
+        client = client or Client()
+        if not client.etat().get("connecte"):
+            return {"connecte": False}
+        d = client.verification(JOURS_VERIFICATION)
+        emploi_du_temps.enregistrer(d.get("emploi_du_temps"), d.get("du"), d.get("au"))
+        notes = d.get("notes")
+        if notes:   # notes à jour sur l'Agenda aussi (aucun contrôle ni devoir touché : sources vides)
+            db.enregistrer_pronote([], date_locale(d["du"]), [], notes["notes"], notes["periode"])
+        from claunote import alertes
+        cours = alertes.suivre_cours(d.get("cours"), d.get("du"), d.get("au"))
+        nouvelles = alertes.suivre_notes(notes)
+        return {"connecte": True, "changements": len(cours), "notes": len(nouvelles), "erreurs": d.get("erreurs") or []}
 
 
 LOTS_DOCUMENTS = 5  # lots de 40 Mo au plus par passage

@@ -151,6 +151,29 @@ test("synchro : jeton renouvelé, contrôles, devoirs et notes de la période en
   assert.equal((fin - debut) / 86400000, 14);
 });
 
+test("cours suivis : annulés compris, avec salle, prof et statut Pronote", async () => {
+  const { compte } = await nouveau();
+  await compte.connexionQr({ qr: QR, pin: "1234" });
+  const r = await compte.synchro({ jours: 14, maintenant: new Date("2026-10-23T12:00:00") });
+  assert.equal(r.cours.length, 5);   // les 5 cours, sans l'activité
+  const annule = r.cours.find((c) => c.annule);
+  assert.equal(annule.matiere, "MATHEMATIQUES");
+  const b12 = r.cours.find((c) => c.salle === "B12");
+  assert.deepEqual([b12.prof, b12.annule, b12.dispense], ["M. Prof", false, false]);
+  assert.ok(r.cours.find((c) => c.statut === "Dispensé").dispense);
+});
+
+test("vérification rapide : emploi du temps des 8 jours et notes, sans devoirs", async () => {
+  const { compte, pawnote } = await nouveau();
+  await compte.connexionQr({ qr: QR, pin: "1234" });
+  const r = await compte.verification({ maintenant: new Date("2026-10-23T12:00:00") });
+  assert.equal(pawnote.appels.some((a) => a[0] === "devoirs"), false);
+  assert.equal(r.cours.length, 5);
+  assert.equal(r.emploi_du_temps.length, 4);
+  assert.equal(r.notes.notes.length, 1);
+  assert.equal((new Date(r.au) - new Date(r.du)) / 86400000, 8);
+});
+
 test("jeton refusé : la connexion passe en expirée", async () => {
   const { compte, fichier } = await nouveau();
   await compte.connexionQr({ qr: QR, pin: "1234" });
