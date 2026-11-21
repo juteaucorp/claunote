@@ -28,12 +28,27 @@ def _paris(d: dt.datetime) -> dt.datetime:
     return d.astimezone(PARIS)
 
 
+def fusionner_fenetre(ancien: dict, nouveaux: list[dict], du: str | None, au: str | None, cle: str) -> dict:
+    """{du, au, <cle>: [...]} : la fenêtre reçue remplace ce qu'on avait, les jours d'après sont gardés.
+
+    La vérification rapide (8 jours) ne doit pas effacer les semaines suivantes que la synchro (28 jours) a vues.
+    Les jours d'avant la fenêtre reçue (le passé) sont oubliés."""
+    d_du, d_au = _date(du), _date(au)
+    a_du, a_au = _date(ancien.get("du")), _date(ancien.get("au"))
+    if not (d_du and d_au and a_du and a_au) or a_au < d_du or d_au < a_du:   # rien en commun : on repart de zéro
+        return {"du": du, "au": au, cle: nouveaux}
+    gardes = [c for c in ancien.get(cle) or [] if (_date(c.get("debut")) or d_du) >= d_au]
+    return {"du": du, "au": max(a_au, d_au).isoformat(),
+            cle: sorted(gardes + nouveaux, key=lambda c: _date(c.get("debut")) or d_du)}
+
+
 def enregistrer(creneaux: list[dict] | None, du: str | None, au: str | None):
     """Synchro Pronote → créneaux gardés en base (les 28 prochains jours)."""
     if creneaux is None:   # la section a échoué : on garde l'ancien plutôt que d'effacer
         return
-    db.etat_ecrire("pronote_edt", json.dumps({"du": du, "au": au, "creneaux": [
-        {k: c.get(k) for k in ("debut", "fin", "matiere", "dispense", "genre", "salle", "prof", "statut")} for c in creneaux]}))
+    nouveaux = [{k: c.get(k) for k in ("debut", "fin", "matiere", "dispense", "genre", "salle", "prof", "statut")}
+                for c in creneaux]
+    db.etat_ecrire("pronote_edt", json.dumps(fusionner_fenetre(_charger(), nouveaux, du, au, "creneaux")))
 
 
 def _charger() -> dict:

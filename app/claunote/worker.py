@@ -1564,6 +1564,40 @@ def actualites_boucle():
         ARRET.wait(30)
 
 
+VERIF_PRONOTE = dt.timedelta(minutes=int(os.environ.get("PRONOTE_VERIF_MIN", "15") or 0))
+VERIF_JOURNEE = (dt.time(6), dt.time(22))   # la nuit, rien ne bouge sur Pronote (la synchro des 3 h suffit)
+VERIF_NOTES = dt.time(7, 12)                # les notes arrivent en général vers 7 h 10
+
+
+def verification_due(maintenant: dt.datetime, derniere: dt.datetime | None) -> bool:
+    """Vérification rapide de Pronote : toutes les 15 min de 6 h à 22 h, plus une juste après 7 h 10."""
+    if not VERIF_PRONOTE:
+        return False
+    if derniere is None:
+        return True
+    notes = dt.datetime.combine(maintenant.date(), VERIF_NOTES, maintenant.tzinfo)
+    if derniere < notes <= maintenant:
+        return True
+    return VERIF_JOURNEE[0] <= maintenant.time() < VERIF_JOURNEE[1] and maintenant - derniere >= VERIF_PRONOTE
+
+
+def verification_boucle():
+    """Cours modifiés et nouvelles notes, vérifiés à côté du worker (une longue analyse ne les retarde pas)."""
+    derniere = dt.datetime.now(pronote.PARIS)   # la synchro complète du démarrage vient de tout relever
+    while not ARRET.is_set():
+        maintenant = dt.datetime.now(pronote.PARIS)
+        if verification_due(maintenant, derniere):
+            derniere = maintenant
+            try:
+                r = pronote.verifier()
+                if r.get("connecte") and (r["changements"] or r["notes"] or r["erreurs"]):
+                    log(f"pronote : {r['changements']} cours modifié(s), {r['notes']} nouvelle(s) note(s)"
+                        + (f", erreurs : {r['erreurs']}" if r["erreurs"] else ""))
+            except Exception as e:
+                log(f"pronote : vérification rapide impossible : {e}")
+        ARRET.wait(60)
+
+
 def arreter(signum, _frame):
     if not ARRET.is_set():
         log("arrêt demandé : je termine le travail en cours, puis je m'arrête")
@@ -1626,6 +1660,7 @@ def main():
         log("CLAUDE_MODEL n'est plus utilisé : chaque tâche a son modèle (voir CLAUDE_MODELES dans .env.example)")
     threading.Thread(target=notifications.boucle, daemon=True, name="notifications").start()
     threading.Thread(target=actualites_boucle, daemon=True, name="actualites").start()
+    threading.Thread(target=verification_boucle, daemon=True, name="pronote-verification").start()
     threading.Thread(target=battement, daemon=True, name="battement").start()
     threading.Thread(target=surveiller, daemon=True, name="surveillance").start()
     prochaine_synchro, dernier_nettoyage = 0.0, float("-inf")

@@ -61,12 +61,26 @@ def test_heure_du_rappel():
 def test_synchro_ratee_garde_l_ancien(monkeypatch):
     etat = {"pronote_edt": json.dumps(DONNEES)}
     monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
+    monkeypatch.setattr(db, "etat_valeur", lambda k: etat.get(k))
     edt.enregistrer(None, None, None)
     assert json.loads(etat["pronote_edt"]) == DONNEES
     edt.enregistrer([{"debut": "a", "fin": "b", "matiere": "M", "dispense": True, "statut": "Dispensé"}], "x", "y")
     assert json.loads(etat["pronote_edt"])["creneaux"] == [
         {"debut": "a", "fin": "b", "matiere": "M", "dispense": True, "genre": None, "salle": None, "prof": None,
          "statut": "Dispensé"}]
+
+
+def test_verification_rapide_garde_les_semaines_suivantes(monkeypatch):
+    """La vérification (8 jours) remplace ces jours-là, sans effacer la suite vue par la synchro (28 jours)."""
+    etat = {"pronote_edt": json.dumps(DONNEES)}
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
+    monkeypatch.setattr(db, "etat_valeur", lambda k: etat.get(k))
+    plus_tard = creneau(dt.date(2026, 11, 10), (8, 0), (10, 0))
+    etat["pronote_edt"] = json.dumps({**DONNEES, "creneaux": DONNEES["creneaux"] + [plus_tard]})
+    edt.enregistrer([creneau(LUNDI, (9, 0), (11, 0))], h(LUNDI, 0).isoformat(), h(dt.date(2026, 11, 3), 0).isoformat())
+    d = json.loads(etat["pronote_edt"])
+    assert [c["debut"] for c in d["creneaux"]] == [h(LUNDI, 9).isoformat(), plus_tard["debut"]]
+    assert edt._date(d["au"]) == h(dt.date(2026, 11, 23), 0)
 
 
 def test_file_attend_la_fin_du_cours(monkeypatch):

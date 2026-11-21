@@ -14,12 +14,13 @@ en plus, même titre + même texte en moins de 20 h = pas renvoyé, et plus de 3
 - le dimanche, s'il y a du ménage à faire : révisions, flashcards et campagnes qui ne servent plus,
   à archiver (archivage.py ; jamais archivé sans toi) ;
 - tout de suite : révision prête, nouveau contrôle annoncé sur Pronote, documents des profs,
-  actualités importantes des sujets suivis (actualites.py).
+  cours de la semaine modifié (salle, prof, annulé…) et nouvelle note (alertes.py, vérifié toutes les 15 min
+  en journée), actualités importantes des sujets suivis (actualites.py).
 Rien ne part pendant les heures de silence : la file attend le matin.
 Calé sur l'emploi du temps Pronote (emploi_du_temps.py) : rien ne sonne pendant un cours ni au travail
 (heures « Dispensé » en alternance), la file attend la pause, midi ou la fin de journée ; le rappel du jour
-part à la sortie des cours. Seules les urgentes passent quand même : le matin d'un contrôle, les alertes
-graves des actualités, le disque plein.
+part à la sortie des cours. Seules les urgentes passent quand même : le matin d'un contrôle, un cours modifié,
+les alertes graves des actualités, le disque plein.
 """
 import datetime as dt
 import json
@@ -43,7 +44,7 @@ DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
           "rappel": True, "pronote": True, "revisions": True, "actualites": True, "securite": True,
           "edt": True}
 # Partent même en cours ou au travail : elles n'ont plus de sens plus tard
-URGENTES = ("jour:", "actu-alerte:", "disque:")
+URGENTES = ("jour:", "edt:", "actu-alerte:", "disque:")   # edt: un cours de la semaine modifié (alertes.py)
 PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
          "examen": "Épreuve blanche prête"}
 JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]

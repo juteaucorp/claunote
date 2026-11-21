@@ -117,6 +117,10 @@ def fausse_base(monkeypatch):
     monkeypatch.setattr(db, "enregistrer_pronote",
                         lambda evs, debut, sources, notes, periode: base.update(enregistre=(evs, debut, sources, notes, periode)))
     monkeypatch.setattr(db, "etat_ecrire", lambda k, v: base["etat"].update({k: v}))
+    monkeypatch.setattr(db, "etat_valeur", lambda k: base["etat"].get(k))
+    monkeypatch.setattr(db, "notification_connue", lambda cle: False)
+    monkeypatch.setattr(db, "notifier", lambda *a, **k: True)
+    monkeypatch.setattr(db, "abonnements", lambda: [])
     monkeypatch.setattr(db, "niveaux_matieres", lambda: [{"niveau": "BTS1", "matiere": "Réseaux"},
                                                           {"niveau": "BTS2", "matiere": "Réseaux"},
                                                           {"niveau": "BTS2", "matiere": "Mathématiques"}])
@@ -242,3 +246,17 @@ def test_libelle_note_format_inattendu():
     from claunote.pronote import libelle_note
     assert libelle_note({"genre": 0, "points": 15.5}, {"genre": 0, "points": 20}) == "15,5/20"
     assert libelle_note({"kind": 0}) == "?" and libelle_note("12") == "–" and libelle_note(None) == "–"
+
+
+def test_verifier_emploi_du_temps_et_notes_seulement(fausse_base):
+    verif = {"du": SYNCHRO["du"], "au": "2026-10-30T23:00:00.000Z", "erreurs": [], "emploi_du_temps": [],
+             "cours": [{"debut": "2026-10-28T08:00:00.000Z", "fin": "2026-10-28T10:00:00.000Z", "matiere": "M",
+                        "salle": "B12", "prof": "", "statut": "", "annule": False, "dispense": False}],
+             "notes": SYNCHRO["notes"]}
+    c = faux_service({("GET", "/etat"): (200, {"connecte": True}), ("POST", "/verification"): (200, verif)})
+    r = pronote.verifier(c)
+    assert r["connecte"] and r["erreurs"] == []
+    evs, _, sources, notes, _ = fausse_base["enregistre"]
+    assert evs == [] and sources == [] and notes[0]["id"] == "g1"   # contrôles et devoirs pas touchés
+    assert "pronote_cours" in fausse_base["etat"] and "pronote_notes_suivies" in fausse_base["etat"]
+    assert ("POST", "/verification", {"jours": 8}) in c.appels
