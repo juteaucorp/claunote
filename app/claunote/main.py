@@ -226,7 +226,10 @@ EN_TETES = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "same-origin", "Cross-Origin-Opener-Policy": "same-origin",
             "Cross-Origin-Resource-Policy": "same-origin",
             "Permissions-Policy": "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), "
-                                  "interest-cohort=()"}
+                                  "interest-cohort=()",
+            # « Cette réponse vient bien de Claunote » : le Worker Cloudflare de maintenance laisse passer un
+            # 503 du site (kDrive en panne…) et ne remplace que les erreurs du tunnel (infra/maintenance)
+            "X-Claunote-App": "1"}
 
 
 # Déclaré en dernier, donc exécuté en premier : en-têtes sur toutes les réponses, même les refus

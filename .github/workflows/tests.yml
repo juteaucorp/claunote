@@ -42,3 +42,13 @@ jobs:
           cache-dependency-path: pronote/package-lock.json
       - run: npm ci && npm test
         working-directory: pronote
+  maintenance:
+    # Worker Cloudflare de la page de maintenance (infra/maintenance) : erreurs du tunnel remplacées, le reste intact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node --test
+        working-directory: infra/maintenance

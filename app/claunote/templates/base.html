@@ -11,6 +11,8 @@
 {% elif ap.theme == 'sombre' %}<meta name="theme-color" content="#232220">
 {% else %}<meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#232220" media="(prefers-color-scheme: dark)">{% endif %}
+{# Thème retenu sur l'appareil pour la page de maintenance, servie quand le site est arrêté (infra/maintenance) #}
+<script>try { localStorage.setItem("claunote-theme", "{{ ap.theme }}"); } catch (e) {}</script>
 <link rel="apple-touch-icon" href="/static/icone-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">

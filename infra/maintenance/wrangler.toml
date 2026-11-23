@@ -1,0 +1,7 @@
+# Déploiement du Worker en ligne de commande (facultatif : on peut aussi coller worker.js dans le tableau de
+# bord Cloudflare). La route (claunote.<ton-domaine>/*) est donnée à la commande, voir docs/page-de-maintenance.md.
+name = "claunote-maintenance"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+workers_dev = false
+preview_urls = false
