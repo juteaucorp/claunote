@@ -3258,7 +3258,7 @@ def actualite_lue(article_id: int):
 
 @app.get("/actualites/vigie", response_class=HTMLResponse)
 def page_vigie(request: Request):
-    """Page cachée (easter egg : 10 appuis rapides sur l'onglet Actualités, voir base.html) : Vigie, l'outil de veille d'un ami d'Anto.
+    """Page cachée (easter egg : 10 appuis rapides sur l'onglet Actualités, voir base.html) : Vigie, l'outil de veille d'un ami.
     Pas d'iframe : Vigie demande une connexion et la CSP (frame-src 'self') reste fermée ; une carte et un lien.
     La trouver débloque le style Vigie dans Réglages → Apparence."""
     nouveau = apparence.debloquer_vigie(moi())

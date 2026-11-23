@@ -163,7 +163,7 @@ def test_champ_description_ferme_rabattu_sur_ruleid(actif, api, etat):
 
 
 def test_offre_gratuite_groupes_fermes_repli_sur_les_evenements(actif, api, etat):
-    """Le cas d'Anto : « does not have access to the path » n'est PAS un jeton refusé ; on lit ce qui est ouvert."""
+    """Cas réel : « does not have access to the path » n'est PAS un jeton refusé ; on lit ce qui est ouvert."""
     api[1]["fermes"] = ["firewallEventsAdaptiveGroups"]
     e = cloudflare.tour(maintenant=MAINTENANT)
     r = e["resume"]
