@@ -106,6 +106,24 @@ def test_invite_ne_voit_pas_l_administration(client):
     assert "/comptes/tout-voir" not in page and 'href="/analyses"' not in page
 
 
+def test_chacun_trie_ses_imports(client, monkeypatch):
+    """Ranger : un invité qui a le droit Organiser répond lui-même au tri de ses dépôts (page Import)."""
+    assert comptes.droit_requis("/import") == comptes.droit_requis("/import/choix", "POST") == "organiser"
+    for nom in ("import_bilan", "import_groupes", "decoupages"):
+        monkeypatch.setattr(db, nom, lambda *a, **k: [])
+    monkeypatch.setattr(db, "import_fichiers", lambda d, ids=None: [])
+    monkeypatch.setattr(db, "sensibles", lambda decision=None, jours=30: [])
+    invite, _ = _creer(_inviter(client, ["bibliotheque", "deposer", "organiser"]))
+    r = invite.get("/import")
+    assert r.status_code == 200 and "inbox kDrive" not in r.text   # l'inbox, c'est l'affaire de l'admin
+    # « Tout voir » de l'admin : pas sur ses pages de rangement (tri, matières, dépôt), partout ailleurs oui
+    admin = {"role": "admin", "tout_voir": True}
+    assert comptes.tout_voir(admin, "/organiser") and comptes.tout_voir(admin, "/a-verifier")
+    assert not any(comptes.tout_voir(admin, p) for p in ("/import", "/import/choix", "/organiser/matieres", "/deposer"))
+    assert not comptes.tout_voir({"role": "admin", "tout_voir": False}, "/organiser")
+    assert not comptes.tout_voir({"role": "invite", "tout_voir": True}, "/organiser")
+
+
 def test_sans_forfait_claude_la_fiche_attend_l_admin(client, monkeypatch):
     invite, _ = _creer(_inviter(client, ["bibliotheque", "reviser"]))
     crees = []

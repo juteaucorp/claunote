@@ -26,6 +26,16 @@
 <div class="carte">Rien à vérifier : tout est classé ✓</div>
 {% endif %}
 
+{% if ailleurs %}
+<div class="carte ailleurs">
+  <strong>Chez les autres comptes</strong>
+  <p class="doux">Chacun range ce qu'il a déposé : ces documents attendent leur propriétaire, pas toi.</p>
+  <ul>{% for a in ailleurs %}<li>{{ a.qui }} : {{ a.n }} document{{ 's' if a.n > 1 }}</li>{% endfor %}</ul>
+  <p class="doux">« Tout voir » est activé : tu peux quand même les ouvrir dans
+    <a href="/organiser?statut=a_verifier">Tous les documents</a>.</p>
+</div>
+{% endif %}
+
 {% if erreurs %}
 <div class="entete-section">
   <h2>En erreur <span class="compteur">{{ erreurs[0].total or erreurs|length }}</span></h2>
@@ -93,6 +103,8 @@
   .compteur { display: inline-block; min-width: 24px; padding: 0 8px; border-radius: 999px; background: var(--accent-pale); color: var(--accent-fonce); font: 600 .85rem/24px ui-sans-serif, system-ui, sans-serif; text-align: center; vertical-align: middle; }
   .intro { margin: 0 0 12px; }
   .lien-import { display: block; color: inherit; text-decoration: none; }
+  .ailleurs ul { margin: 6px 0; padding-left: 20px; }
+  .ailleurs p { margin: 4px 0; }
   .classer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
   .classer input { flex: 1 1 180px; }
   .doc-erreur .tete { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }

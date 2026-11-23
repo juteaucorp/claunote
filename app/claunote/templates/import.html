@@ -8,7 +8,7 @@
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
 
 <ol class="etapes" aria-label="Étapes d'un import">
-  <li><strong>Dossier copié</strong><span>dans l'inbox kDrive ou sur <a href="/deposer">Déposer</a></span></li>
+  <li><strong>Dossier copié</strong><span>{% if est_admin() %}dans l'inbox kDrive ou {% endif %}sur <a href="/deposer">Déposer</a></span></li>
   <li><strong>Tri sans IA</strong><span>code, doublons, PDF + Word, pages de scans, documents personnels</span></li>
   <li class="{{ 'actif' if inutiles or groupes or doutes }}"><strong>Ton feu vert</strong><span>suppressions, découpage des scans</span></li>
   <li><strong>Analyse IA</strong><span>un document à la fois, rangé dans kDrive</span></li>
@@ -17,7 +17,7 @@
 {% if not lots and not inutiles and not groupes and not doutes and not decoupages and not corbeille %}
 <div class="carte">
   <strong>Aucun import pour l'instant.</strong>
-  <p class="doux">Copie un dossier entier (avec ses sous-dossiers) dans l'inbox kDrive, ou dépose-le sur la page
+  <p class="doux">{% if est_admin() %}Copie un dossier entier (avec ses sous-dossiers) dans l'inbox kDrive, ou dépose-le{% else %}Dépose un dossier entier (avec ses sous-dossiers){% endif %} sur la page
   <a href="/deposer">Déposer</a>. Je lis l'ancienne organisation, j'écarte le code et les fichiers de config,
   je relie les PDF à leur version Word et je regroupe les scans page par page.</p>
 </div>

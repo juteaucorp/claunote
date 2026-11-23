@@ -474,6 +474,37 @@ CREATE TABLE IF NOT EXISTS depots (
     compte_id  INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
     le         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Tri des imports (page Import) : chaque compte trie ses propres dépôts. Les lignes d'avant reviennent à
+-- celui qui a déposé le fichier (sinon l'admin d'origine) ; un lot est propre à un compte.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+                   AND table_name = 'import_fichiers' AND column_name = 'compte_id') THEN
+        ALTER TABLE import_fichiers ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+                   AND table_name = 'documents' AND column_name = 'compte_id') THEN
+            EXECUTE 'UPDATE import_fichiers f SET compte_id = coalesce(
+                (SELECT d.compte_id FROM documents d WHERE d.kdrive_id = f.kdrive_id LIMIT 1),
+                (SELECT p.compte_id FROM depots p WHERE p.kdrive_id = f.kdrive_id), 1)';
+        ELSE   -- installation d'avant les comptes : tout est à l'admin d'origine
+            UPDATE import_fichiers SET compte_id = 1;
+        END IF;
+        ALTER TABLE import_fichiers ALTER COLUMN compte_id SET NOT NULL;
+        CREATE INDEX IF NOT EXISTS import_fichiers_compte ON import_fichiers (compte_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+                   AND table_name = 'import_lots' AND column_name = 'compte_id') THEN
+        ALTER TABLE import_lots ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE;
+        UPDATE import_lots l SET compte_id = 1;
+        ALTER TABLE import_lots ALTER COLUMN compte_id SET NOT NULL;
+        ALTER TABLE import_lots DROP CONSTRAINT import_lots_pkey;
+        ALTER TABLE import_lots ADD PRIMARY KEY (compte_id, lot);
+        -- un lot mêlant plusieurs comptes : une copie de sa compréhension pour chacun
+        INSERT INTO import_lots (lot, resume, compris, maj_le, a_comprendre, compte_id)
+            SELECT DISTINCT ON (f.compte_id, l.lot) l.lot, l.resume, l.compris, l.maj_le, l.a_comprendre, f.compte_id
+            FROM import_lots l JOIN import_fichiers f ON f.lot = l.lot WHERE f.compte_id <> 1
+            ON CONFLICT DO NOTHING;
+    END IF;
+END $$;
 -- Formation suivie chaque année (« BTS SIO option SISR ») et son référentiel officiel (formations.py)
 CREATE TABLE IF NOT EXISTS formations (
     compte_id   INT NOT NULL REFERENCES comptes(id) ON DELETE CASCADE,
@@ -551,7 +582,8 @@ BEGIN
     FOREACH t IN ARRAY ARRAY['documents', 'passages', 'revisions', 'campagnes', 'cartes', 'revues_cartes',
                              'conversations', 'messages', 'pieces_jointes', 'pronote_evenements', 'pronote_notes',
                              'pronote_documents', 'cles_acces', 'sensibles', 'decoupages', 'formations',
-                             'matieres_regles', 'matieres_publiques', 'matieres_distinctes'] LOOP
+                             'matieres_regles', 'matieres_publiques', 'matieres_distinctes',
+                             'import_fichiers', 'import_lots'] LOOP
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
                        AND table_name = t AND column_name = 'compte_id') THEN
             EXECUTE format('ALTER TABLE %I ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE', t);
@@ -828,15 +860,29 @@ def recherche(q: str, limite: int = 30):
                ORDER BY ts_rank(recherche, requete) DESC LIMIT %s""", (q, limite)).fetchall()
 
 
+# Ce qui attend le compte connecté lui-même : même avec « Tout voir », l'admin ne range pas les dépôts des autres
+A_MOI = "(claunote_compte() IS NULL OR compte_id = claunote_compte())"
+
+
 def a_verifier(limite: int = 50):
     """Les plus anciens d'abord, par pages : sans la transcription (la page ne l'affiche pas, et elle peut
     peser plusieurs Mo pour des centaines de documents). `total` : combien il y en a en tout."""
     with connect() as c:
         return c.execute(
-            """SELECT id, nom, titre, statut, niveau, matiere, type, confiance, note, erreur, modele, origine, cree_le,
+            f"""SELECT id, nom, titre, statut, niveau, matiere, type, confiance, note, erreur, modele, origine, cree_le,
                       kdrive_id, count(*) OVER (PARTITION BY statut = 'erreur') AS total
-               FROM documents WHERE statut IN ('a_verifier', 'erreur') ORDER BY cree_le LIMIT %s""",
+               FROM documents WHERE statut IN ('a_verifier', 'erreur') AND {A_MOI} ORDER BY cree_le LIMIT %s""",
             (limite,)).fetchall()
+
+
+def a_verifier_ailleurs() -> list[dict]:
+    """« Tout voir » : combien attendent chez chaque autre compte (c'est à eux de les ranger)."""
+    with connect() as c:
+        return c.execute(
+            """SELECT d.compte_id, coalesce(nullif(k.nom, ''), k.identifiant) AS qui, count(*) AS n
+               FROM documents d JOIN comptes k ON k.id = d.compte_id
+               WHERE d.statut IN ('a_verifier', 'erreur') AND d.compte_id IS DISTINCT FROM claunote_compte()
+               GROUP BY d.compte_id, qui ORDER BY n DESC""").fetchall()
 
 
 def nb_documents() -> int:
@@ -846,7 +892,8 @@ def nb_documents() -> int:
 
 def nb_a_verifier() -> int:
     with connect() as c:
-        return c.execute("SELECT count(*) AS n FROM documents WHERE statut IN ('a_verifier', 'erreur')").fetchone()["n"]
+        return c.execute(f"SELECT count(*) AS n FROM documents WHERE statut IN ('a_verifier', 'erreur') "
+                         f"AND {A_MOI}").fetchone()["n"]
 
 
 # --- Organiser (actions de masse) ---------------------------------------------
@@ -928,9 +975,10 @@ def completer_classement(ids: list[int]) -> int:
 
 
 def reessayer_erreurs() -> int:
-    """Remet tous les documents en erreur dans la file d'analyse."""
+    """Remet les documents en erreur du compte dans la file d'analyse (pas ceux des autres, même avec « Tout voir »)."""
     with connect() as c:
-        return c.execute("UPDATE documents SET statut = 'nouveau', erreur = NULL WHERE statut = 'erreur'").rowcount
+        return c.execute(f"UPDATE documents SET statut = 'nouveau', erreur = NULL WHERE statut = 'erreur' "
+                         f"AND {A_MOI}").rowcount
 
 
 def supprimer(doc_id: int):
@@ -1994,15 +2042,19 @@ def import_connus(ids: list[int]) -> dict[int, str]:
     return {r["kdrive_id"]: r["decision"] for r in rows}
 
 
-def import_enregistrer(lot: str, fichiers):
-    """Enregistre le tri d'un lot (importation.Fichier)."""
+def import_enregistrer(lot: str, fichiers, compte_id: int | None = None):
+    """Enregistre le tri d'un lot (importation.Fichier), pour le compte qui a déposé les fichiers : celui donné,
+    sinon celui du travail en cours, sinon celui noté au dépôt de chaque fichier (l'admin d'origine par défaut)."""
+    fichiers = list(fichiers)
+    compte_id = compte_id or compte_actuel()
+    proprios = {} if compte_id else proprietaires([f.id for f in fichiers])
     with connect() as c, c.cursor() as cur:
         cur.executemany(
             """INSERT INTO import_fichiers (kdrive_id, lot, chemin, nom, taille, categorie, decision, raison,
-                                            principal, groupe, ordre, sur, dossier)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (kdrive_id) DO NOTHING""",
+                                            principal, groupe, ordre, sur, dossier, compte_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (kdrive_id) DO NOTHING""",
             [(f.id, lot, f.chemin, f.nom, f.taille, f.categorie, f.decision, f.raison, f.principal, f.groupe,
-              f.ordre, f.sur, f.dossier) for f in fichiers])
+              f.ordre, f.sur, f.dossier, compte_id or proprios.get(f.id, 1)) for f in fichiers])
 
 
 def import_lot(lot: str):
@@ -2010,12 +2062,13 @@ def import_lot(lot: str):
         return c.execute("SELECT * FROM import_lots WHERE lot = %s", (lot,)).fetchone()
 
 
-def import_lot_maj(lot: str, resume: str | None, compris: dict):
+def import_lot_maj(lot: str, resume: str | None, compris: dict, compte_id: int | None = None):
     with connect() as c:
-        c.execute("""INSERT INTO import_lots (lot, resume, compris) VALUES (%s, %s, %s)
-                     ON CONFLICT (lot) DO UPDATE SET resume = coalesce(EXCLUDED.resume, import_lots.resume),
+        c.execute("""INSERT INTO import_lots (compte_id, lot, resume, compris)
+                     VALUES (coalesce(%s, claunote_compte(), 1), %s, %s, %s)
+                     ON CONFLICT (compte_id, lot) DO UPDATE SET resume = coalesce(EXCLUDED.resume, import_lots.resume),
                        compris = import_lots.compris || EXCLUDED.compris, maj_le = now()""",
-                  (lot, resume, Jsonb(compris)))
+                  (compte_id, lot, resume, Jsonb(compris)))
 
 
 def import_marquer(ids: list[int], decision: str, **champs):
@@ -2060,6 +2113,13 @@ def import_groupes(sur: bool) -> list[str]:
     return [r["groupe"] for r in rows]
 
 
+def import_groupes_a_fusionner() -> list[dict]:
+    """Groupes de scans sûrs, avec le compte qui les a déposés (deux comptes peuvent avoir le même nom de groupe)."""
+    with connect() as c:
+        return c.execute("SELECT DISTINCT compte_id, groupe FROM import_fichiers WHERE decision = 'page' AND sur "
+                         "ORDER BY groupe, compte_id").fetchall()
+
+
 def variantes_de(kdrive_id: int):
     with connect() as c:
         return c.execute("SELECT * FROM import_fichiers WHERE decision = 'variante' AND principal = %s "
@@ -2081,9 +2141,9 @@ def nb_import_a_confirmer() -> int:
     """Fichiers inutiles proposés à la suppression, scans au découpage incertain, documents peut-être personnels."""
     with connect() as c:
         return c.execute(
-            """SELECT (SELECT count(*) FROM import_fichiers WHERE decision = 'inutile')
-                    + (SELECT count(DISTINCT groupe) FROM import_fichiers WHERE decision = 'page' AND NOT sur)
-                    + (SELECT count(*) FROM sensibles WHERE decision = 'doute') AS n"""
+            f"""SELECT (SELECT count(*) FROM import_fichiers WHERE decision = 'inutile' AND {A_MOI})
+                    + (SELECT count(DISTINCT groupe) FROM import_fichiers WHERE decision = 'page' AND NOT sur AND {A_MOI})
+                    + (SELECT count(*) FROM sensibles WHERE decision = 'doute' AND {A_MOI}) AS n"""
         ).fetchone()["n"]
 
 
@@ -2103,8 +2163,8 @@ def import_bilan():
                       count(*) FILTER (WHERE f.categorie <> 'document' AND f.decision IN ('supprimer', 'garder', 'fait'))
                         AS inutiles_traites,
                       l.resume, l.compris
-               FROM import_fichiers f LEFT JOIN import_lots l ON l.lot = f.lot
-               GROUP BY f.lot, l.resume, l.compris ORDER BY max(f.cree_le) DESC LIMIT 12""").fetchall()
+               FROM import_fichiers f LEFT JOIN import_lots l ON l.lot = f.lot AND l.compte_id = f.compte_id
+               GROUP BY f.compte_id, f.lot, l.resume, l.compris ORDER BY max(f.cree_le) DESC LIMIT 12""").fetchall()
     return rows
 
 
@@ -2166,21 +2226,23 @@ def maj_pdf_revision(rev_id: int, kdrive_id: int | None):
                   "WHERE id = %s", (kdrive_id, rev_id))
 
 
-def import_a_comprendre(lot: str):
+def import_a_comprendre(lot: str, compte_id: int | None = None):
     """Le lot a besoin de la passe IA sur ses noms de dossiers, faite dès que Claude est disponible."""
     with connect() as c:
-        c.execute("""INSERT INTO import_lots (lot, a_comprendre) VALUES (%s, true)
-                     ON CONFLICT (lot) DO UPDATE SET a_comprendre = true""", (lot,))
+        c.execute("""INSERT INTO import_lots (compte_id, lot, a_comprendre) VALUES (coalesce(%s, claunote_compte(), 1), %s, true)
+                     ON CONFLICT (compte_id, lot) DO UPDATE SET a_comprendre = true""", (compte_id, lot))
 
 
-def lots_a_comprendre() -> list[str]:
+def lots_a_comprendre() -> list[dict]:
+    """[{compte_id, lot}] : chaque lot est compris avec les matières de son compte."""
     with connect() as c:
-        return [r["lot"] for r in c.execute("SELECT lot FROM import_lots WHERE a_comprendre ORDER BY maj_le")]
+        return c.execute("SELECT compte_id, lot FROM import_lots WHERE a_comprendre ORDER BY maj_le").fetchall()
 
 
-def lot_compris(lot: str):
+def lot_compris(lot: str, compte_id: int | None = None):
     with connect() as c:
-        c.execute("UPDATE import_lots SET a_comprendre = false, maj_le = now() WHERE lot = %s", (lot,))
+        c.execute("UPDATE import_lots SET a_comprendre = false, maj_le = now() "
+                  "WHERE lot = %s AND compte_id = coalesce(%s, claunote_compte(), 1)", (lot, compte_id))
 
 
 def journal_ia(tache: str, modele: str, resultat: str, duree: float = 0, jetons_entree: int = 0,

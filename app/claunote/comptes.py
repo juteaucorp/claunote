@@ -52,9 +52,10 @@ MDP_MIN = 10
 # « admin » : réservé aux admins. Premier préfixe qui correspond (du plus précis au plus large).
 PAGES = [
     ("/comptes", "admin"), ("/demandes", "admin"), ("/securite", "admin"), ("/mise-a-jour", "admin"), ("/appareils/", "admin"),
-    ("/analyses", "admin"), ("/import", "admin"), ("/inbox", "admin"), ("/scan", "admin"),
+    ("/analyses", "admin"), ("/inbox", "admin"), ("/scan", "admin"),
     ("/claude/reessayer", "admin"), ("/installation", "admin"), ("/reglages/installation", "admin"), ("/organiser/matieres", "organiser"), ("/actualites/sources", "actualites"),
     ("/deposer", "deposer"),
+    ("/import", "organiser"),   # chacun trie ses propres dépôts (fichiers inutiles, scans, documents personnels)
     ("/a-verifier", "organiser"), ("/organiser", "organiser"), ("/hors-cours", "bibliotheque"),
     ("/reviser", "reviser"), ("/revision/", "reviser"), ("/campagne", "reviser"), ("/demander", "reviser"),
     ("/formule", "reviser"), ("/cartes", "reviser"), ("/archives", "reviser"), ("/progression", "reviser"),
@@ -66,6 +67,19 @@ PAGES = [
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
     ("/piece/", "reviser"), ("/partages", "bibliotheque"), ("/acces-cours", "bibliotheque"),
 ]
+# Pages de rangement où l'admin ne travaille que sur ses propres dépôts, même avec « Tout voir » : chaque compte
+# trie ses imports, choisit sa formation et range ses matières (l'admin garde l'accès aux documents des autres
+# par « Tout voir » sur Tous les documents, Bibliothèque…).
+SES_DEPOTS = ("/import", "/organiser/matieres", "/deposer")
+
+
+def tout_voir(compte: dict | None, chemin: str) -> bool:
+    """« Tout voir » s'applique-t-il à cette page ?"""
+    if not est_admin(compte) or not compte.get("tout_voir"):
+        return False
+    return not any(chemin == p or chemin.startswith(p + "/") for p in SES_DEPOTS)
+
+
 ACTIONS_DOC = {"classer", "hors-cours", "supprimer", "reessayer"}
 
 

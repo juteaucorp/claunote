@@ -278,3 +278,56 @@ def test_second_admin_synchronise_pronote(base, monkeypatch):
         assert pronote.synchroniser(c)["evenements"] == 3
     with db.connect() as cx:
         assert {r["compte_id"] for r in cx.execute("SELECT compte_id FROM pronote_evenements").fetchall()} == {1}
+
+
+def test_chacun_range_ses_propres_depots(base):
+    """Tri des imports et « À vérifier » : à celui qui a déposé, pas à l'admin, même avec « Tout voir »."""
+    from claunote.importation import Fichier
+    camille = db.creer_compte("camille", "h", "invite", ["organiser"])
+    db.noter_depot(500, camille)
+    # Le worker (sans compte) trie un lot : chaque fichier revient à son déposant
+    db.import_enregistrer("BTS1", [Fichier(500, "tp.py", ["BTS1"], categorie="code", decision="inutile"),
+                                   Fichier(501, "vieux.py", ["BTS1"], categorie="code", decision="inutile")])
+    db.import_a_comprendre("BTS1", camille)
+    db.import_a_comprendre("BTS1", 1)                      # même nom de lot chez l'admin : deux lots distincts
+    assert sorted((r["compte_id"], r["lot"]) for r in db.lots_a_comprendre()) == [(1, "BTS1"), (camille, "BTS1")]
+    db.import_lot_maj("BTS1", "Par matière.", {"BTS1": {"niveau": "BTS1"}}, camille)
+    db.lot_compris("BTS1", camille)
+    assert [(r["compte_id"], r["lot"]) for r in db.lots_a_comprendre()] == [(1, "BTS1")]
+    with db.pour_compte(camille):
+        d = db.creer(600, "scan.pdf")
+        db.maj(d, statut="a_verifier")
+        assert [f["kdrive_id"] for f in db.import_fichiers("inutile")] == [500]
+        assert db.nb_import_a_confirmer() == 1 and db.nb_a_verifier() == 1
+        assert [b["resume"] for b in db.import_bilan()] == ["Par matière."]
+        assert db.import_marquer([501], "supprimer") == 0   # le fichier de l'admin : ni lu ni modifié
+    with db.pour_compte(1, tout_voir=True):                # « Tout voir » : l'admin peut regarder…
+        assert len(db.import_fichiers("inutile")) == 2
+        # …mais sa file et ses pastilles ne comptent que ses propres dépôts
+        assert db.nb_import_a_confirmer() == 1 and db.nb_a_verifier() == 0 and db.a_verifier() == []
+        assert [(r["qui"], r["n"]) for r in db.a_verifier_ailleurs()] == [("camille", 1)]
+        assert db.reessayer_erreurs() == 0
+    with db.pour_compte(1):
+        assert [f["kdrive_id"] for f in db.import_fichiers("inutile")] == [501]
+        assert [b["resume"] for b in db.import_bilan()] == [None]
+
+
+def test_tri_des_imports_d_avant_rendu_a_son_deposant(base):
+    """Installation d'avant : import_fichiers et import_lots sans compte, rendus au déposant à la mise à jour."""
+    camille = db.creer_compte("camille", "h", "invite", ["organiser"])
+    db.noter_depot(700, camille)
+    with db.connect() as c:
+        c.execute("DROP POLICY par_compte ON import_fichiers; DROP POLICY par_compte ON import_lots; "
+                  "DROP TRIGGER proprietaire ON import_fichiers; DROP TRIGGER proprietaire ON import_lots")
+        c.execute("ALTER TABLE import_fichiers DROP COLUMN compte_id")
+        c.execute("ALTER TABLE import_lots DROP CONSTRAINT import_lots_pkey; ALTER TABLE import_lots DROP COLUMN compte_id; "
+                  "ALTER TABLE import_lots ADD PRIMARY KEY (lot)")
+        c.execute("INSERT INTO import_fichiers (kdrive_id, lot, chemin, nom, categorie, decision) VALUES "
+                  "(700, 'V', 'V/a.py', 'a.py', 'code', 'inutile'), (701, 'V', 'V/b.py', 'b.py', 'code', 'inutile')")
+        c.execute("INSERT INTO import_lots (lot, resume) VALUES ('V', 'Ancien')")
+    db.init()
+    with db.connect() as c:
+        assert {(r["kdrive_id"], r["compte_id"]) for r in c.execute("SELECT kdrive_id, compte_id FROM import_fichiers")} \
+            == {(700, camille), (701, 1)}
+        assert sorted((r["compte_id"], r["resume"]) for r in c.execute("SELECT * FROM import_lots")) \
+            == [(1, "Ancien"), (camille, "Ancien")]

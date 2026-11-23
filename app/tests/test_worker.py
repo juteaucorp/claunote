@@ -263,8 +263,8 @@ def test_trier_attend_la_fin_de_la_copie(worker, monkeypatch):
     monkeypatch.setattr(worker, "STABLE", 0)
     monkeypatch.setattr(worker.db, "import_connus", lambda ids: {})
     monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {})
-    monkeypatch.setattr(worker.db, "import_a_comprendre", lambda lot: pytest.fail("trop peu de documents"))
-    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, f: enregistres.append((lot, f)))
+    monkeypatch.setattr(worker.db, "import_a_comprendre", lambda lot, k=None: pytest.fail("trop peu de documents"))
+    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, f, k=None: enregistres.append((lot, f)))
     monkeypatch.setattr(worker.notifications, "import_a_confirmer", lambda lot, n: notes.append((lot, n)))
     monkeypatch.setattr(worker.agent, "interpreter_arborescence", lambda *a: pytest.fail("trop peu de documents"))
     items = [{"id": 1, "name": "cours.docx", "type": "file", "size": 9000, "dossiers": ["Vieux", "BTS1", "Maths"]},
@@ -278,18 +278,37 @@ def test_trier_attend_la_fin_de_la_copie(worker, monkeypatch):
     assert notes == [("Vieux", 1)]
 
 
+def test_tri_d_un_depot_d_invite_a_son_compte(worker, monkeypatch):
+    """Même nom de dossier chez l'admin et chez un invité : deux lots, chacun reçoit ses questions."""
+    enregistres, notes = [], []
+    monkeypatch.setattr(worker, "STABLE", 0)
+    monkeypatch.setattr(worker.db, "import_connus", lambda ids: {})
+    monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {})
+    monkeypatch.setattr(worker.db, "import_enregistrer",
+                        lambda lot, f, k=None: enregistres.append((k, lot, [x.id for x in f])))
+    monkeypatch.setattr(worker.notifications, "import_a_confirmer",
+                        lambda lot, n: notes.append((worker.db.compte_actuel(), lot, n)))
+    worker.db.noter_depot(2, 7)                    # déposé par le compte 7
+    items = [{"id": 1, "name": "a.exe", "type": "file", "size": 10, "dossiers": ["BTS1"]},
+             {"id": 2, "name": "b.exe", "type": "file", "size": 10, "dossiers": ["BTS1"]}]
+    worker.trier_inbox(None, items)
+    assert worker.trier_inbox(None, items) == 2
+    assert sorted(enregistres) == [(1, "BTS1", [1]), (7, "BTS1", [2])]
+    assert sorted(notes, key=str) == sorted([(None, "BTS1", 1), (7, "BTS1", 1)], key=str)   # admin d'origine : comme avant
+
+
 def test_comprendre_organisation_une_passe_ia(worker, monkeypatch):
     fichiers = [importation_fichier(i, f"d{i}.pdf", ["V", "2023-2024"]) for i in range(6)]
     assert worker.besoin_organisation(fichiers)
     assert not worker.besoin_organisation(fichiers[:3])  # trop peu de documents
     assert not worker.besoin_organisation([importation_fichier(i, f"d{i}.pdf", ["V", "BTS1", "Maths"]) for i in range(6)])
     sauves, finis = [], []
-    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: ["V"])
+    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: [{"compte_id": 1, "lot": "V"}])
     monkeypatch.setattr(worker.db, "import_dossiers", lambda lot: {"V/2023-2024": 6})
     monkeypatch.setattr(worker.db, "matieres", lambda: [])
     monkeypatch.setattr(worker.db, "etat_ecrire", lambda k, v: None)
-    monkeypatch.setattr(worker.db, "import_lot_maj", lambda lot, r, c: sauves.append((lot, r, c)))
-    monkeypatch.setattr(worker.db, "lot_compris", lambda lot: finis.append(lot))
+    monkeypatch.setattr(worker.db, "import_lot_maj", lambda lot, r, c, k=None: sauves.append((lot, r, c)))
+    monkeypatch.setattr(worker.db, "lot_compris", lambda lot, k=None: finis.append(lot))
     monkeypatch.setattr(worker.agent, "interpreter_arborescence",
                         lambda dossiers, m, essai_local=None: ("Par année scolaire.", {"V/2023-2024": {"niveau": "BTS1"}}))
     worker.comprendre_en_attente()
@@ -315,7 +334,7 @@ def test_fusionner_les_pages(worker, monkeypatch, tmp_path):
              for i in range(3)]
     enregistres, marques = [], []
     monkeypatch.setattr(worker.db, "import_groupe", lambda g: pages)
-    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, f: enregistres.append((lot, f)))
+    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, f, k=None: enregistres.append((lot, f)))
     monkeypatch.setattr(worker.db, "import_marquer", lambda ids, d, **k: marques.append((ids, d)))
     kd = KDImport({})
     worker.fusionner(kd, "V/Maths/suites")
@@ -332,7 +351,7 @@ def test_executer_les_choix(worker, monkeypatch):
     monkeypatch.setattr(worker.db, "import_a_executer", lambda: [
         {"kdrive_id": 5, "decision": "supprimer", "chemin": "V/Dev/.vscode"},
         {"kdrive_id": 6, "decision": "garder", "chemin": "V/Dev/archive.zip"}])
-    monkeypatch.setattr(worker.db, "import_groupes", lambda sur: [])
+    monkeypatch.setattr(worker.db, "import_groupes_a_fusionner", lambda: [])
     monkeypatch.setattr(worker.db, "import_oublier", lambda ids: oublies.extend(ids))
     monkeypatch.setattr(worker.db, "import_marquer", lambda ids, d, **k: marques.append((ids, d)))
     kd = KDImport({})
@@ -490,7 +509,7 @@ def test_documents_perdus_hors_de_l_inbox_sont_repris(worker, monkeypatch):
 def test_priorites_de_l_inbox(worker, monkeypatch):
     monkeypatch.setattr(worker.db, "statuts_kdrive", lambda ids: {3: {"statut": "nouveau", "essais": 2}})
     monkeypatch.setattr(worker.db, "import_connus", lambda ids: {1: "analyser", 2: "analyser", 4: "analyser"})
-    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: ["Vieux"])
+    monkeypatch.setattr(worker.db, "lots_a_comprendre", lambda: [{"compte_id": 1, "lot": "Vieux"}])
     monkeypatch.setattr(worker.db, "documents_orphelins", lambda ids, n: [])
     items = [{"id": 1, "name": "a.pdf", "type": "file", "dossiers": ["Divers"]},
              {"id": 2, "name": "b.pdf", "type": "file", "dossiers": ["BTS2", "Pronote", "CEJM"]},
@@ -629,7 +648,7 @@ def base(worker, monkeypatch, tmp_path):
     monkeypatch.setattr(worker.db, "creer", lambda kid, nom: 1)
     monkeypatch.setattr(worker.db, "supprimer", lambda i: b["supprimes"].append(i))
     monkeypatch.setattr(worker.db, "import_oublier", lambda ids: b["marques"].append((ids, "oublie")))
-    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, fs: b["import"].extend(fs))
+    monkeypatch.setattr(worker.db, "import_enregistrer", lambda lot, fs, k=None: b["import"].extend(fs))
     monkeypatch.setattr(worker.db, "import_marquer", lambda ids, d, **k: b["marques"].append((ids, d)))
     monkeypatch.setattr(worker.db, "sensible_noter", lambda *a, **k: b["notes"].append(a))
     monkeypatch.setattr(worker.db, "decoupage", lambda kid: b["decoupage"].get(kid))

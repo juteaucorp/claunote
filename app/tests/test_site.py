@@ -128,6 +128,13 @@ def test_scan_et_a_verifier(client):
     assert "confiance 40 %" in r.text and "indique BTS1" in r.text and "déposé dans « BTS1 »" in r.text
 
 
+def test_a_verifier_tout_voir_montre_les_autres_sans_les_ranger(client, monkeypatch):
+    monkeypatch.setattr(main.comptes, "tout_voir", lambda compte, chemin: True)
+    monkeypatch.setattr(db, "a_verifier_ailleurs", lambda: [{"compte_id": 2, "qui": "Camille", "n": 3}])
+    r = client.get("/a-verifier")
+    assert "Chez les autres comptes" in r.text and "Camille : 3 documents" in r.text
+
+
 def test_classer_sans_attendre_kdrive(client, monkeypatch):
     """Le site enregistre le classement et répond tout de suite ; le worker déplace les fichiers dans kDrive."""
     monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: (_ for _ in ()).throw(AssertionError("kDrive"))))
