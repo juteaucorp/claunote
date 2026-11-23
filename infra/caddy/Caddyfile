@@ -17,5 +17,23 @@
 https://{$CLAUNOTE_HOTE} {
 	tls internal
 	encode zstd gzip
-	reverse_proxy web:8000
+	# Le site redémarre (mise à jour) : jusqu'à 5 s d'attente pour qu'il revienne avant de répondre
+	reverse_proxy web:8000 {
+		lb_try_duration 5s
+	}
+	# Le site ne répond toujours pas : page de maintenance de Claunote au lieu d'une page blanche
+	# (infra/maintenance/maintenance.html ; par Internet, c'est le Worker Cloudflare qui la sert)
+	handle_errors 502 503 504 {
+		root * /srv/maintenance
+		rewrite * /maintenance.html
+		header {
+			Cache-Control "no-store"
+			Retry-After "15"
+			X-Claunote-Maintenance "1"
+			Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		}
+		file_server {
+			status 503
+		}
+	}
 }

@@ -241,6 +241,12 @@ dépassent **5 fois l'habitude (au moins 60)**, une seule fois par vague. Deux p
 > Le jeton ne peut **rien modifier** chez Cloudflare. S'il fuit : **Jetons API → Rouler** (ou supprimer), puis colle
 > le nouveau. Offre gratuite : événements gardés 31 jours ; Claunote n'affiche que les dernières 24 h.
 
+### Étape 12. Page de maintenance *(facultatif, gratuit, 10 minutes)*
+
+Sans elle, une mise à jour ou un tunnel coupé affiche **« Error 1033 — Cloudflare Tunnel error »**. Avec elle :
+**« Claunote revient dans un instant »**, aux couleurs de Claunote, qui se recharge toute seule. Il suffit d'un
+**Worker Cloudflare** à coller une fois : pas à pas dans **[page-de-maintenance.md](page-de-maintenance.md)**.
+
 > ❗ **Pas de « Cloudflare Access » ni de WARP** devant le site : l'appli iPhone ne s'en sort pas (voir plus haut).
 
 ---
@@ -265,7 +271,8 @@ protège déjà l'adresse.
 
 | Symptôme | Cause probable | Solution |
 |---|---|---|
-| Erreur Cloudflare **1033** | `cloudflared` arrêté ou jeton faux | `docker compose logs -f cloudflared` ; recopie le jeton |
+| Erreur Cloudflare **1033** | `cloudflared` arrêté ou jeton faux | `docker compose logs -f cloudflared` ; recopie le jeton. Pour afficher la page de maintenance à la place : étape 12 |
+| « Claunote revient dans un instant » qui dure | page de maintenance : le site ou le tunnel ne répond pas | `docker compose ps` puis `docker compose logs --tail=80 web cloudflared` |
 | Erreur **502** | mauvaise adresse de service | dans le tunnel : `HTTP` + `web:8000` |
 | Erreur **1020** (accès refusé) | règle « France seulement » | désactive-la à l'étranger |
 | Le code est redemandé à chaque ouverture | cookies bloqués (navigation privée) ou appareil retiré | navigation normale ; nouveau code |

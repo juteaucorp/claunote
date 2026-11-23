@@ -42,6 +42,7 @@ services:
       - "${BIND_ADDR:-127.0.0.1}:${HTTPS_PORT:-443}:443"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./infra/maintenance:/srv/maintenance:ro   # page affichée quand le site redémarre
       - caddy:/data      # autorité de certification locale : à garder
     depends_on: [web]
 
