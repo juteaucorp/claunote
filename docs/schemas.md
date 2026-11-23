@@ -125,6 +125,13 @@ flowchart LR
                                                    et accepte les conditions d'utilisation
  chaque compte ──► ses propres cours, fiches, cartes, questions (la base le garantit : row-level security)
  admin ──« Tout voir »──► les données de tous les comptes (bandeau visible, noté dans Sécurité)
+
+ Ranger : chacun range ce qu'il a déposé
+   dépôt d'un invité ──► son tri d'import, ses « À vérifier », ses notifications « à ranger »
+                     ──► l'IA classe avec SES matières, SA formation, SES règles de rangement
+   admin (même en « Tout voir ») ──► sa file et ses pastilles ne comptent que ses dépôts ;
+                                      Import, Matières et Déposer restent les siens ;
+                                      les dépôts des autres : comptés sur À vérifier, ouverts dans Tous les documents
 ```
 
 ## Public ou privé

@@ -323,11 +323,17 @@ def proprietaire(item: dict) -> int:
     return item.get("compte_id") or db.compte_du_fichier(item["id"])
 
 
+def matieres_admin() -> list[str]:
+    """Matières de l'admin d'origine, lues une fois pour un lot d'analyses (pas celles des invités)."""
+    with db.pour_compte(1):
+        return db.matieres()
+
+
 def traiter(kd: KDrive, item: dict, matieres: list[str] | None = None, cache_dossiers: dict | None = None):
     """Pour le compte du fichier : ses données seulement, et le forfait Claude selon son droit."""
     compte_id = proprietaire(item)
     with comptes.pour(compte_id):
-        if compte_id != 1:   # les matières de ce compte, pas celles des autres
+        if compte_id != 1:   # les matières de ce compte, pas celles des autres (lot : celles de l'admin)
             matieres = db.matieres()
         return _traiter(kd, {**item, "compte_id": compte_id}, matieres, cache_dossiers)
 
@@ -906,7 +912,9 @@ def a_traiter(kd: KDrive, items: list[dict] | None = None, sans_claude: bool = F
     ids = [i["id"] for i in items]
     decisions, docs = db.import_connus(ids), db.statuts_kdrive(ids)
     suspendus, moteurs = db.import_choix(ids)
-    en_attente = set() if sans_claude else set(db.lots_a_comprendre())  # l'IA lit d'abord les noms de dossiers
+    # l'IA lit d'abord les noms de dossiers ; un lot est celui d'un compte (deux comptes peuvent avoir le même nom)
+    en_attente = set() if sans_claude else {(r["compte_id"], r["lot"]) for r in db.lots_a_comprendre()}
+    attendent = db.proprietaires(ids) if en_attente else {}
     retenus = []
     for item in items:
         if item["id"] in suspendus:
@@ -917,7 +925,8 @@ def a_traiter(kd: KDrive, items: list[dict] | None = None, sans_claude: bool = F
             # déjà illisible sans Claude : on n'essaie pas de nouveau en local, il attend Claude
             if doc["statut"] == "nouveau" and not (sans_claude and doc.get("relire")):
                 retenus.append((doc["essais"], item))
-        elif decisions.get(item["id"]) == "analyser" and item["type"] == "file" and lot_de(item) not in en_attente:
+        elif (decisions.get(item["id"]) == "analyser" and item["type"] == "file"
+              and (attendent.get(item["id"], 1), lot_de(item)) not in en_attente):
             retenus.append((0, item))
     if len(retenus) < LOT:
         retenus += [(doc["essais"], {**item, "moteur": None}) for doc, item in orphelins(kd, ids)
@@ -964,36 +973,41 @@ def trier_inbox(kd: KDrive, items: list[dict]) -> int:
     """Trie les lots complets de fichiers jamais vus. Renvoie le nombre de fichiers triés."""
     ids = [i["id"] for i in items]
     connus, docs = db.import_connus(ids), db.statuts_kdrive(ids)
-    nouveaux: dict[str, list[dict]] = {}
-    for item in items:
-        if item["id"] not in connus and item["id"] not in docs:
-            nouveaux.setdefault(lot_de(item), []).append(item)
+    # Un lot par compte qui a déposé : chacun trie ses fichiers (et reçoit les questions du tri), pas l'admin
+    jamais_vus = [i for i in items if i["id"] not in connus and i["id"] not in docs]
+    proprios = db.proprietaires([i["id"] for i in jamais_vus])
+    nouveaux: dict[tuple[int, str], list[dict]] = {}
+    for item in jamais_vus:
+        nouveaux.setdefault((proprios.get(item["id"], 1), lot_de(item)), []).append(item)
     maintenant, tries = time.monotonic(), 0
-    for lot in list(_vus):
-        if lot not in nouveaux:
-            del _vus[lot]
-    for lot, lot_items in nouveaux.items():
-        n, depuis = _vus.get(lot, (None, maintenant))
+    for cle in list(_vus):
+        if cle not in nouveaux:
+            del _vus[cle]
+    for cle, lot_items in nouveaux.items():
+        compte_id, lot = cle
+        n, depuis = _vus.get(cle, (None, maintenant))
         if n != len(lot_items):
-            _vus[lot] = (len(lot_items), maintenant)  # nouveau ou encore en cours de copie : on attend
+            _vus[cle] = (len(lot_items), maintenant)  # nouveau ou encore en cours de copie : on attend
             continue
         if maintenant - depuis < STABLE:
             continue
         fichiers = importation.trier([importation.Fichier(
             i["id"], i["name"], i["dossiers"], int(i.get("size") or 0), dossier=i["type"] == "dir") for i in lot_items])
-        if besoin_organisation(fichiers):
-            db.import_a_comprendre(lot)  # passe IA faite par comprendre_en_attente, même après une panne
-        db.import_enregistrer(lot, fichiers)
-        _vus.pop(lot, None)
-        tries += len(fichiers)
-        compte = {d: sum(f.decision == d for f in fichiers) for d in ("analyser", "inutile", "variante", "page")}
-        log(f"import « {lot or 'racine'} » trié : {compte['analyser']} à analyser, {compte['page']} pages de scans, "
-            f"{compte['variante']} autres formats, {compte['inutile']} inutiles à confirmer")
-        if compte["inutile"] or any(f.decision == "page" and not f.sur for f in fichiers):
-            try:
-                notifications.import_a_confirmer(lot, compte["inutile"])
-            except Exception as e:
-                log(f"notification impossible : {e}")
+        with db.pour_compte(compte_id):   # ses lignes, et la notification part sur ses appareils
+            if besoin_organisation(fichiers):
+                db.import_a_comprendre(lot, compte_id)  # passe IA faite par comprendre_en_attente, même après une panne
+            db.import_enregistrer(lot, fichiers, compte_id)
+            _vus.pop(cle, None)
+            tries += len(fichiers)
+            compte = {d: sum(f.decision == d for f in fichiers) for d in ("analyser", "inutile", "variante", "page")}
+            log(f"import « {lot or 'racine'} » trié : {compte['analyser']} à analyser, {compte['page']} pages de scans, "
+                f"{compte['variante']} autres formats, {compte['inutile']} inutiles à confirmer")
+            if compte["inutile"] or any(f.decision == "page" and not f.sur for f in fichiers):
+                try:   # l'admin d'origine : ses appareils d'avant les comptes aussi, comme avant
+                    with db.pour_compte(None if compte_id == 1 else compte_id):
+                        notifications.import_a_confirmer(lot, compte["inutile"])
+                except Exception as e:
+                    log(f"notification impossible : {e}")
     return tries
 
 
@@ -1014,17 +1028,19 @@ def comprendre_en_attente():
 
     Limite ou panne de Claude : le lot attend (ses fichiers aussi), et la passe se fait au retour.
     """
-    for lot in db.lots_a_comprendre():
+    for r in db.lots_a_comprendre():
+        compte_id, lot = r["compte_id"], r["lot"]
         activite(f"Organisation des dossiers de « {lot or 'inbox'} »")
-        try:
-            essai_local = local.essayer_json if reglages_analyse()["mode"] != "jamais" else None
-            resume, compris = agent.interpreter_arborescence(db.import_dossiers(lot), db.matieres(), essai_local)
-        except ErreurAgent as e:
-            log(f"organisation de « {lot} » non interprétée par l'IA ({e}) : indices des noms de dossiers seulement")
-        else:
-            db.import_lot_maj(lot, resume, compris)
-            log(f"organisation de « {lot} » comprise : {resume}")
-        db.lot_compris(lot)
+        with comptes.pour(compte_id):   # ses dossiers et ses matières à lui, sur son droit au forfait
+            try:
+                essai_local = local.essayer_json if reglages_analyse()["mode"] != "jamais" else None
+                resume, compris = agent.interpreter_arborescence(db.import_dossiers(lot), db.matieres(), essai_local)
+            except (ErreurAgent, SansForfait) as e:
+                log(f"organisation de « {lot} » non interprétée par l'IA ({e}) : indices des noms de dossiers seulement")
+            else:
+                db.import_lot_maj(lot, resume, compris, compte_id)
+                log(f"organisation de « {lot} » comprise : {resume}")
+            db.lot_compris(lot, compte_id)
 
 
 def executer_choix(kd: KDrive) -> bool:
@@ -1047,8 +1063,9 @@ def executer_choix(kd: KDrive) -> bool:
             log(f"{r['chemin']} : {e}")
             db.import_oublier([r["kdrive_id"]])
         change = True
-    for groupe in db.import_groupes(sur=True):
-        fusionner(kd, groupe)
+    for g in db.import_groupes_a_fusionner():
+        with db.pour_compte(g["compte_id"]):   # ses pages seulement, et le PDF fusionné reste à lui
+            fusionner(kd, g["groupe"])
         change = True
     return change
 
@@ -1077,6 +1094,7 @@ def fusionner(kd: KDrive, groupe: str):
         shutil.rmtree(local, ignore_errors=True)
     nom = importation.nom_fusion(groupe.split("#")[0], len(pages))
     nouveau = kd.upload(kd.ensure_path(INBOX_ID, dossiers), nom, contenu, conflict="rename")
+    db.noter_depot(nouveau["id"], pages[0].get("compte_id") or db.compte_actuel())   # au compte qui a déposé les pages
     fichier = importation.Fichier(nouveau["id"], nouveau.get("name") or nom, dossiers, len(contenu),
                                   raison=f"{len(pages)} pages fusionnées", groupe=groupe)
     db.import_enregistrer(pages[0]["lot"], [fichier])
@@ -1289,7 +1307,7 @@ def analyser_inbox(kd: KDrive, items: list[dict], mode: str | None = None, claud
     mode = mode or reglages_analyse()["mode"]
     claude_ok = CLAUDE.disponible() if claude_ok is None else claude_ok
     pour_local, pour_claude = repartir(items, mode, claude_ok)
-    matieres, dossiers = db.matieres(), {}
+    matieres, dossiers = matieres_admin(), {}
 
     def faire(item):
         log(f"analyse : {'/'.join(item['dossiers'] + [item['name']])}")
@@ -1321,7 +1339,7 @@ def analyser_inbox(kd: KDrive, items: list[dict], mode: str | None = None, claud
 def analyser_sans_claude(kd: KDrive, items: list[dict], matieres: list[str] | None = None,
                          dossiers: dict | None = None):
     """Lecture sur la VM (local.py) : OCR + modèle local, Claude n'aidant que si besoin. Peu à la fois."""
-    matieres = db.matieres() if matieres is None else matieres
+    matieres = matieres_admin() if matieres is None else matieres
     dossiers = {} if dossiers is None else dossiers
 
     def faire(item):
@@ -1347,7 +1365,7 @@ def relire_avec_claude(kd: KDrive):
         items.append({"id": doc["kdrive_id"], "name": info.get("name") or doc["nom"], "type": "file", "relire": True,
                       "dossiers": (doc["origine"] or "").split("/") if doc.get("origine") else []})
     if items:
-        matieres, dossiers = db.matieres(), {}
+        matieres, dossiers = matieres_admin(), {}
         en_parallele(items, lambda item: traiter(kd, item, matieres, dossiers),
                      lambda item: f"Relecture par Claude de « {item['name']} »", PARALLELE,
                      continuer=lambda: CLAUDE.disponible() and not PAUSE.is_set() and not STOP.is_set())

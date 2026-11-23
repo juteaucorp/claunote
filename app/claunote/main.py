@@ -127,7 +127,7 @@ async def exiger_connexion(request: Request, call_next):
         jeton = _moi.set(compte)
         # La base ne montre que les données de ce compte (« Tout voir » : l'admin voit tout), refus compris
         try:
-            with comptes.pour(compte["id"], comptes.est_admin(compte) and compte.get("tout_voir")), \
+            with comptes.pour(compte["id"], comptes.tout_voir(compte, chemin)), \
                     (db.partages() if comptes.lit_les_partages(compte, chemin, request.method) else nullcontext()):
                 return await _servir_compte(request, call_next, compte, droit)
         finally:
@@ -1637,10 +1637,12 @@ def recherche(request: Request, q: str = ""):
 
 @app.get("/a-verifier", response_class=HTMLResponse)
 def a_verifier(request: Request):
-    docs = db.a_verifier()
+    docs = db.a_verifier()   # les siens seulement, même avec « Tout voir » : chacun range ses dépôts
     return templates.TemplateResponse(request, "a_verifier.html", {
         "doutes": [d for d in docs if d["statut"] != "erreur"], "erreurs": [d for d in docs if d["statut"] == "erreur"],
-        "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres()})
+        "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres(),
+        # « Tout voir » : ce qui attend chez les autres, pour info (c'est à eux de ranger leurs dépôts)
+        "ailleurs": db.a_verifier_ailleurs() if comptes.tout_voir(moi(), request.url.path) else []})
 
 
 ERREURS = [  # motif dans le message technique → explication et conseil

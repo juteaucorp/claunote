@@ -313,7 +313,7 @@
 {% if not sans_nav %}
 {% set cartes_dues = nb_cartes_a_revoir() if peut('reviser') else 0 %}
 {% set evals = nb_evaluations_proches() if peut('agenda') else 0 %}
-{% set a_importer = nb_import_a_confirmer() if est_admin() else 0 %}
+{% set a_importer = nb_import_a_confirmer() if peut('organiser') else 0 %}
 {% set attente = nb_a_verifier() + a_importer %}
 {% set rubrique = 'actualites' if chemin.startswith('/actualites') else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours', '/partages')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander', '/progression')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
 {% set admin = est_admin() %}
@@ -323,7 +323,7 @@
 {% set a_regler = (nb_alertes_securite() + nb_mises_a_jour() + nb_demandes_ia() + (1 if analyses_en_pause() else 0)) if admin else 0 %}
 {% set plus_n = attente + a_regler %}
 {% macro liens_plus() %}
-      {% if peut('deposer') %}<a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer and admin %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>{% endif %}
+      {% if peut('deposer') %}<a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>{% endif %}
       {% if peut('organiser') %}<a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, matières, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>{% endif %}
       <a href="/reglages">{{ icone('compte') }}<span>Réglages<small>{% if admin %}ton compte, administration{% else %}ton compte, notifications, tes données{% endif %}</small></span>{% if a_regler %}<span class="badge">{{ a_regler }}</span>{% endif %}</a>
 {% endmacro %}
