@@ -568,8 +568,10 @@ def test_easter_egg_vigie(client, monkeypatch):
                                                      "notifier": False, "n": 1, "dernier": MAINTENANT,
                                                      "erreur": None, "echecs": 0, "site": ""}])
     r = client.get("/actualites")
-    assert "a.maj[href='/actualites']" in r.text and 'location.href = "/actualites/vigie"' in r.text   # 10 appuis
-    assert 'href="/actualites/vigie"' not in r.text   # aucun lien visible
+    assert '<script src="/static/geste.js" defer>' in r.text   # 10 appuis (fichier à part)
+    assert "vigie" not in r.text.lower() and "easter" not in r.text.lower()   # rien d'explicite dans la page
+    geste = client.get("/static/geste.js").text
+    assert "vigie" not in geste and "L2FjdHVhbGl0ZXMvdmlnaWU=" in geste   # adresse encodée
     r = client.get("/actualites/vigie")
     assert r.status_code == 200 and 'href="https://vigie.dix-neuf.ovh"' in r.text and "noindex" in r.text
     assert "frame-src 'self' blob:" in r.headers["content-security-policy"]   # pas d'iframe, CSP inchangée
@@ -606,3 +608,13 @@ def test_logo_vigie_garde_le_papillon():
     statique = pathlib.Path(main.__file__).parent / "static"
     papillon = lambda f: [l for l in (statique / f).read_text().splitlines() if "<path" in l][0].split(' d="')[1]
     assert papillon("logo.svg") == papillon("logo-vigie.svg")
+
+
+def test_apparence_suit_le_compte_sur_tous_les_appareils(client, anonyme):
+    from fastapi.testclient import TestClient
+    client.post("/reglages/apparence", data={"mode": "sombre", "style": "claunote"})
+    autre = TestClient(main.app)   # un deuxième appareil, même compte
+    autre.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"})
+    r = autre.get("/reglages")
+    assert 'data-theme="sombre"' in r.text   # enregistré sur le compte, pas dans le navigateur
+    assert "h.dataset.theme !== ici.dataset.theme" in r.text   # reprise sans recharger à la main
