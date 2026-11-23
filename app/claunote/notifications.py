@@ -170,7 +170,15 @@ def vider_file(maintenant: dt.datetime):
         _vider(file, compte_id)
 
 
+def urgente(cle: str) -> bool:
+    return any(cle.startswith(p) for p in URGENTES)
+
+
 def _vider(file: list[dict], compte_id: int | None):
+    # Une urgente (alerte d'actualité, cours modifié…) part toujours seule, jamais noyée dans un résumé
+    urgentes = [n for n in file if urgente(n["cle"])]
+    file = [n for n in file if not urgente(n["cle"])]
+    _envoyer(urgentes, compte_id)
     if len(file) > MAX_PAR_TOUR:  # une rafale (synchro, import…) = une seule notification résumée
         envoyes, erreurs = envoyer_a_tous(
             f"{len(file)} nouveautés sur Claunote", " · ".join(n["titre"] for n in file)[:300], "/notifications",
@@ -180,11 +188,15 @@ def _vider(file: list[dict], compte_id: int | None):
             db.maj_notification(n["id"], statut, erreur)
         log(f"{len(file)} notifications regroupées en une : {statut}")
         return
+    _envoyer(file, compte_id)
+
+
+def _envoyer(file: list[dict], compte_id: int | None):
     for n in file:
         envoyes, erreurs = envoyer_a_tous(n["titre"], n["corps"], n["url"], n["cle"], compte_id=compte_id)
         if envoyes or not erreurs:
             db.maj_notification(n["id"], "envoye")
-            log(f"envoyée : {n['titre']}")
+            log(f"envoyée : {n['titre']}" if envoyes else f"aucun appareil abonné pour : {n['titre']}")
         else:
             db.maj_notification(n["id"], "erreur", " ; ".join(erreurs))
             log(f"échec : {n['titre']} : {erreurs[0]}")
