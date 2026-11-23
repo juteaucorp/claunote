@@ -28,6 +28,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
 
 import httpx
@@ -1366,8 +1367,8 @@ def revisions_en_attente(kd: KDrive):
             if attend_opus("programme"):
                 continue
             try:
-                with agent.forfait(True):   # forfait du compte, ou accord de l'admin
-                    traiter_campagne(campagne)
+                with agent.forfait(True), partages_du_compte(campagne.get("compte_id")):
+                    traiter_campagne(campagne)   # forfait du compte, ou accord de l'admin
             except agent.OpusEnPause as e:
                 opus_en_pause(e)
     for rev in db.revisions_en_attente():
@@ -1382,10 +1383,18 @@ def revisions_en_attente(kd: KDrive):
                 continue
             log(f"révision : {rev['genre']} « {rev['sujet']} »")
             try:
-                with agent.forfait(True):   # forfait du compte, ou accord de l'admin
-                    traiter_revision(kd, rev)
+                with agent.forfait(True), partages_du_compte(rev.get("compte_id")):
+                    traiter_revision(kd, rev)   # forfait du compte, ou accord de l'admin
             except agent.OpusEnPause as e:
                 opus_en_pause(e)
+
+
+def partages_du_compte(compte_id: int | None):
+    """Un invité peut faire une fiche à partir des cours qu'on lui partage (publics, ou tous s'il a l'accès
+    complet) : le worker les lit pour lui, en lecture seule. L'admin : ses cours, comme avant."""
+    if compte_id is None or comptes.est_admin(comptes.trouver(compte_id)):
+        return nullcontext()
+    return db.partages()
 
 
 def attend_opus(tache: str) -> bool:

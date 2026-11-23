@@ -76,3 +76,53 @@ def test_libelle_et_attente():
     rev = {"statut": "en_attente", "validation": "attente"}
     assert demandes_ia.attend_admin(rev, peut_claude=False) and not demandes_ia.attend_admin(rev, peut_claude=True)
     assert not demandes_ia.attend_admin({**rev, "validation": "acceptee"}, peut_claude=False)
+
+
+def _cours_admin():
+    ids = {}
+    for kd, nom, matiere in ((100, "vlan.pdf", "Réseau"), (101, "secret.pdf", "Maths")):
+        d = db.creer(kd, nom)
+        db.maj(d, statut="classe", niveau="BTS1", matiere=matiere, type="cours", titre=nom[:-4])
+        with db.connect() as c:
+            c.execute("INSERT INTO passages (document_id, rang, texte) VALUES (%s, 0, %s)",
+                      (d, f"cours sur {nom[:-4]} trunk"))
+        ids[nom] = d
+    with db.pour_compte(1):
+        db.rendre_matiere("BTS1", "Réseau", True)
+    return ids
+
+
+def test_cours_partages_dans_le_chat_et_les_fiches(base):
+    ids = _cours_admin()
+    camille = db.creer_compte("camille", "h", "invite", ["bibliotheque", "reviser"])
+    with db.pour_compte(camille):
+        assert db.chercher_passages("trunk") == []               # hors des pages qui lisent les partages
+        with db.partages():
+            assert [p["titre"] for p in db.chercher_passages("trunk")] == ["vlan"]   # public seulement
+            assert [d["id"] for d in db.documents([ids["vlan.pdf"], ids["secret.pdf"]])] == [ids["vlan.pdf"]]
+            rev = db.creer_revision("fiche", "VLAN", [ids["vlan.pdf"]])
+            assert db.revision(rev)["matiere"] == "Réseau"        # la fiche prend la matière du cours partagé
+            with db.connect() as c:                               # jamais modifiable
+                assert c.execute("UPDATE passages SET texte = 'x' RETURNING id").fetchall() == []
+        assert db.revision(rev)["compte_id"] == camille
+
+
+def test_acces_a_tous_les_cours(base):
+    ids = _cours_admin()
+    camille = db.creer_compte("camille", "h", "invite", ["bibliotheque"])
+    assert db.demander_acces_cours(camille) and not db.demander_acces_cours(camille)
+    assert not db.demander_acces_cours(1)                         # l'admin n'en a pas besoin
+    assert [c["id"] for c in db.acces_cours("attente")] == [camille] and db.nb_demandes_ia() == 1
+    with db.pour_compte(camille), db.partages():                  # en attente : toujours les publics seulement
+        assert [p["titre"] for p in db.chercher_passages("trunk")] == ["vlan"]
+    assert db.decider_acces_cours(camille, "accorde")
+    with db.pour_compte(camille):
+        assert db.bibliotheque() == [] and db.chercher_passages("secret") == []   # ailleurs : ses données
+        with db.partages():
+            assert sorted(p["titre"] for p in db.chercher_passages("trunk")) == ["secret", "vlan"]
+            assert {r["matiere"] for r in db.bibliotheque_partagee()} == {"Maths", "Réseau"}
+            with db.connect() as c:
+                assert c.execute("UPDATE documents SET titre = 'x' RETURNING id").fetchall() == []
+    assert db.decider_acces_cours(camille, None)                  # retiré
+    with db.pour_compte(camille), db.partages():
+        assert [p["titre"] for p in db.chercher_passages("trunk")] == ["vlan"]
