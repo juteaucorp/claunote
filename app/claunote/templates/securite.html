@@ -44,6 +44,39 @@
   </div>
 </div>
 
+<div class="carte" id="cloudflare">
+  <strong>Cloudflare : arrêté avant ta VM</strong>
+  {% if not cf_actif %}
+  <p class="doux">Éteint. Avec un jeton Cloudflare <strong>en lecture seule</strong>, tu vois ici ce que Cloudflare bloque
+    (géoblocage, limite de débit sur la connexion, robots), avec une alerte sur un pic d'attaques.
+    À régler dans <a href="/reglages/installation#cloudflare">Réglages → Installation → Accès par Internet</a>.</p>
+  {% else %}
+  {% set r = cf.resume %}
+  {% if cf.erreur %}<p class="alerte">{{ cf.erreur }}</p>{% endif %}
+  {% if r %}
+  <div class="tuiles" style="margin: 10px 0">
+    <div class="tuile"><strong>{{ r.bloques_24h }}</strong><span>bloqué{{ 's' if r.bloques_24h > 1 }} en 24 h</span></div>
+    <div class="tuile"><strong>{{ r.defis_24h }}</strong><span>défi{{ "s" if r.defis_24h > 1 }} en 24 h</span></div>
+    <div class="tuile"><strong>{{ r.requetes_24h }}</strong><span>requête{{ 's' if r.requetes_24h > 1 }} en 24 h</span></div>
+    <div class="tuile {{ 'rouge' if r.fenetre >= cf_seuil }}"><strong>{{ r.fenetre }}</strong><span>événement{{ 's' if r.fenetre > 1 }} en 15 min</span></div>
+  </div>
+  {% if r.regles %}
+  <table class="cf">
+    <thead><tr><th>Règle</th><th>Action</th><th>24 h</th></tr></thead>
+    <tbody>{% for g in r.regles[:10] %}<tr><td>{{ g.source }}{% if g.regle %}<br><span class="doux">{{ g.regle }}</span>{% endif %}</td><td>{{ g.action }}</td><td>{{ g.n }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="doux">Aucun événement de sécurité en 24 h.</p>{% endif %}
+  {% if r.pays %}<p><strong>Pays</strong> : {% for p in r.pays %}{{ p.pays }} {{ p.n }}{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
+  {% if r.chemins %}<p><strong>Pages visées</strong> : {% for c in r.chemins %}<code>{{ c.chemin }}</code> {{ c.n }}{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
+  {% if cf.turnstile %}<p><strong>Turnstile</strong> : {% for t in cf.turnstile %}{{ t.n }} {{ t.type }}{{ ' · ' if not loop.last }}{% endfor %}</p>
+  {% elif cf.turnstile_erreur %}<p class="doux">Turnstile illisible (permission Account Analytics ?) : {{ cf.turnstile_erreur }}</p>{% endif %}
+  {% endif %}
+  <p class="doux">{% if cf.le %}Relevé le {{ cf.le|instant_iso|paris }}, toutes les 15 min. {% else %}Première relève dans moins de 15 min. {% endif %}
+    Alerte si les événements des 15 dernières minutes dépassent 5 fois l'habitude (au moins {{ cf_seuil }}).</p>
+  <form method="post" action="/securite/cloudflare" class="actions" style="margin: 0"><button>Relever maintenant</button></form>
+  {% endif %}
+</div>
+
 <form method="post" action="/securite/deconnecter-partout" class="carte"
       onsubmit="return confirm('Déconnecter tous les autres appareils ? Ils devront retaper le mot de passe (ou Face ID).')">
   <strong>Quelque chose de louche ?</strong>
@@ -102,6 +135,9 @@
   .interrupteur { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 8px 0 12px; }
   .etiquette { display: inline-flex; padding: 1px 8px; border-radius: 999px; font-size: .75rem; font-weight: 600;
     color: var(--accent-fonce); background: var(--accent-pale); }
+  table.cf { width: 100%; border-collapse: collapse; margin: 4px 0 8px; font-size: .92rem; }
+  table.cf th, table.cf td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--bord); vertical-align: top; }
+  table.cf td:last-child, table.cf th:last-child { text-align: right; white-space: nowrap; }
   .pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
 </style>
 {% endblock %}

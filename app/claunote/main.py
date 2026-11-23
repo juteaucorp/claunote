@@ -27,7 +27,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
-from claunote import (actualites, agent, anki, apparence, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande, demandes_ia,
+from claunote import (actualites, agent, anki, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local, turnstile)
@@ -393,6 +393,7 @@ def quand(iso: str | None) -> str:
 templates.env.filters["quand"] = quand
 templates.env.filters["paris"] = lambda d: d.astimezone(pronote.PARIS).strftime("%d/%m/%Y %H:%M") if d else ""
 templates.env.filters["jour_iso"] = dt.date.fromisoformat
+templates.env.filters["instant_iso"] = dt.datetime.fromisoformat
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 EXTENSIONS = importation.DOCUMENTS
 
@@ -768,7 +769,7 @@ def _page_installation(request: Request, etape: str | None, statut: int = 200, *
         "copie_kdrive": _json_ou_rien(db.etat_valeur("copie_kdrive")), "disque": disque.etat(), "besoins": disque.BESOINS,
         "besoin_total": disque.BESOIN_INSTALLATION, "tunnel_actif": maj.tunnel_actif(), "maj_present": maj.present(),
         "analyse": local.reglages(), "compte_admin": db.compte(moi()["id"]), "a_faire": installation.a_faire(),
-        "turnstile_actif": turnstile.actif(),
+        "turnstile_actif": turnstile.actif(), "supervision_active": cloudflare.actif(),
         "hote_public": cles.hote(request.headers.get("host", "")) if appareils.par_tunnel(request.headers) else None,
         **plus}, status_code=statut)
 
@@ -936,10 +937,51 @@ def _turnstile(request: Request, form: FormData, action: str) -> tuple[str, str 
     return message, None
 
 
+def _supervision(request: Request, form: FormData, action: str) -> tuple[str, str | None]:
+    """Jeton API Cloudflare en lecture seule + identifiants : (message, erreur). Jeton vide = garder l'ancien."""
+    zone = (form.get("cf_zone") or "").strip().lower()
+    compte = (form.get("cf_compte") or "").strip().lower()
+    saisi = (form.get("cf_jeton") or "").strip()
+    jeton = saisi or os.environ.get("CLOUDFLARE_API_TOKEN", "")
+    if zone and not cloudflare.id_ok(zone):
+        return "", "Identifiant de zone Cloudflare : 32 caractères (ton domaine → Vue d'ensemble → colonne « API »)."
+    if compte and not cloudflare.id_ok(compte):
+        return "", "Identifiant de compte Cloudflare : 32 caractères (même endroit que l'ID de zone)."
+    if saisi and (len(saisi) > 200 or not saisi.isascii() or any(c.isspace() for c in saisi)):
+        return "", "Jeton API Cloudflare : colle-le tel quel (une seule ligne, sans espace)."
+    if action == "tester_cf":
+        if not (jeton and zone):
+            return "", "Pour tester la supervision : colle le jeton API et l'identifiant de zone."
+        etat, message = cloudflare.tester(jeton, zone, compte)
+        return (message, None) if etat == "ok" else ("", message)
+    if action == "tester":
+        return "", None
+    message = ""
+    if saisi and zone:
+        etat, texte = cloudflare.tester(jeton, zone, compte)
+        if etat == "refuse":
+            return "", texte + " Rien n'a été enregistré."
+        message = " " + texte
+    avant = cloudflare.actif()
+    compte_id = moi()["id"]
+    if saisi:
+        reglages.ecrire("CLOUDFLARE_API_TOKEN", saisi, compte_id)
+    reglages.ecrire("CLOUDFLARE_ZONE_ID", zone, compte_id)
+    reglages.ecrire("CLOUDFLARE_ACCOUNT_ID", compte, compte_id)
+    if saisi or avant != cloudflare.actif():
+        _noter_reglage(request, "supervision Cloudflare " + ("allumée" if cloudflare.actif() else "éteinte"))
+    return message, None
+
+
 def _etape_cloudflare(request: Request, form: FormData, action: str = "enregistrer") -> tuple[str | None, str | None]:
     pays, erreur = installation.pays(form.get("pays"))
     if erreur:
         return None, erreur
+    message_supervision, erreur = _supervision(request, form, action)
+    if erreur:
+        return None, erreur
+    if action == "tester_cf":
+        return message_supervision, None
     message_captcha, erreur = _turnstile(request, form, action)
     if erreur:
         return None, erreur
@@ -957,7 +999,7 @@ def _etape_cloudflare(request: Request, form: FormData, action: str = "enregistr
     if saisi or actif != maj.tunnel_actif():
         suite = " " + maj.tunnel(actif)
         _noter_reglage(request, "tunnel Cloudflare " + ("allumé" if actif else "éteint"))
-    return "Accès par Internet enregistré." + suite + message_captcha, None
+    return "Accès par Internet enregistré." + suite + message_captcha + message_supervision, None
 
 
 @app.post("/installation/{etape}", response_class=HTMLResponse)
@@ -991,7 +1033,7 @@ async def installation_enregistrer(request: Request, etape: str):
                                                           message=message, erreur=erreur, section=etape, **plus))
     if erreur:
         return reponse_page(400)
-    if depuis_reglages or action in ("tester", "creer_dossiers", "sans_claude"):
+    if depuis_reglages or action in ("tester", "tester_cf", "creer_dossiers", "sans_claude"):
         r = reponse_page()
     else:
         r = RedirectResponse(f"/installation/{installation.suivante(etape)}", status_code=303)
@@ -1278,7 +1320,16 @@ def page_securite(request: Request, gravite: str = "", page: int = 1, message: s
         "bilan": db.securite_bilan(), "e": securite.etat(), "message": message,
         "alertes_actives": notifications.preferences(None).get("securite", True), "abonnes": len(db.abonnements()),
         "appareils": appareils.liste(), "par_tunnel": appareils.par_tunnel(request.headers),
+        "cf": cloudflare.etat(), "cf_actif": cloudflare.actif(), "cf_seuil": cloudflare.PIC_MIN,
         "lien_page": lambda n: "/securite?" + urlencode({k: v for k, v in (("gravite", gravite), ("page", n)) if v})})
+
+
+@app.post("/securite/cloudflare")
+async def securite_cloudflare():
+    """Bouton « Relever maintenant » : une relève sans compter la fenêtre (ni médiane faussée, ni alerte)."""
+    e = await run_in_threadpool(cloudflare.tour, False)
+    message = e.get("erreur") or "Chiffres Cloudflare relevés."
+    return RedirectResponse("/securite?" + urlencode({"message": message}) + "#cloudflare", status_code=303)
 
 
 @app.post("/securite/debloquer")

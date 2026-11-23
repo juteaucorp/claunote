@@ -3,7 +3,8 @@
     page web (admin) ──► reglages.ecrire() ──► table reglages (secrets chiffrés, jamais réaffichés)
     démarrage du site et du worker ──► charger_dans_env() : la base passe avant le .env
 
-Les secrets (jeton Claude, jeton kDrive, jeton du tunnel Cloudflare, clé secrète Turnstile) sont chiffrés (Fernet : AES + HMAC) avec
+Les secrets (jeton Claude, jeton kDrive, jeton du tunnel Cloudflare, clé secrète Turnstile,
+jeton de supervision Cloudflare) sont chiffrés (Fernet : AES + HMAC) avec
 une clé gardée HORS de la base, dans le volume Docker `secrets` (fichier /secrets/claunote.key) : une copie de
 la base seule ne suffit pas à les lire. Un secret enregistré n'est jamais renvoyé au navigateur.
 
@@ -46,6 +47,13 @@ CATALOGUE = [
             aide="dash.cloudflare.com → Turnstile → Ajouter un widget → « Clé du site » (vide = pas de captcha)"),
     Reglage("TURNSTILE_SECRET_KEY", "Captcha Turnstile : clé secrète", "cloudflare", secret=True,
             aide="même widget → « Clé secrète »"),
+    Reglage("CLOUDFLARE_API_TOKEN", "Supervision : jeton API Cloudflare (lecture seule)", "cloudflare", secret=True,
+            aide="dash.cloudflare.com → Mon profil → Jetons API → Créer un jeton personnalisé : "
+                 "Zone · Analytics · Lecture (+ Compte · Account Analytics · Lecture pour Turnstile)"),
+    Reglage("CLOUDFLARE_ZONE_ID", "Supervision : identifiant de zone", "cloudflare",
+            aide="ton domaine → Vue d'ensemble → colonne de droite « API » → ID de zone (32 caractères)"),
+    Reglage("CLOUDFLARE_ACCOUNT_ID", "Supervision : identifiant de compte (facultatif, pour Turnstile)", "cloudflare",
+            aide="même endroit → ID de compte ; vide = pas de chiffres Turnstile"),
     Reglage("CLAUNOTE_PAYS", "Pays acceptés par Internet", "cloudflare", aide="codes à 2 lettres séparés par des virgules (FR,BE), ou * pour tous"),
     Reglage("CLAUNOTE_CONTACT", "Contact affiché dans les mentions légales", "compte"),
 ]
