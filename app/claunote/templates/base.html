@@ -18,6 +18,8 @@
 <meta name="apple-mobile-web-app-title" content="Claunote">
 {% block tete %}{% endblock %}
 <script src="/static/htmx.min.js" defer></script>
+{# Geste des onglets (static/geste.js) : voir apparence.py. Rien d'explicite ici, c'est un easter egg. #}
+<script src="/static/geste.js" defer></script>
 <script>
   // Formules $…$ (spans .math, voir formules.py) : KaTeX, embarqué, chargé seulement sur les pages qui en ont,
   // et redessiné quand le contenu change (chat, rafraîchissement invisible, HTMX)
@@ -77,7 +79,7 @@
   @media (prefers-color-scheme: dark) { :root:not([data-theme="clair"]) { {{ sombre }} } }
   :root[data-theme="sombre"] { {{ sombre }} }
   :root[data-theme="clair"] { color-scheme: light; } :root[data-theme="sombre"] { color-scheme: dark; }
-{% include "_style_vigie.html" %}
+{% if ap.style == 'vigie' %}{% include "_style_vigie.html" %}{% endif %}
   * { box-sizing: border-box; }
   html { background: var(--fond-doux); overscroll-behavior-y: none; }  /* l'en-tête ne descend plus quand on tire la page */
   body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); min-height: 100vh;
@@ -408,21 +410,6 @@
     sw.postMessage({ precharger: a.href });
   };
   document.addEventListener("touchstart", precharger, { passive: true });
-  // Easter egg : 10 appuis rapides sur l'onglet Actualités (en-tête ou barre du bas) → page cachée de Vigie.
-  // Le compte survit au premier chargement de la page (sessionStorage) ; déjà sur Actualités, un appui
-  // remonte en haut au lieu de recharger, pour pouvoir enchaîner.
-  document.addEventListener("click", (e) => {
-    const a = e.target.closest && e.target.closest("a.maj[href='/actualites']");
-    if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
-    let n = 0, t = Date.now();
-    try {
-      const avant = JSON.parse(sessionStorage.getItem("claunote-oeuf") || "{}");
-      n = t - (avant.t || 0) < 1500 ? (avant.n || 0) + 1 : 1;
-      sessionStorage.setItem("claunote-oeuf", JSON.stringify({ n: n >= 10 ? 0 : n, t }));
-    } catch (_) { return; }
-    if (n >= 10) { e.preventDefault(); location.href = "/actualites/vigie"; return; }
-    if (location.pathname === "/actualites") { e.preventDefault(); scrollTo({ top: 0, behavior: "smooth" }); }
-  });
   document.addEventListener("mousedown", precharger);
   {% if not sans_nav %}
   // Rafraîchissement invisible : toutes les 20 s quand la page est à l'écran, et dès le retour

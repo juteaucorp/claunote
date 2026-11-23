@@ -568,8 +568,10 @@ def test_easter_egg_vigie(client, monkeypatch):
                                                      "notifier": False, "n": 1, "dernier": MAINTENANT,
                                                      "erreur": None, "echecs": 0, "site": ""}])
     r = client.get("/actualites")
-    assert "a.maj[href='/actualites']" in r.text and 'location.href = "/actualites/vigie"' in r.text   # 10 appuis
-    assert 'href="/actualites/vigie"' not in r.text   # aucun lien visible
+    assert '<script src="/static/geste.js" defer>' in r.text   # 10 appuis (fichier à part)
+    assert "vigie" not in r.text.lower() and "easter" not in r.text.lower()   # rien d'explicite dans la page
+    geste = client.get("/static/geste.js").text
+    assert "vigie" not in geste and "L2FjdHVhbGl0ZXMvdmlnaWU=" in geste   # adresse encodée
     r = client.get("/actualites/vigie")
     assert r.status_code == 200 and 'href="https://vigie.dix-neuf.ovh"' in r.text and "noindex" in r.text
     assert "frame-src 'self' blob:" in r.headers["content-security-policy"]   # pas d'iframe, CSP inchangée

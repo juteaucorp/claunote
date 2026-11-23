@@ -6,18 +6,8 @@
 <p class="doux retour-vigie"><a href="/actualites">‹ Actualités</a></p>
 
 <section class="vigie" aria-labelledby="titre-vigie">
-  <div class="balayage" aria-hidden="true"></div>
   <p class="console" aria-hidden="true"><span>[ ok ]</span> passage secret trouvé<br><span>[ ok ]</span> chargement de la vigie…</p>
-  <h1 id="titre-vigie">{{ icone('vigie', 30) }}Vigie</h1>
-  <p class="accroche">Le tableau de veille techno d'un pote : <strong>RSS, Reddit et X réunis au même endroit</strong>,
-    avec des <strong>alertes sur les actus critiques</strong>.</p>
-  <ul>
-    <li><span>›</span> Filtres par thème et par source (RSS, Reddit, X)</li>
-    <li><span>›</span> Recherche par mot-clé, façon <code>grep</code></li>
-    <li><span>›</span> Rafraîchissement auto de 2 min à 1 h</li>
-    <li><span>›</span> Tes propres sources, dont certaines marquées « alerte »</li>
-  </ul>
-  <a class="bouton principal" href="{{ url }}" target="_blank" rel="noopener noreferrer">Ouvrir Vigie ↗</a>
+  <h1 id="titre-vigie"><a href="{{ url }}" target="_blank" rel="noopener noreferrer" title="Ouvrir Vigie, l'outil de veille d'un ami">vigie <small>↗</small></a></h1>
   <div class="debloque">
     <p><span>[ {{ 'new' if nouveau else ' ok' }} ]</span> {{ 'Style Vigie débloqué' if nouveau else 'Style Vigie' }} : les couleurs de Vigie sur tout Claunote, rien que pour toi.</p>
     <form method="post" action="/reglages/apparence">
@@ -27,7 +17,6 @@
     </form>
     <p class="doux-v">Ça se change aussi dans Réglages → Apparence.</p>
   </div>
-  <p class="credit">vigie.dix-neuf.ovh · fait par un ami, pas par Claunote</p>
 </section>
 
 <style>
@@ -47,7 +36,10 @@
   .vigie code { background: #16202b; padding: 1px 6px; border-radius: 6px; color: #2dd4bf; }
   .vigie a.bouton.principal { display: inline-flex; background: #2dd4bf; border-color: #2dd4bf; color: #0b0f14; }
   .vigie a.bouton.principal:hover { background: #5eead4; border-color: #5eead4; }
-  .vigie .debloque { margin-top: 20px; padding-top: 14px; border-top: 1px dashed #1d2733; }
+  .vigie h1 a { color: inherit; text-decoration: none; }
+  .vigie h1 a:hover small { color: #2dd4bf; }
+  .vigie h1 small { font-size: .55em; color: #5f6d7b; }
+  .vigie .debloque { margin-top: 4px; }
   .vigie .debloque p { margin: 0 0 10px; font-size: .92rem; }
   .vigie .debloque span { font-family: ui-monospace, Menlo, Consolas, monospace; color: #2dd4bf; }
   .vigie .debloque button { background: #16202b; color: #d6e2ee; border-color: #2a3644; }
