@@ -68,7 +68,13 @@
 </div>
 {% endif %}
 
-{% if rev.statut == 'en_attente' and rev.retouche %}
+{% set chez_admin = attend_admin(rev) %}
+{% if chez_admin %}
+<div class="carte accent rangee-attente"><span>⏳ <strong>En attente de l'accord de l'admin.</strong> Ton compte n'utilise pas le forfait Claude :
+  {{ 'ta modification' if rev.retouche else 'ta ' ~ genres[rev.genre]|lower }} part dès que l'admin dit oui. Une notification te préviendra.</span>
+  {% if rev.retouche and contenu %}<form method="post" action="/revision/{{ rev.id }}/annuler-modification"><button>Annuler</button></form>
+  {% else %}<form method="post" action="/revision/{{ rev.id }}/supprimer" onsubmit="return confirm('Annuler cette demande ?')"><button>Annuler</button></form>{% endif %}</div>
+{% elif rev.statut == 'en_attente' and rev.retouche %}
 <div class="carte accent rangee-attente"><span>Claunote modifie ta {{ genres[rev.genre]|lower }} : « {{ rev.retouche|truncate(140) }} ». La page se met à jour toute seule ; d'ici là, voici la version actuelle.</span>
   <form method="post" action="/revision/{{ rev.id }}/annuler-modification"><button>Annuler</button></form></div>
 {% elif rev.statut == 'pret' and rev.erreur %}
@@ -84,7 +90,8 @@
 {% endif %}
 {% endif %}
 <style>.rangee-attente { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; } .rangee-attente form { margin: 0; }</style>
-{% if rev.statut == 'en_attente' and not (rev.retouche and contenu) %}
+{% if chez_admin and not (rev.retouche and contenu) %}
+{% elif rev.statut == 'en_attente' and not (rev.retouche and contenu) %}
 <div class="carte accent rangee-attente"><span>{% if attente_opus %}Ta {{ genres[rev.genre]|lower }} attend Opus 5.5, en pause (limite du forfait) jusqu'à <strong>{{ attente_opus }}</strong>. Elle se fera toute seule ensuite.{% else %}L'agent prépare ta {{ genres[rev.genre]|lower }}… La page se met à jour toute seule (1 à 3 minutes en général).{% endif %}</span>
   <form method="post" action="/revision/{{ rev.id }}/supprimer" onsubmit="return confirm('Annuler cette demande ?')"><button>Annuler</button></form></div>
 {% elif rev.statut == 'erreur' %}

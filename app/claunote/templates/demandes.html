@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Demandes IA{% endblock %}
+{% block vivant %}remplacer{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/reglages">Réglages</a> › Demandes IA</p>
+<h1>Demandes IA des invités</h1>
+<p class="doux">Les comptes <strong>sans le droit « Forfait Claude »</strong> demandent ici une fiche, un quiz, une campagne
+  ou une modification. <strong>Oui</strong> : Claude la prépare sur <strong>ton forfait</strong> et le résultat arrive sur
+  leur compte. <strong>Non</strong> : la demande s'arrête et la personne est prévenue.</p>
+{% if not demandes %}
+<div class="carte">Aucune demande en attente.</div>
+{% endif %}
+{% for d in demandes %}
+<div class="carte demande">
+  <div class="tete-demande">
+    <strong>{{ icone(d.genre, 16) }} {{ 'Modifier : ' if d.retouche }}{{ genres.get(d.genre, d.genre) }} · {{ d.sujet }}</strong>
+    <span class="doux">{{ d.auteur }}{% if d.demande_le %} · {{ d.demande_le.astimezone(paris_tz).strftime('%d/%m à %H:%M') }}{% endif %}</span>
+  </div>
+  {% if d.retouche %}<p class="prompt">« {{ d.retouche }} »</p>{% endif %}
+  {% if d.consigne %}<p class="prompt">{{ d.consigne|truncate(600)|e|replace('\n', '<br>'|safe) }}</p>{% endif %}
+  <p class="doux">
+    {% if d.quoi == 'campagne' %}Du {{ d.debut.strftime('%d/%m') }} au {{ d.fin.strftime('%d/%m/%Y') }} · {{ d.nb_supports }} support{{ 's' if d.nb_supports > 1 }} + le programme
+    {% else %}{% if d.matiere %}{{ d.matiere }}{% if d.niveau %} {{ d.niveau }}{% endif %} · {% endif %}{{ (d.doc_ids or [])|length }} cours :
+      {% for i in (d.doc_ids or [])[:5] %}{{ cours.get(i, '?') }}{{ ', ' if not loop.last }}{% endfor %}{% if (d.doc_ids or [])|length > 5 %}…{% endif %}{% endif %}
+  </p>
+  <div class="actions">
+    <form method="post" action="/demandes/{{ d.quoi }}/{{ d.id }}"><button name="reponse" value="oui" class="principal">{{ icone('check', 18) }} Oui, lancer</button></form>
+    <details class="refus"><summary class="bouton">Non</summary>
+      <form method="post" action="/demandes/{{ d.quoi }}/{{ d.id }}">
+        <input type="text" name="raison" maxlength="300" placeholder="Raison (facultatif, la personne la verra)">
+        <button name="reponse" value="non" class="danger">Refuser</button>
+      </form>
+    </details>
+  </div>
+</div>
+{% endfor %}
+<style>
+  .tete-demande { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+  .demande .prompt { background: var(--fond-doux); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 6px; margin: 10px 0; }
+  .demande .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+  .demande .actions form { margin: 0; }
+  .demande .refus { margin: 0; }
+  .refus summary { list-style: none; cursor: pointer; display: inline-block; padding: 10px 18px; line-height: 1.2; border: 1px solid var(--bord); border-radius: 10px; }
+  .refus summary::-webkit-details-marker { display: none; }
+  .refus form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .refus input { flex: 1 1 220px; }
+</style>
+{% endblock %}

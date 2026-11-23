@@ -26,6 +26,7 @@
 <h2 class="titre-groupe">Administration</h2>
 <div class="carte liste-reglages">
   {{ ligne('/comptes', 'partager', 'Comptes et invitations', nb_comptes ~ ' compte' ~ ('s' if nb_comptes > 1 else '') ~ ', droits, jetons') }}
+  {{ ligne('/demandes', 'bulle', 'Demandes IA des invités', (nb_demandes ~ ' demande' ~ ('s' if nb_demandes > 1 else '') ~ ' à valider') if nb_demandes else 'Aucune en attente', nb_demandes, alerte=nb_demandes) }}
   {{ ligne('/securite', 'verifier', 'Sécurité', (alertes ~ ' alerte' ~ ('s' if alertes > 1 else '') ~ ' à lire') if alertes else 'Rien de nouveau', alertes, alerte=alertes) }}
   {{ ligne('/analyses', 'etat', 'Activité', 'Analyses en pause' if pause else 'Analyses en cours, modèles, pause', 'pause' if pause else 0, alerte=pause) }}
   {{ ligne('/etat', 'check', 'État du service et disque', disque.phrase if disque else 'Claude, Pronote, kDrive, disque',

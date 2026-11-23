@@ -49,7 +49,12 @@
   </details>
 </div>
 
-{% if en_attente %}
+{% if attend_admin(campagne) %}
+<div class="carte accent generation">
+  <strong>⏳ En attente de l'accord de l'admin</strong>
+  <div class="doux">Ton compte n'utilise pas le forfait Claude : la campagne ({{ revs|length }} support{{ 's' if revs|length > 1 }} et le programme) part dès que l'admin dit oui. Une notification te préviendra.</div>
+</div>
+{% elif en_attente %}
 <div class="carte accent generation">
   <strong>Génération en cours · {{ pretes }}/{{ revs|length }} supports prêts{% if campagne.statut == 'en_attente' %}, programme en préparation{% endif %}</strong>
   <div class="barre-progres"><span style="width: {{ ((pretes + (0 if campagne.statut == 'en_attente' else 1)) * 100 / (revs|length + 1))|round|int }}%"></span></div>

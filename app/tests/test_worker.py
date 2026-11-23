@@ -1061,8 +1061,28 @@ def test_revision_d_un_invite_sans_forfait(worker, monkeypatch, faux_comptes):
         {"id": 5, "genre": "fiche", "sujet": "VLAN", "compte_id": invite}])
     monkeypatch.setattr(worker.db, "maj_revision", lambda i, statut, **k: fait.append((i, statut, k.get("erreur"))))
     monkeypatch.setattr(worker, "traiter_revision", lambda kd, rev: fait.append("claude appelé"))
+    monkeypatch.setattr(worker.db, "mettre_en_demande", lambda table, i: fait.append(("demande", table, i)) or True)
+    notifs = []
+    monkeypatch.setattr(worker.db, "notifier_compte", lambda *a: notifs.append(a) or True)
     worker.revisions_en_attente(FauxKD({}))
-    assert fait == [(5, "erreur", worker.SANS_FORFAIT)]
+    assert fait == [("demande", "revisions", 5)]            # chez l'admin, Claude pas appelé
+    assert notifs and notifs[0][0] is None and notifs[0][4] == "/demandes"   # notification aux admins
+
+
+def test_revision_d_un_invite_acceptee_par_l_admin(worker, monkeypatch, faux_comptes):
+    invite = _invite(faux_comptes, claude=False)
+    vus = []
+    monkeypatch.setattr(worker.db, "campagnes_en_attente", lambda: [
+        {"id": 3, "titre": "BTS blanc", "compte_id": invite, "validation": "attente"}])
+    monkeypatch.setattr(worker.db, "revisions_en_attente", lambda: [
+        {"id": 5, "genre": "fiche", "sujet": "VLAN", "compte_id": invite, "validation": "acceptee"},
+        {"id": 6, "genre": "quiz", "sujet": "DHCP", "compte_id": invite, "validation": "attente"}])
+    monkeypatch.setattr(worker.db, "mettre_en_demande", lambda table, i: False)   # déjà chez l'admin
+    monkeypatch.setattr(worker, "traiter_campagne", lambda k: vus.append(("campagne", k["id"])))
+    monkeypatch.setattr(worker, "traiter_revision",
+                        lambda kd, rev: vus.append((rev["id"], worker.db.compte_actuel(), worker.agent.forfait_autorise())))
+    worker.revisions_en_attente(FauxKD({}))
+    assert vus == [(5, invite, True)]   # oui de l'admin : sur son forfait, au nom de l'invité ; le reste attend
 
 
 def test_revision_d_un_invite_avec_forfait(worker, monkeypatch, faux_comptes):
