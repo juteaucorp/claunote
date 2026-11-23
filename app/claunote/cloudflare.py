@@ -12,6 +12,7 @@
   (au moins PIC_MIN et PIC_FOIS × la médiane). Une alerte au plus toutes les 3 h, sauf si le pic double.
 - Offre gratuite : événements de sécurité gardés 31 jours, requêtes sur 3 jours au plus ; on ne lit que les 24 h.
 """
+import collections
 import datetime as dt
 import json
 import os
@@ -60,6 +61,15 @@ class Refus(Exception):
     """Jeton refusé ou permission manquante : rien ne sert de réessayer avant qu'il soit changé."""
 
 
+class Indisponible(Exception):
+    """Jeu de données ou champ fermé sur cette offre Cloudflare (« does not have access to the path »)."""
+
+
+AUTH = re.compile(r"authenticat|not authorized|unauthori[sz]ed|invalid (api )?token|permission", re.I)
+ACCES_OFFRE = re.compile(r"does not have access to|not available (on|for) (your|this) plan|plan does not", re.I)
+BRUTS = 1000   # repli événements un par un : au plus 1000 sur 24 h (échantillon de Cloudflare)
+
+
 def log(msg: str):
     print(f"cloudflare : {msg}", flush=True)
 
@@ -86,23 +96,31 @@ def id_ok(valeur: str) -> bool:
 
 # --- Appels -------------------------------------------------------------------------
 
+def _classer(messages: str, statut: int = 200) -> Exception:
+    """Erreur GraphQL → Refus (vrai problème de jeton), Indisponible (jeu de données ou champ hors de l'offre)
+    ou ValueError (autre). « does not have access to the path » = offre, PAS permission du jeton."""
+    if ACCES_OFFRE.search(messages):
+        return Indisponible(messages)
+    if statut in (401, 403) or AUTH.search(messages):
+        return Refus(messages)
+    return ValueError(messages)
+
+
 def _appel(jeton: str, requete: str) -> dict:
-    """Une requête GraphQL ; lève Refus (jeton, permission) ou httpx.HTTPError (réseau, panne)."""
+    """Une requête GraphQL ; lève Refus, Indisponible, ValueError ou httpx.HTTPError (réseau, panne)."""
     r = httpx.post(GRAPHQL, json={"query": requete}, timeout=DELAI,
                    headers={"Authorization": f"Bearer {jeton}", "Accept": "application/json"})
+    try:
+        corps = r.json()
+    except ValueError:
+        corps = {}
+    erreurs = corps.get("errors") or [] if isinstance(corps, dict) else []
+    messages = "; ".join(str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in erreurs)[:300]
     if r.status_code in (400, 401, 403):
-        try:
-            erreurs = r.json().get("errors") or []
-        except ValueError:
-            erreurs = []
-        raise Refus("; ".join(str(e.get("message", e)) for e in erreurs)[:300] or f"HTTP {r.status_code}")
+        raise _classer(messages or f"HTTP {r.status_code}", r.status_code)
     r.raise_for_status()
-    corps = r.json()
-    if corps.get("errors"):
-        messages = "; ".join(str(e.get("message", e)) for e in corps["errors"])[:300]
-        if re.search(r"auth|permission|not authorized|access", messages, re.I):
-            raise Refus(messages)
-        raise ValueError(messages)
+    if erreurs:
+        raise _classer(messages)
     return corps.get("data") or {}
 
 
@@ -114,18 +132,12 @@ def _filtre(debut: dt.datetime, fin: dt.datetime) -> str:
     return f'{{datetime_geq: "{_t(debut)}", datetime_lt: "{_t(fin)}"}}'
 
 
-def _requete_zone(zone: str, fin: dt.datetime, regle: str = "description") -> str:
-    jour, fenetre = _filtre(fin - dt.timedelta(hours=24), fin), _filtre(fin - FENETRE, fin)
-    heures = f'{{datetime_geq: "{_t(fin - dt.timedelta(hours=24))}", datetime_lt: "{_t(fin)}"}}'
-    groupes = "firewallEventsAdaptiveGroups"
-    return f"""{{ viewer {{ zones(filter: {{zoneTag: "{zone}"}}) {{
-      regles: {groupes}(limit: 25, filter: {jour}, orderBy: [count_DESC]) {{ count dimensions {{ action source {regle} }} }}
-      pays: {groupes}(limit: 10, filter: {jour}, orderBy: [count_DESC]) {{ count dimensions {{ clientCountryName }} }}
-      chemins: {groupes}(limit: 8, filter: {jour}, orderBy: [count_DESC]) {{ count dimensions {{ clientRequestPath }} }}
-      fenetre: {groupes}(limit: 1, filter: {fenetre}) {{ count }}
-      trafic: httpRequests1hGroups(limit: 24, filter: {heures}, orderBy: [datetime_ASC]) {{
-        dimensions {{ datetime }} sum {{ requests threats }} }}
-    }} }} }}"""
+def _zones(jeton: str, zone: str, corps: str) -> dict:
+    data = _appel(jeton, f'{{ viewer {{ zones(filter: {{zoneTag: "{zone}"}}) {{ {corps} }} }} }}')
+    zones = (data.get("viewer") or {}).get("zones") or []
+    if not zones:
+        raise Refus("zone introuvable avec ce jeton : vérifie l'identifiant de zone et la ressource « Zone » du jeton")
+    return zones[0]
 
 
 def _requete_turnstile(compte: str, fin: dt.datetime) -> str:
@@ -135,17 +147,81 @@ def _requete_turnstile(compte: str, fin: dt.datetime) -> str:
     }} }} }}"""
 
 
+def _premier(essais):
+    """Essaie chaque variante (de la plus riche à la plus simple) ; renvoie la première qui passe, sinon relève
+    la dernière erreur. Un jeton refusé coupe court : inutile d'essayer plus simple."""
+    derniere = None
+    for faire in essais:
+        try:
+            return faire()
+        except (Indisponible, ValueError) as e:
+            derniere = e
+    raise derniere
+
+
+def _evenements_groupes(jeton, zone, jour, fenetre) -> dict:
+    """firewallEventsAdaptiveGroups : déjà comptés par Cloudflare (une requête par tableau, chacun peut manquer)."""
+    g = "firewallEventsAdaptiveGroups"
+    sortie = {"fenetre": _zones(jeton, zone, f"fenetre: {g}(limit: 1, filter: {fenetre}) {{ count }}")["fenetre"]}
+
+    def regles(champs):
+        return lambda: _zones(jeton, zone, f"r: {g}(limit: 25, filter: {jour}, orderBy: [count_DESC]) "
+                                           f"{{ count dimensions {{ {champs} }} }}")["r"]
+    sortie["regles"] = _premier([regles("action source description"), regles("action source ruleId"),
+                                 regles("action source")])
+    for cle, champ, n in (("pays", "clientCountryName", 10), ("chemins", "clientRequestPath", 8)):
+        try:
+            sortie[cle] = _zones(jeton, zone, f"r: {g}(limit: {n}, filter: {jour}, orderBy: [count_DESC]) "
+                                              f"{{ count dimensions {{ {champ} }} }}")["r"]
+        except (Indisponible, ValueError):
+            sortie[cle] = []
+    return sortie
+
+
+def _evenements_bruts(jeton, zone, jour, debut_fenetre: str) -> dict:
+    """Repli : firewallEventsAdaptive (événements un par un, échantillon) comptés ici, si les groupes sont fermés."""
+    def lignes(champs):
+        return lambda: _zones(jeton, zone, f"r: firewallEventsAdaptive(limit: {BRUTS}, filter: {jour}, "
+                                           f"orderBy: [datetime_DESC]) {{ datetime {champs} }}")["r"]
+    rows = _premier([lignes("action source description clientCountryName clientRequestPath"),
+                     lignes("action source ruleId clientCountryName clientRequestPath"),
+                     lignes("action source clientCountryName"), lignes("action source")])
+
+    def compter(champs, n):
+        c = collections.Counter(tuple(r.get(k) for k in champs) for r in rows if any(r.get(k) for k in champs))
+        return [{"count": nb, "dimensions": dict(zip(champs, cle))} for cle, nb in c.most_common(n)]
+    regle = "description" if any("description" in r for r in rows) else "ruleId"
+    return {"regles": compter(("action", "source", regle), 25), "pays": compter(("clientCountryName",), 10),
+            "chemins": compter(("clientRequestPath",), 8),
+            "fenetre": [{"count": sum(1 for r in rows if (r.get("datetime") or "") >= debut_fenetre)}],
+            "echantillon": len(rows) >= BRUTS}
+
+
 def _zone_brute(jeton: str, zone: str, fin: dt.datetime) -> dict:
+    """Chaque jeu de données est lu à part : celui que l'offre gratuite ferme manque, les autres s'affichent."""
+    jour, fenetre = _filtre(fin - dt.timedelta(hours=24), fin), _filtre(fin - FENETRE, fin)
+    sortie, manques, details = {}, [], []
     try:
-        data = _appel(jeton, _requete_zone(zone, fin))
-    except ValueError as e:   # champ « description » inconnu de cette offre : on se rabat sur l'identifiant de règle
-        if "description" not in str(e):
-            raise
-        data = _appel(jeton, _requete_zone(zone, fin, "ruleId"))
-    zones = (data.get("viewer") or {}).get("zones") or []
-    if not zones:
-        raise Refus("zone introuvable avec ce jeton : vérifie l'identifiant de zone et la ressource du jeton")
-    return zones[0]
+        sortie["trafic"] = _zones(jeton, zone, f"t: httpRequests1hGroups(limit: 24, filter: {jour}, "
+                                               "orderBy: [datetime_ASC]) { dimensions { datetime } sum { requests threats } }")["t"]
+    except (Indisponible, ValueError) as e:
+        manques.append("trafic")
+        details.append(f"trafic : {str(e)[:120]}")
+    try:
+        try:
+            sortie.update(_evenements_groupes(jeton, zone, jour, fenetre))
+        except (Indisponible, ValueError):
+            sortie.update(_evenements_bruts(jeton, zone, jour, _t(fin - FENETRE)))
+    except (Indisponible, ValueError) as e:
+        manques.append("événements de sécurité")
+        details.append(f"événements : {str(e)[:120]}")
+        sortie["sans_evenements"] = True
+    if len(manques) == 2:
+        raise Indisponible(" ; ".join(details))
+    if details:
+        log("pas disponible avec cette offre : " + " ; ".join(details))
+    sortie["manques"] = manques
+    return sortie
 
 
 # --- Mise en forme -------------------------------------------------------------------
@@ -171,7 +247,9 @@ def resumer(z: dict) -> dict:
         "bloques_24h": sum(r["n"] for r in regles if r["action"] == "bloqué"),
         "requetes_24h": sum((g.get("sum") or {}).get("requests", 0) for g in trafic),
         "menaces_24h": sum((g.get("sum") or {}).get("threats", 0) for g in trafic),
-        "regles": regles, "pays": pays, "chemins": chemins, "fenetre": fenetre}
+        "regles": regles, "pays": pays, "chemins": chemins, "fenetre": fenetre,
+        "manques": z.get("manques") or [], "echantillon": bool(z.get("echantillon")),
+        "sans_evenements": bool(z.get("sans_evenements"))}
 
 
 def resumer_turnstile(data: dict) -> list[dict]:
@@ -220,10 +298,11 @@ def tour(compter: bool = True, maintenant: dt.datetime | None = None) -> dict:
     avant_ok = not e.get("erreur")
     try:
         resume = resumer(_zone_brute(_jeton(), _zone(), fin))
-    except (Refus, httpx.HTTPError, ValueError) as err:
+    except (Refus, Indisponible, httpx.HTTPError, ValueError) as err:
         refus = isinstance(err, Refus)
-        e["erreur"] = (("Jeton ou permissions refusés : " if refus else "Cloudflare injoignable : ")
-                       + (str(err) or type(err).__name__))[:300]
+        prefixe = ("Jeton refusé : " if refus else "Rien de lisible avec ton offre Cloudflare : "
+                   if isinstance(err, Indisponible) else "Cloudflare injoignable : ")
+        e["erreur"] = (prefixe + (str(err) or type(err).__name__))[:300]
         e["erreur_le"] = maintenant.isoformat()
         _ecrire(e)
         log(e["erreur"])
@@ -234,11 +313,11 @@ def tour(compter: bool = True, maintenant: dt.datetime | None = None) -> dict:
     if id_ok(_compte()):
         try:
             turnstile = resumer_turnstile(_appel(_jeton(), _requete_turnstile(_compte(), fin)))
-        except (Refus, httpx.HTTPError, ValueError) as err:
+        except (Refus, Indisponible, httpx.HTTPError, ValueError) as err:
             turnstile_erreur = (str(err) or type(err).__name__)[:200]
     e.update({"le": maintenant.isoformat(), "fin": fin.isoformat(), "resume": resume, "turnstile": turnstile,
               "turnstile_erreur": turnstile_erreur, "erreur": None})
-    if compter:
+    if compter and not resume["sans_evenements"]:
         historique = [n for _, n in e.get("fenetres", [])]
         seuil = pic(resume["fenetre"], historique)
         e["fenetres"] = (e.get("fenetres", []) + [[fin.isoformat(), resume["fenetre"]]])[-HISTORIQUE:]
@@ -268,22 +347,32 @@ def _alerte_pic(e: dict, resume: dict, seuil: int, historique: list[int], securi
 # --- Bouton « Tester » ---------------------------------------------------------------
 
 def tester(jeton: str, zone: str, compte: str = "") -> tuple[str, str]:
-    """(« ok », « refuse » ou « injoignable », message) : une vraie petite requête, en lecture seule."""
+    """(« ok », « refuse », « indisponible » ou « injoignable », message) : de vraies petites requêtes, en lecture."""
     fin = dt.datetime.now(dt.timezone.utc).replace(second=0, microsecond=0)
     try:
         z = resumer(_zone_brute(jeton, zone.lower(), fin))
     except Refus as e:
-        return "refuse", (f"Cloudflare refuse : {e}. Il faut Zone → Analytics → Lecture sur cette zone "
-                          "(voir docs/cloudflare-tunnel.md, étape 11).")
+        return "refuse", (f"Cloudflare refuse le jeton : {e}. Vérifie Zone → Analytics → Lecture sur ce domaine, "
+                          "et que le filtre d'adresses IP du jeton autorise l'adresse publique de ta VM.")
+    except Indisponible as e:
+        return "indisponible", (f"Jeton accepté, mais Cloudflare ne donne aucune de ces données avec ton offre ({e}).")
     except (httpx.HTTPError, ValueError) as e:
         return "injoignable", f"Cloudflare ne répond pas comme prévu ({str(e)[:150] or type(e).__name__})."
-    message = (f"Jeton accepté : {z['evenements_24h']} événement(s) de sécurité et {z['requetes_24h']} requête(s) "
-               "en 24 h.")
+    parts = []
+    if not z["sans_evenements"]:
+        parts.append(f"{'au moins ' if z['echantillon'] else ''}{z['evenements_24h']} événement(s) de sécurité")
+    if not "trafic" in z["manques"]:
+        parts.append(f"{z['requetes_24h']} requête(s)")
+    message = f"Jeton accepté : {' et '.join(parts)} en 24 h."
+    if z["manques"]:
+        message += " Pas disponible avec ton offre (ignoré) : " + " ; ".join(z["manques"]) + "."
     if compte:
         try:
             _appel(jeton, _requete_turnstile(compte.lower(), fin))
             message += " Chiffres Turnstile lisibles."
-        except (Refus, httpx.HTTPError, ValueError):
+        except Refus:
             message += (" Turnstile illisible : ajoute Compte → Account Analytics → Lecture au jeton "
                         "(ou vide l'identifiant de compte).")
+        except (Indisponible, httpx.HTTPError, ValueError):
+            message += " Chiffres Turnstile pas disponibles avec ton offre (ignorés)."
     return "ok", message
