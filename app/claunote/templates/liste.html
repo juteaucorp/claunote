@@ -2,12 +2,13 @@
 {% block titre %}{{ matiere }} · {{ niveau }}{% endblock %}
 {% block vivant %}remplacer{% endblock %}
 {% block contenu %}
-<p class="doux"><a href="/bibliotheque">Bibliothèque</a> › {{ niveau }} › {{ matiere }}</p>
+<p class="doux"><a href="/bibliotheque">Bibliothèque</a> › {% if lecture_seule %}Partagés › {% endif %}{{ niveau }} › {{ matiere }}</p>
 <h1>{{ type }} de {{ matiere }} ({{ niveau }})</h1>
+{% if lecture_seule %}<p class="doux">🌐 Cours partagés par d'autres comptes : <strong>lecture seule</strong>.</p>{% endif %}
 {% for d in docs %}
 <div class="carte">
-  <a href="/doc/{{ d.id }}"><strong>{{ d.titre or d.nom }}</strong></a>
-  <div class="doux">{{ d.chapitre if d.chapitre and d.chapitre != d.titre else '' }}{% if d.date_doc %}{{ ' · ' if d.chapitre and d.chapitre != d.titre }}{{ d.date_doc.strftime('%d/%m/%Y') }}{% endif %}</div>
+  <a href="/{{ 'partages/doc' if lecture_seule else 'doc' }}/{{ d.id }}"><strong>{{ d.titre or d.nom }}</strong></a>
+  <div class="doux">{% if lecture_seule %}{{ d.auteur }} · {% endif %}{{ d.chapitre if d.chapitre and d.chapitre != d.titre else '' }}{% if d.date_doc %}{{ ' · ' if d.chapitre and d.chapitre != d.titre }}{{ d.date_doc.strftime('%d/%m/%Y') }}{% endif %}</div>
 </div>
 {% else %}
 <p>Aucun document ici.</p>

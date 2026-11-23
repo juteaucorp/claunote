@@ -26,7 +26,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
-from claunote import (actualites, agent, anki, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande,
+from claunote import (actualites, agent, anki, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local)
@@ -343,6 +343,9 @@ templates.env.globals["disque_admin"] = lambda: disque.etat() if comptes.est_adm
 templates.env.globals["nb_mises_a_jour"] = maj.disponibles
 templates.env.globals["nb_actualites"] = lambda: db.nb_actualites_nouvelles()
 templates.env.globals["nb_alertes_securite"] = securite.nb_nouvelles_alertes
+templates.env.globals["nb_demandes_ia"] = lambda: demandes_ia.nb_en_attente() if comptes.est_admin(moi()) else 0
+# Page d'une révision ou d'une campagne : la demande d'un compte sans forfait attend-elle l'admin ?
+templates.env.globals["attend_admin"] = lambda e: demandes_ia.attend_admin(e, comptes.peut_claude((e or {}).get("compte_id")))
 templates.env.filters["note"] = pronote.libelle_note
 _matieres_cours = {"le": 0.0, "noms": []}
 
@@ -1292,6 +1295,7 @@ def page_reglages(request: Request):
             "pause": _sans_erreur(lambda: db.etat_valeur("analyses_pause") == "oui", False),
             "disque": _sans_erreur(disque.etat),
             "inst_a_faire": _sans_erreur(installation.a_faire, False),
+            "nb_demandes": demandes_ia.nb_en_attente(),
         })
     return templates.TemplateResponse(request, "reglages.html", ctx)
 
@@ -1304,9 +1308,16 @@ def bibliotheque(request: Request):
     niveaux = [n for n in reversed(NIVEAUX) if n in arbre]  # le plus récent (BTS2) en haut, le collège en bas
     # « Tout voir » mélange les comptes : les boutons Public / Privé des matières restent sur ses propres données
     partage = db.plusieurs_comptes() and not (moi() or {}).get("tout_voir")
+    # Invités : les cours publics des autres comptes (ceux de l'admin surtout) directement ici, en lecture seule
+    autres = defaultdict(lambda: defaultdict(list))
+    if not comptes.est_admin(moi()):
+        for r in db.bibliotheque_partagee():
+            autres[r["niveau"]][r["matiere"]].append(r)
+    niveaux_autres = [n for n in reversed(NIVEAUX) if n in autres] + sorted(n for n in autres if n not in NIVEAUX)
     return templates.TemplateResponse(request, "bibliotheque.html", {
         "arbre": arbre, "niveaux": niveaux, "nb_hors_cours": db.nb_hors_cours(),
-        "partage": partage, "publiques": db.matieres_publiques() if partage else set()})
+        "partage": partage, "publiques": db.matieres_publiques() if partage else set(),
+        "autres": autres, "niveaux_autres": niveaux_autres})
 
 
 @app.get("/liste", response_class=HTMLResponse)
@@ -3430,6 +3441,13 @@ def page_partages(request: Request):
         "campagnes": db.partages_campagnes(), "genres": revision.GENRES})
 
 
+@app.get("/partages/liste", response_class=HTMLResponse)
+def partage_liste(request: Request, niveau: str, matiere: str, type: str):
+    return templates.TemplateResponse(request, "liste.html", {
+        "niveau": niveau, "matiere": matiere, "type": type, "docs": db.liste_partagee(niveau, matiere, type),
+        "lecture_seule": True})
+
+
 @app.get("/partages/doc/{doc_id}", response_class=HTMLResponse)
 def partage_document(request: Request, doc_id: int):
     doc = db.document_partage(doc_id)
@@ -3476,3 +3494,23 @@ def partage_campagne(request: Request, campagne_id: int):
         raise HTTPException(404)
     return templates.TemplateResponse(request, "partage_campagne.html", {
         "campagne": campagne, "revs": revs, "genres": revision.GENRES})
+
+
+# --- Demandes IA des comptes sans forfait Claude : l'admin dit oui ou non (demandes_ia.py) ---
+
+@app.get("/demandes", response_class=HTMLResponse)
+def page_demandes(request: Request):
+    demandes = db.demandes_ia()
+    cours = db.titres_documents_tous([i for d in demandes for i in (d.get("doc_ids") or [])])
+    return templates.TemplateResponse(request, "demandes.html", {
+        "demandes": demandes, "cours": cours, "genres": demandes_ia.GENRES})
+
+
+@app.post("/demandes/{quoi}/{item_id}")
+def decider_demande(quoi: str, item_id: int, reponse: str = Form(...), raison: str = Form("")):
+    if quoi not in ("revision", "campagne") or reponse not in ("oui", "non"):
+        raise HTTPException(400)
+    demandes_ia.decider(quoi, item_id, reponse == "oui", raison)
+    if reponse == "oui":
+        db.demander_scan()   # le worker la prend tout de suite
+    return RedirectResponse("/demandes", status_code=303)

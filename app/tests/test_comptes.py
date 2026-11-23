@@ -37,8 +37,11 @@ def test_droit_requis():
     assert comptes.droit_requis("/organiser/matieres") == "organiser"
     assert comptes.droit_requis("/appareils/code", "POST") == "admin" and comptes.droit_requis("/appareil") is None
     assert comptes.droit_requis("/compte") is None and comptes.droit_requis("/notifications") is None
-    assert comptes.besoin_claude("/reviser", "POST") and comptes.besoin_claude("/revision/4/modifier", "POST")
+    assert comptes.besoin_claude("/organiser/matieres/ia", "POST")
+    # fiches, quiz, campagnes, modifications : sans forfait, elles attendent l'accord de l'admin (pas de refus)
+    assert not comptes.besoin_claude("/reviser", "POST") and not comptes.besoin_claude("/revision/4/modifier", "POST")
     assert not comptes.besoin_claude("/reviser/demande", "POST") and not comptes.besoin_claude("/reviser", "GET")
+    assert comptes.droit_requis("/demandes") == comptes.droit_requis("/demandes/revision/3", "POST") == "admin"
 
 
 def test_jeton_lisible_et_normalise():
@@ -103,11 +106,38 @@ def test_invite_ne_voit_pas_l_administration(client):
     assert "/comptes/tout-voir" not in page and 'href="/analyses"' not in page
 
 
-def test_sans_forfait_claude_pas_de_fiche(client):
+def test_sans_forfait_claude_la_fiche_attend_l_admin(client, monkeypatch):
     invite, _ = _creer(_inviter(client, ["bibliotheque", "reviser"]))
-    r = invite.post("/reviser", data={"genre": "fiche", "niveau": "BTS1", "matiere": "Réseaux"})
-    assert r.status_code == 403 and "Forfait Claude" in r.text
-    assert invite.get("/reviser").status_code == 200                  # réviser ses cartes reste possible
+    crees = []
+    monkeypatch.setattr(db, "choisir_documents", lambda *a: [7])
+    monkeypatch.setattr(db, "creer_revision", lambda *a, **k: crees.append(a) or 42)
+    monkeypatch.setattr(db, "demander_scan", lambda: None)
+    r = invite.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/revision/42" and crees   # en file, pas refusée
+    assert invite.post("/organiser/matieres/ia", data={}).status_code == 403            # réponse immédiate : refus
+    assert invite.get("/reviser").status_code == 200
+    assert invite.get("/demandes").status_code == 403                                   # la page est pour l'admin
+
+
+def test_admin_dit_oui_ou_non(client, monkeypatch):
+    decisions = []
+    monkeypatch.setattr(db, "demandes_ia", lambda: [
+        {"quoi": "revision", "id": 5, "genre": "fiche", "sujet": "VLAN", "consigne": "Fais court", "retouche": None,
+         "doc_ids": [7], "niveau": "BTS1", "matiere": "Réseaux", "demande_le": None, "compte_id": 2, "auteur": "camille"}])
+    monkeypatch.setattr(db, "titres_documents_tous", lambda ids: {7: "Cours VLAN"})
+    monkeypatch.setattr(db, "decider_demande",
+                        lambda quoi, i, oui, erreur: decisions.append((quoi, i, oui, erreur)) or {"compte_id": 2, "sujet": "VLAN"})
+    notifs = []
+    monkeypatch.setattr(db, "notifier_compte", lambda *a: notifs.append(a) or True)
+    monkeypatch.setattr(db, "demander_scan", lambda: None)
+    page = client.get("/demandes").text
+    assert "camille" in page and "VLAN" in page and "Fais court" in page and "Cours VLAN" in page
+    client.post("/demandes/revision/5", data={"reponse": "oui"})
+    client.post("/demandes/revision/5", data={"reponse": "non", "raison": "trop long"})
+    assert decisions[0][:3] == ("revision", 5, True)
+    assert decisions[1][:3] == ("revision", 5, False) and "trop long" in decisions[1][3]
+    assert len(notifs) == 1 and notifs[0][0] == 2          # seul le refus prévient tout de suite l'invité
+    assert client.post("/demandes/document/5", data={"reponse": "oui"}).status_code == 400
 
 
 def test_chaque_requete_travaille_pour_son_compte(client, monkeypatch):
@@ -196,3 +226,17 @@ def test_pronote_relie_par_l_admin_seulement(client):
         assert invite.post(chemin, data=data).status_code == 403, chemin
     assert comptes.droit_requis("/agenda") == "agenda"
     assert comptes.droit_requis("/agenda/preparer", "POST") == "agenda"
+
+
+def test_invite_voit_les_cours_publics_en_lecture_seule(client, monkeypatch):
+    invite, _ = _creer(_inviter(client, ["bibliotheque"]))
+    monkeypatch.setattr(db, "bibliotheque_partagee", lambda: [
+        {"niveau": "BTS1", "matiere": "Réseau", "type": "cours", "n": 3, "auteurs": "admin"}])
+    monkeypatch.setattr(db, "liste_partagee", lambda n, m, t: [
+        {"id": 9, "titre": "VLAN", "nom": "vlan.pdf", "chapitre": None, "date_doc": None, "auteur": "admin"}])
+    page = invite.get("/bibliotheque").text
+    assert "Cours partagés" in page and "Lecture seule" in page and "/partages/liste?niveau=BTS1" in page
+    assert "/bibliotheque/visibilite" not in page.split("Cours partagés")[1]    # pas de bouton Public / Privé
+    liste = invite.get("/partages/liste", params={"niveau": "BTS1", "matiere": "Réseau", "type": "cours"}).text
+    assert 'href="/partages/doc/9"' in liste and 'href="/doc/9"' not in liste and "lecture seule" in liste
+    assert "Cours partagés" not in client.get("/bibliotheque").text             # l'admin : ses propres cours

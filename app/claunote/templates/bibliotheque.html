@@ -11,7 +11,7 @@
 {% if doublons %}
 <a class="carte accent ligne-alerte" href="/organiser/matieres"><strong>{{ doublons }} groupe{{ 's' if doublons > 1 }} de matières en double</strong> à fusionner ›</a>
 {% endif %}
-{% if not niveaux %}
+{% if not niveaux and not niveaux_autres %}
 <div class="carte">Aucun document classé pour l'instant. <a href="/deposer">Dépose des scans</a> ici,
   ou dans <code>Etudes/inbox</code> sur kDrive.</div>
 {% endif %}
@@ -39,7 +39,30 @@
   {% endfor %}
 </div>
 {% endfor %}
+{% if niveaux_autres %}
+<h2 class="titre-partages">🌐 Cours partagés <span class="pastille-vis">Lecture seule</span></h2>
+<p class="doux">Les cours que les autres comptes ont rendus publics. Tu peux les lire et les télécharger, pas les modifier.</p>
+{% for niveau in niveaux_autres %}
+<h3>{{ niveau }}</h3>
+<div class="grille">
+  {% for matiere, types in autres[niveau].items() %}
+  <div class="carte carte-partagee">
+    <div class="tete-matiere"><strong>{{ matiere }}</strong><span class="doux petit-texte">{{ types|map(attribute='auteurs')|unique|join(', ') }}</span></div>
+    <div class="pastilles">
+      {% for t in types %}
+      <a href="/partages/liste?niveau={{ niveau|urlencode }}&matiere={{ matiere|urlencode }}&type={{ t.type|urlencode }}">{{ t.type }} · {{ t.n }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endif %}
 <style>
+  .titre-partages { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 28px; }
+  .titre-partages .pastille-vis { font-size: .78rem; }
+  .carte-partagee { border-style: dashed; }
+  .petit-texte { font-size: .8rem; }
   .ligne-alerte { display: block; padding: 10px 16px; color: inherit; text-decoration: none; }
   .tete-matiere { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .tete-matiere form { margin: 0; }

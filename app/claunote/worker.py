@@ -32,7 +32,7 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (actualites, agent, coherence, comptes, db, decoupage, disque, formations, importation, index, lecture, local, modeles,
+from claunote import (actualites, agent, coherence, comptes, db, decoupage, demandes_ia, disque, formations, importation, index, lecture, local, modeles,
                       notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
                       stockage_local)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
@@ -1357,15 +1357,17 @@ def revisions_en_attente(kd: KDrive):
     for campagne in db.campagnes_en_attente():
         if ARRET.is_set():
             return
-        log(f"campagne : « {campagne['titre']} »")
         with comptes.pour(campagne.get("compte_id")):
-            if not agent.forfait_autorise():
-                db.maj_campagne(campagne["id"], "erreur", erreur=SANS_FORFAIT)
+            if not agent.forfait_autorise() and not demandes_ia.accordee(campagne):
+                if demandes_ia.demander("campagnes", campagne):   # compte sans forfait : l'admin dit oui ou non
+                    log(f"campagne « {campagne['titre']} » : demande envoyée à l'admin")
                 continue
+            log(f"campagne : « {campagne['titre']} »")
             if attend_opus("programme"):
                 continue
             try:
-                traiter_campagne(campagne)
+                with agent.forfait(True):   # forfait du compte, ou accord de l'admin
+                    traiter_campagne(campagne)
             except agent.OpusEnPause as e:
                 opus_en_pause(e)
     for rev in db.revisions_en_attente():
@@ -1373,16 +1375,15 @@ def revisions_en_attente(kd: KDrive):
             return
         if attend_opus(rev["genre"]):
             continue  # création de contenu : elle attend Opus 5.5, le reste du worker continue
-        log(f"révision : {rev['genre']} « {rev['sujet']} »")
         with comptes.pour(rev.get("compte_id")):
-            if not agent.forfait_autorise():
-                if rev.get("retouche") and rev.get("contenu"):
-                    db.finir_retouche(rev["id"], erreur=SANS_FORFAIT)
-                else:
-                    db.maj_revision(rev["id"], "erreur", erreur=SANS_FORFAIT)
+            if not agent.forfait_autorise() and not demandes_ia.accordee(rev):
+                if demandes_ia.demander("revisions", rev):   # compte sans forfait : l'admin dit oui ou non
+                    log(f"révision « {rev['sujet']} » : demande envoyée à l'admin")
                 continue
+            log(f"révision : {rev['genre']} « {rev['sujet']} »")
             try:
-                traiter_revision(kd, rev)
+                with agent.forfait(True):   # forfait du compte, ou accord de l'admin
+                    traiter_revision(kd, rev)
             except agent.OpusEnPause as e:
                 opus_en_pause(e)
 

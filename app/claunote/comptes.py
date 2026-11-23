@@ -6,7 +6,8 @@
     admin ──« Tout voir »──────► db.pour_compte(id, tout_voir=True) : toutes les données, de tous les comptes
 
 Droits par fonctionnalité (DROITS) ; l'admin les a tous. Le droit « claude » autorise le forfait Claude de
-l'admin : sans lui, le compte ne passe que par les modèles locaux (agent.forfait_refuse).
+l'admin : sans lui, le compte passe par les modèles locaux, et ses fiches, quiz, campagnes attendent l'accord de
+l'admin (demandes_ia.py) avant de partir sur le forfait.
 """
 import datetime as dt
 import hashlib
@@ -25,7 +26,8 @@ DROITS = {
     "reviser": ("Réviser", "Fiches, quiz, campagnes, flashcards, questions sur ses cours"),
     "agenda": ("Agenda Pronote", "Voir l'agenda et les notes Pronote de l'environnement"),
     "actualites": ("Actualités", "Lire et régler les actualités partagées"),
-    "claude": ("Forfait Claude de l'admin", "L'IA de Claude sur ton abonnement ; sinon modèles locaux seulement"),
+    "claude": ("Forfait Claude de l'admin", "L'IA de Claude sur ton abonnement sans demander ; sinon chaque fiche, "
+                                            "quiz ou campagne attend ton oui (page Demandes IA)"),
 }
 DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "actualites"]   # cochés par défaut
 ROLES = {"admin": "Admin", "invite": "Invité"}
@@ -37,7 +39,7 @@ MDP_MIN = 10
 # Ce que demande chaque page. Pas dans la liste : tout compte connecté (Compte, Notifications, État…).
 # « admin » : réservé aux admins. Premier préfixe qui correspond (du plus précis au plus large).
 PAGES = [
-    ("/comptes", "admin"), ("/securite", "admin"), ("/mise-a-jour", "admin"), ("/appareils/", "admin"),
+    ("/comptes", "admin"), ("/demandes", "admin"), ("/securite", "admin"), ("/mise-a-jour", "admin"), ("/appareils/", "admin"),
     ("/analyses", "admin"), ("/import", "admin"), ("/inbox", "admin"), ("/scan", "admin"),
     ("/claude/reessayer", "admin"), ("/installation", "admin"), ("/reglages/installation", "admin"), ("/organiser/matieres", "organiser"), ("/actualites/sources", "actualites"),
     ("/deposer", "deposer"),
@@ -66,10 +68,10 @@ def droit_requis(chemin: str, methode: str = "GET") -> str | None:
     return None
 
 
-# Actions qui ne marchent qu'avec Claude (fiches, quiz, programmes) : refusées tout de suite à un compte sans le
-# droit « claude », au lieu d'une révision en erreur plus tard. Le chat (Demander) passe au modèle local.
-CLAUDE_REQUIS = re.compile(r"^/(reviser|reviser/lancer|campagne|revision/\d+/(relancer|modifier)|"
-                           r"campagne/\d+/relancer|organiser/matieres/ia)$")
+# Actions qui ne marchent qu'avec Claude et qui répondent tout de suite : refusées à un compte sans le droit
+# « claude ». Les fiches, quiz, campagnes et modifications passent, elles : sans forfait, elles attendent que l'admin
+# dise oui sur la page Demandes (demandes_ia.py). Le chat (Demander) passe au modèle local.
+CLAUDE_REQUIS = re.compile(r"^/organiser/matieres/ia$")
 
 
 def besoin_claude(chemin: str, methode: str) -> bool:

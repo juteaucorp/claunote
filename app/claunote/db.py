@@ -639,6 +639,12 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS compte_id INT REFERENCES comp
 ALTER TABLE notifications ALTER COLUMN compte_id SET DEFAULT claunote_compte();
 ALTER TABLE abonnements_push ADD COLUMN IF NOT EXISTS compte_id INT REFERENCES comptes(id) ON DELETE CASCADE;
 ALTER TABLE abonnements_push ALTER COLUMN compte_id SET DEFAULT claunote_compte();
+-- Demandes IA des comptes sans forfait Claude (demandes_ia) : l'admin dit oui ou non avant le lancement.
+-- NULL : pas encore vue (ou compte avec forfait) ; 'attente' : chez l'admin ; 'acceptee' ; 'refusee'.
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS validation TEXT;
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS validation TEXT;
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS demande_le TIMESTAMPTZ;
+ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS demande_le TIMESTAMPTZ;
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -1266,13 +1272,15 @@ def renommer_revision(rev_id: int, sujet: str):
 
 def relancer_revision(rev_id: int):
     with connect() as c:
-        c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL, retouche = NULL WHERE id = %s", (rev_id,))
+        c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL, retouche = NULL, "
+                  "validation = NULL WHERE id = %s", (rev_id,))
 
 
 def demander_retouche(rev_id: int, demande: str) -> bool:
     """Met en file une modification d'un support prêt ; le contenu actuel reste affiché d'ici là."""
     with connect() as c:
-        return c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL, retouche = %s "
+        # Une modification est une nouvelle demande : sans forfait Claude, l'admin la valide de nouveau
+        return c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL, retouche = %s, validation = NULL "
                          "WHERE id = %s AND statut IN ('pret', 'erreur') AND contenu IS NOT NULL",
                          (demande, rev_id)).rowcount == 1
 
@@ -1402,8 +1410,9 @@ def maj_campagne(campagne_id: int, statut: str, programme=None, erreur=None):
 
 def relancer_campagne(campagne_id: int):
     with connect() as c:
-        c.execute("UPDATE campagnes SET statut = 'en_attente', erreur = NULL WHERE id = %s", (campagne_id,))
-        c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL "
+        c.execute("UPDATE campagnes SET statut = 'en_attente', erreur = NULL, "
+                  "validation = NULL WHERE id = %s", (campagne_id,))
+        c.execute("UPDATE revisions SET statut = 'en_attente', erreur = NULL, validation = NULL "
                   "WHERE campagne_id = %s AND statut = 'erreur'", (campagne_id,))
 
 
@@ -3125,3 +3134,105 @@ def documents_partages(ids: list[int]):
                          (ids,)).fetchall()
     par_id = {r["id"]: r for r in rows}
     return [par_id[i] for i in ids if i in par_id]
+
+
+# --- Demandes IA des comptes sans forfait Claude (demandes_ia.py) ------------------------
+# Lues et décidées hors du compte de la requête (sans_compte) : l'admin voit celles de tous les invités.
+
+def mettre_en_demande(table: str, item_id: int) -> bool:
+    """Marque une révision ou une campagne « chez l'admin » ; vrai si elle ne l'était pas déjà."""
+    assert table in ("revisions", "campagnes")
+    with sans_compte(), connect() as c:
+        ok = c.execute(f"UPDATE {table} SET validation = 'attente', demande_le = now() "
+                       f"WHERE id = %s AND validation IS NULL", (item_id,)).rowcount == 1
+        if ok and table == "campagnes":   # ses supports font partie de la même demande
+            c.execute("UPDATE revisions SET validation = 'attente', demande_le = now() "
+                      "WHERE campagne_id = %s AND statut = 'en_attente' AND validation IS NULL", (item_id,))
+        return ok
+
+
+def demandes_ia():
+    """Demandes en attente de l'admin, les plus anciennes d'abord (supports d'une campagne : avec elle)."""
+    with sans_compte(), connect() as c:
+        revs = c.execute(
+            f"""SELECT 'revision' AS quoi, r.id, r.genre, r.sujet, r.consigne, r.retouche, r.doc_ids, r.niveau,
+                       r.matiere, r.demande_le, r.compte_id, {_AUTEUR}
+                FROM revisions r JOIN comptes a ON a.id = r.compte_id
+                WHERE r.validation = 'attente' AND r.statut = 'en_attente' AND r.campagne_id IS NULL""").fetchall()
+        camps = c.execute(
+            f"""SELECT 'campagne' AS quoi, k.id, 'campagne' AS genre, k.titre AS sujet, k.consigne, NULL AS retouche,
+                       k.debut, k.fin, k.demande_le, k.compte_id, {_AUTEUR},
+                       (SELECT count(*) FROM revisions r WHERE r.campagne_id = k.id) AS nb_supports
+                FROM campagnes k JOIN comptes a ON a.id = k.compte_id
+                WHERE k.validation = 'attente' AND k.statut = 'en_attente'""").fetchall()
+    return sorted([*revs, *camps], key=lambda d: (d["demande_le"] is None, d["demande_le"]))
+
+
+def nb_demandes_ia() -> int:
+    with sans_compte(), connect() as c:
+        return c.execute(
+            "SELECT (SELECT count(*) FROM revisions WHERE validation = 'attente' AND statut = 'en_attente' "
+            "AND campagne_id IS NULL) + (SELECT count(*) FROM campagnes WHERE validation = 'attente' "
+            "AND statut = 'en_attente') AS n").fetchone()["n"]
+
+
+def decider_demande(quoi: str, item_id: int, oui: bool, erreur: str = ""):
+    """Oui : la tâche part au prochain tour du worker, sur le forfait de l'admin. Non : en erreur avec la raison
+    (une modification refusée garde la version d'avant). Renvoie la ligne décidée, ou None si déjà décidée."""
+    with sans_compte(), connect() as c:
+        if quoi == "campagne":
+            k = c.execute("UPDATE campagnes SET validation = %s, statut = CASE WHEN %s THEN statut ELSE 'erreur' END, "
+                          "erreur = CASE WHEN %s THEN erreur ELSE %s END "
+                          "WHERE id = %s AND validation = 'attente' RETURNING id, titre AS sujet, compte_id",
+                          ("acceptee" if oui else "refusee", oui, oui, erreur, item_id)).fetchone()
+            if k:
+                c.execute("UPDATE revisions SET validation = %s, statut = CASE WHEN %s THEN statut ELSE 'erreur' END, "
+                          "erreur = CASE WHEN %s THEN erreur ELSE %s END "
+                          "WHERE campagne_id = %s AND statut = 'en_attente'",
+                          ("acceptee" if oui else "refusee", oui, oui, erreur, item_id))
+            return k
+        if oui:
+            return c.execute("UPDATE revisions SET validation = 'acceptee' WHERE id = %s AND validation = 'attente' "
+                             "RETURNING id, genre, sujet, compte_id, retouche", (item_id,)).fetchone()
+        # Refus d'une modification : la fiche reste prête, avec la raison ; sinon la révision passe en erreur
+        return c.execute(
+            """UPDATE revisions SET validation = 'refusee', erreur = %(e)s,
+                      statut = CASE WHEN retouche IS NOT NULL AND contenu IS NOT NULL THEN 'pret' ELSE 'erreur' END,
+                      retouche = NULL
+               WHERE id = %(id)s AND validation = 'attente' RETURNING id, genre, sujet, compte_id""",
+            {"e": erreur, "id": item_id}).fetchone()
+
+
+def notifier_compte(compte_id: int | None, cle: str, titre: str, corps: str = "", url: str = "/") -> bool:
+    """Notification pour un compte précis (None : les admins), d'où qu'on soit (site ou worker)."""
+    with sans_compte(), connect() as c:
+        return c.execute("INSERT INTO notifications (cle, titre, corps, url, compte_id) VALUES (%s, %s, %s, %s, %s) "
+                         "ON CONFLICT (cle) DO NOTHING RETURNING id",
+                         (cle, titre, corps, url, compte_id)).fetchone() is not None
+
+
+def bibliotheque_partagee():
+    """Cours que les autres comptes ont rendus publics, comptés par niveau, matière, type (lecture seule)."""
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT d.niveau, d.matiere, d.type, count(*) AS n, string_agg(DISTINCT coalesce(nullif(a.nom, ''), a.identifiant), ', ') AS auteurs
+                FROM documents d JOIN comptes a ON a.id = d.compte_id WHERE {_DOC_PUBLIC}
+                GROUP BY d.niveau, d.matiere, d.type ORDER BY d.niveau, d.matiere, d.type""").fetchall()
+
+
+def liste_partagee(niveau: str, matiere: str, type_: str):
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT d.id, d.titre, d.nom, d.chapitre, d.date_doc, d.resume, {_AUTEUR}
+                FROM documents d JOIN comptes a ON a.id = d.compte_id
+                WHERE {_DOC_PUBLIC} AND d.niveau = %s AND d.matiere = %s AND d.type = %s
+                ORDER BY d.date_doc DESC NULLS LAST, d.id DESC""", (niveau, matiere, type_)).fetchall()
+
+
+def titres_documents_tous(ids: list[int]) -> dict[int, str]:
+    """Titres des cours d'une demande IA, quel que soit le compte (page de l'admin)."""
+    if not ids:
+        return {}
+    with sans_compte(), connect() as c:
+        return {r["id"]: r["titre"] or r["nom"] for r in
+                c.execute("SELECT id, titre, nom FROM documents WHERE id = ANY(%s)", (list(set(ids)),)).fetchall()}

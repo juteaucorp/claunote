@@ -303,7 +303,7 @@
 {% set actus = nb_actualites() if peut('actualites') else 0 %}
 {% set nb_cours = nb_cours_total() if peut('bibliotheque') else 0 %}
 {# Réglages : un seul point d'entrée, la pastille dit s'il y a quelque chose à regarder (alertes, mise à jour, pause) #}
-{% set a_regler = (nb_alertes_securite() + nb_mises_a_jour() + (1 if analyses_en_pause() else 0)) if admin else 0 %}
+{% set a_regler = (nb_alertes_securite() + nb_mises_a_jour() + nb_demandes_ia() + (1 if analyses_en_pause() else 0)) if admin else 0 %}
 {% set plus_n = attente + a_regler %}
 {% macro liens_plus() %}
       {% if peut('deposer') %}<a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer and admin %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>{% endif %}
