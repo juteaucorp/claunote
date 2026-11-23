@@ -568,8 +568,8 @@ def test_easter_egg_vigie(client, monkeypatch):
                                                      "notifier": False, "n": 1, "dernier": MAINTENANT,
                                                      "erreur": None, "echecs": 0, "site": ""}])
     r = client.get("/actualites")
-    assert 'href="/actualites/vigie"' in r.text
-    assert r.text.index('href="/actualites/vigie"') < r.text.index("Tout marquer comme lu")   # à sa gauche
+    assert "a.maj[href='/actualites']" in r.text and 'location.href = "/actualites/vigie"' in r.text   # 10 appuis
+    assert 'href="/actualites/vigie"' not in r.text   # aucun lien visible
     r = client.get("/actualites/vigie")
     assert r.status_code == 200 and 'href="https://vigie.dix-neuf.ovh"' in r.text and "noindex" in r.text
     assert "frame-src 'self' blob:" in r.headers["content-security-policy"]   # pas d'iframe, CSP inchangée
@@ -591,6 +591,11 @@ def test_vigie_debloque_le_style(client):
     r = client.get("/reglages/apparence")
     assert 'data-theme="sombre" data-style="vigie"' in r.text and "/static/logo-vigie.svg" in r.text
     assert 'value="vigie" checked' in r.text and '<meta name="theme-color" content="#232220">' in r.text
+    client.post("/reglages/apparence", data={"mode": "clair", "style": "vigie"})
+    r = client.get("/reglages/apparence")
+    assert 'data-theme="sombre" data-style="vigie"' in r.text and 'value="clair" checked' in r.text   # Vigie : sombre seulement
+    client.post("/reglages/apparence", data={"mode": "clair", "style": "claunote"})
+    assert 'data-theme="clair" data-style="claunote"' in client.get("/reglages").text   # le choix revient
     client.post("/reglages/apparence", data={"mode": "nimporte", "style": "claunote"})
     assert apparence.lire({"id": 1})["mode"] == "auto"
 

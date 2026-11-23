@@ -17,7 +17,7 @@
 <h2 class="titre-groupe">Moi</h2>
 <div class="carte liste-reglages">
   {{ ligne('/compte', 'compte', 'Mon compte', 'Mot de passe par défaut : à changer' if mdp_par_defaut() else 'Mot de passe, Face ID' + (', appareils par Internet' if admin else ''), alerte=mdp_par_defaut()) }}
-  {{ ligne('/reglages/apparence', 'etoile', 'Apparence', {'auto': 'Auto', 'clair': 'Clair', 'sombre': 'Sombre'}[apparence().mode] ~ (' · style Vigie' if apparence().style == 'vigie' else '')) }}
+  {{ ligne('/reglages/apparence', 'etoile', 'Apparence', 'Style Vigie · sombre' if apparence().style == 'vigie' else {'auto': 'Auto', 'clair': 'Clair', 'sombre': 'Sombre'}[apparence().mode]) }}
   {{ ligne('/notifications', 'cloche', 'Notifications', (abonnes ~ ' appareil' ~ ('s' if abonnes > 1 else '') ~ ' abonné' ~ ('s' if abonnes > 1 else '')) if abonnes else 'Aucun appareil abonné') }}
   {{ ligne('/tes-donnees', 'document', 'Mes données', 'Ce qui est gardé, conditions') }}
   {{ ligne('/installer', 'telephone', "Installer sur l'iPhone", "L'appli sur l'écran d'accueil") }}

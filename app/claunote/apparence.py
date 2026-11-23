@@ -1,7 +1,7 @@
 """Apparence de chaque compte : thème (auto, clair, sombre) et style (Claunote, ou Vigie une fois l'easter egg trouvé).
 
-Le style Vigie (hommage à https://vigie.dix-neuf.ovh, l'outil de veille d'un ami d'Anto) ne change que les couleurs
-d'accent, les titres et le logo (toujours le papillon) : le fond reste celui du thème choisi.
+Le style Vigie (débloqué par 10 appuis rapides sur l'onglet Actualités ; hommage à https://vigie.dix-neuf.ovh, l'outil de veille d'un ami d'Anto) ne change que les couleurs
+d'accent, les titres et le logo (toujours le papillon), et il est toujours en sombre (fond sombre de Claunote).
 """
 import json
 
@@ -28,6 +28,7 @@ def lire(compte: dict | None) -> dict:
         p["mode"] = "auto"
     if p["style"] not in STYLES or (p["style"] == "vigie" and not p["vigie"]):
         p["style"] = "claunote"
+    p["theme"] = "sombre" if p["style"] == "vigie" else p["mode"]   # thème affiché ; Vigie : sombre uniquement
     return p
 
 
@@ -40,7 +41,7 @@ def enregistrer(compte: dict, mode: str, style: str) -> dict:
     p["mode"] = mode if mode in MODES else "auto"
     p["style"] = style if style in STYLES and (style != "vigie" or p["vigie"]) else "claunote"
     _ecrire(compte["id"], p)
-    return p
+    return lire(compte)
 
 
 def debloquer_vigie(compte: dict | None) -> bool:
