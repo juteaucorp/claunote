@@ -31,8 +31,12 @@
       <label><input type="checkbox" name="droits" value="{{ d }}" {{ 'checked' if d in droits_invite }}> <span><strong>{{ nom }}</strong><br><span class="doux">{{ aide }}</span></span></label>
       {% endfor %}
     </fieldset>
-    <p class="doux">Un admin a tous les droits, y compris « Tout voir ». Sans le droit « Forfait Claude », le compte
-      n'utilise jamais ton abonnement : seulement les modèles locaux de la VM.</p>
+    <fieldset class="droits"><legend>Forfait Claude (ton abonnement)</legend>
+      {% for f, (nom, aide) in forfaits.items() %}
+      <label><input type="radio" name="forfait" value="{{ f }}" {{ 'checked' if f == forfait_invite }}> <span><strong>{{ nom }}</strong><br><span class="doux">{{ aide }}</span></span></label>
+      {% endfor %}
+    </fieldset>
+    <p class="doux">Un admin a tous les droits, y compris « Tout voir » et le forfait en autonomie.</p>
     <button class="principal">Créer un jeton ({{ duree_min }} min)</button>
   </form>
 </div>
@@ -53,6 +57,12 @@
     <fieldset class="droits" {{ 'disabled' if k.role == 'admin' }}><legend>Droits{% if k.role == 'admin' %} (un admin les a tous){% endif %}</legend>
       {% for d, (nom, aide) in droits.items() %}
       <label><input type="checkbox" name="droits" value="{{ d }}" {{ 'checked' if d in (k.droits or []) or k.role == 'admin' }}> <strong>{{ nom }}</strong></label>
+      {% endfor %}
+    </fieldset>
+    {% set niv = niveau_forfait(k) %}
+    <fieldset class="droits forfait" {{ 'disabled' if k.role == 'admin' }}><legend>Forfait Claude</legend>
+      {% for f, (nom, aide) in forfaits.items() %}
+      <label title="{{ aide }}"><input type="radio" name="forfait" value="{{ f }}" {{ 'checked' if f == niv }}> <strong>{{ nom }}</strong></label>
       {% endfor %}
     </fieldset>
     <p><label><input type="checkbox" name="actif" value="1" {{ 'checked' if k.actif }}> Compte actif (décoché : il ne peut plus se connecter)</label></p>
@@ -102,7 +112,8 @@
   .jeton .lien input { width: 100%; }
   .droits { border: 1px solid var(--bord); border-radius: 12px; padding: 8px 12px; margin: 0 0 12px; display: grid; gap: 8px; }
   .droits label { display: flex; gap: 8px; align-items: flex-start; }
-  .droits input, .compte input[type=checkbox] { width: auto; flex: none; margin-top: 4px; }
+  .droits.forfait { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .droits input, .compte input[type=checkbox], .compte input[type=radio] { width: auto; flex: none; margin-top: 4px; }
   .compte summary { cursor: pointer; line-height: 1.6; }
   .compte form { margin: 12px 0 0; }
   .compte .actions form { margin: 0; }

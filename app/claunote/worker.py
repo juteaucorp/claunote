@@ -1360,7 +1360,9 @@ def revisions_en_attente(kd: KDrive):
             return
         with comptes.pour(campagne.get("compte_id")):
             if not agent.forfait_autorise() and not demandes_ia.accordee(campagne):
-                if demandes_ia.demander("campagnes", campagne):   # compte sans forfait : l'admin dit oui ou non
+                if not comptes.peut_demander_claude(campagne.get("compte_id")):   # forfait « Aucun »
+                    db.maj_campagne(campagne["id"], "erreur", erreur=SANS_FORFAIT)
+                elif demandes_ia.demander("campagnes", campagne):   # compte sans forfait : l'admin dit oui ou non
                     log(f"campagne « {campagne['titre']} » : demande envoyée à l'admin")
                 continue
             log(f"campagne : « {campagne['titre']} »")
@@ -1378,7 +1380,12 @@ def revisions_en_attente(kd: KDrive):
             continue  # création de contenu : elle attend Opus 5.5, le reste du worker continue
         with comptes.pour(rev.get("compte_id")):
             if not agent.forfait_autorise() and not demandes_ia.accordee(rev):
-                if demandes_ia.demander("revisions", rev):   # compte sans forfait : l'admin dit oui ou non
+                if not comptes.peut_demander_claude(rev.get("compte_id")):   # forfait « Aucun »
+                    if rev.get("retouche") and rev.get("contenu"):
+                        db.finir_retouche(rev["id"], erreur=SANS_FORFAIT)
+                    else:
+                        db.maj_revision(rev["id"], "erreur", erreur=SANS_FORFAIT)
+                elif demandes_ia.demander("revisions", rev):   # compte sans forfait : l'admin dit oui ou non
                     log(f"révision « {rev['sujet']} » : demande envoyée à l'admin")
                 continue
             log(f"révision : {rev['genre']} « {rev['sujet']} »")
@@ -1435,8 +1442,8 @@ def referentiels_en_attente():
         log(f"référentiel prêt : {niveau} ({len(ref['matieres'])} matières)")
 
 
-SANS_FORFAIT = ("Ce compte n'utilise pas le forfait Claude de l'admin : les fiches, quiz et programmes demandent "
-                "Claude. Demande à l'admin le droit « Forfait Claude ».")
+SANS_FORFAIT = ("Ce compte n'a pas accès au forfait Claude de l'admin (« Aucun ») : les fiches, quiz et programmes "
+                "demandent Claude. Demande à l'admin l'accès « Sur demande » ou « En autonomie ».")
 
 
 def reclasser_en_attente():

@@ -5,9 +5,8 @@
     chaque requête connectée ──► db.pour_compte(id) : la base ne montre que ses lignes (row-level security)
     admin ──« Tout voir »──────► db.pour_compte(id, tout_voir=True) : toutes les données, de tous les comptes
 
-Droits par fonctionnalité (DROITS) ; l'admin les a tous. Le droit « claude » autorise le forfait Claude de
-l'admin : sans lui, le compte passe par les modèles locaux, et ses fiches, quiz, campagnes attendent l'accord de
-l'admin (demandes_ia.py) avant de partir sur le forfait.
+Droits par fonctionnalité (DROITS) ; l'admin les a tous. Le forfait Claude de l'admin a trois niveaux (FORFAIT) :
+en autonomie (droit « claude »), sur demande (« claude_demande », l'admin dit oui ou non : demandes_ia.py), ou aucun.
 """
 import datetime as dt
 import hashlib
@@ -26,10 +25,23 @@ DROITS = {
     "reviser": ("Réviser", "Fiches, quiz, campagnes, flashcards, questions sur ses cours"),
     "agenda": ("Agenda Pronote", "Voir l'agenda et les notes Pronote de l'environnement"),
     "actualites": ("Actualités", "Lire et régler les actualités partagées"),
-    "claude": ("Forfait Claude de l'admin", "L'IA de Claude sur ton abonnement sans demander ; sinon chaque fiche, "
-                                            "quiz ou campagne attend ton oui (page Demandes IA)"),
+    # Le forfait Claude : un choix à trois niveaux (FORFAIT), pas une case. Gardés ici pour les droits enregistrés.
+    "claude": ("Forfait Claude de l'admin", "En autonomie : l'IA de Claude sur ton abonnement, sans demander"),
+    "claude_demande": ("Forfait Claude sur demande", "Chaque fiche, quiz ou campagne attend ton oui (page Demandes IA)"),
 }
-DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "actualites"]   # cochés par défaut
+# Accès au forfait Claude de l'admin, choisi pour chaque compte (invitation, page Comptes) :
+#   autonomie ──► droit « claude » : Claude travaille pour lui directement
+#   demande   ──► droit « claude_demande » : chaque tâche IA attend le oui de l'admin (demandes_ia.py)
+#   aucun     ──► ni l'un ni l'autre : fiches, quiz, campagnes refusés ; le chat reste sur les modèles locaux
+FORFAIT = {
+    "autonomie": ("En autonomie", "Utilise ton forfait Claude directement, sans te demander."),
+    "demande": ("Sur demande", "Chaque fiche, quiz, campagne ou modification attend ton oui (Réglages › Demandes IA)."),
+    "aucun": ("Aucun", "Pas de fiche, quiz ni campagne par l'IA ; le chat reste sur les modèles locaux de la VM."),
+}
+FORFAIT_DROIT = {"autonomie": "claude", "demande": "claude_demande", "aucun": None}
+DROITS_CASES = [d for d in DROITS if d not in ("claude", "claude_demande")]   # les autres : des cases à cocher
+DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "actualites", "claude_demande"]   # par défaut
+FORFAIT_INVITE = "demande"
 ROLES = {"admin": "Admin", "invite": "Invité"}
 DUREE_JETON = 15 * 60
 CONDITIONS_VERSION = "2026-11-17"    # à changer quand les conditions changent : chacun les accepte de nouveau
@@ -89,6 +101,34 @@ def lit_les_partages(compte: dict | None, chemin: str, methode: str = "GET") -> 
 
 def besoin_claude(chemin: str, methode: str) -> bool:
     return methode == "POST" and bool(CLAUDE_REQUIS.match(chemin))
+
+
+# Créations par l'IA (fiches, quiz, campagnes, modifications) : refusées tout de suite à un compte « Aucun »
+CREATION_IA = re.compile(r"^/(reviser|reviser/lancer|campagne|revision/\d+/(relancer|modifier)|campagne/\d+/relancer)$")
+
+
+def creation_ia(chemin: str, methode: str) -> bool:
+    return methode == "POST" and bool(CREATION_IA.match(chemin))
+
+
+def niveau_forfait(compte: dict | None) -> str:
+    """'autonomie', 'demande' ou 'aucun'."""
+    if est_admin(compte):
+        return "autonomie"
+    droits = (compte or {}).get("droits") or []
+    return "autonomie" if "claude" in droits else "demande" if "claude_demande" in droits else "aucun"
+
+
+def avec_forfait(droits: list[str], niveau: str) -> list[str]:
+    """Les droits cochés, plus celui du niveau de forfait choisi (un seul des deux droits Claude)."""
+    garde = [d for d in droits if d in DROITS and d not in ("claude", "claude_demande")]
+    droit = FORFAIT_DROIT.get(niveau if niveau in FORFAIT else FORFAIT_INVITE)
+    return garde + ([droit] if droit else [])
+
+
+def peut_demander_claude(compte_id: int | None) -> bool:
+    """Ce compte peut-il soumettre une tâche IA à l'accord de l'admin ?"""
+    return compte_id is None or niveau_forfait(trouver(compte_id)) != "aucun"
 
 
 def est_admin(compte: dict | None) -> bool:
@@ -155,6 +195,7 @@ def pour(compte_id: int | None, tout_voir: bool = False):
 
 def migrer():
     """Le compte 1 (admin) reprend l'identifiant et le mot de passe d'avant (page Compte, sinon .env)."""
+    migrer_forfait()
     admin = db.compte(1)
     if admin is None or admin.get("hash"):
         return
@@ -168,6 +209,18 @@ def migrer():
     db.maj_compte(1, hash=hache, mdp_defaut=defaut, role="admin", actif=True,
                   conditions_version=CONDITIONS_VERSION, conditions_le=dt.datetime.now(dt.timezone.utc))
     oublier(1)
+
+
+def migrer_forfait():
+    """Une seule fois : les invités sans forfait passaient déjà par les demandes (#88) → « Sur demande »."""
+    if db.etat_valeur("forfait_niveaux") == "fait":
+        return
+    for k in db.comptes():
+        droits = list(k.get("droits") or [])
+        if k["role"] != "admin" and "claude" not in droits and "claude_demande" not in droits:
+            db.maj_compte(k["id"], droits=droits + ["claude_demande"])
+    db.etat_ecrire("forfait_niveaux", "fait")
+    oublier()
 
 
 # --- Jetons d'invitation et de nouveau mot de passe ------------------------------------

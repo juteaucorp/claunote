@@ -1030,9 +1030,22 @@ def test_les_fiches_attendent_opus(worker, monkeypatch):
 
 # --- Comptes : le travail de chacun, avec ou sans le forfait Claude de l'admin ------------------------
 
-def _invite(faux_comptes, claude: bool):
-    i = faux_comptes.creer_compte("camille", "h", "invite", ["bibliotheque", "deposer"] + (["claude"] if claude else []))
-    return i
+def _invite(faux_comptes, claude: bool, demande: bool = True):
+    forfait = ["claude"] if claude else ["claude_demande"] if demande else []
+    return faux_comptes.creer_compte("camille", "h", "invite", ["bibliotheque", "deposer"] + forfait)
+
+
+def test_revision_d_un_invite_sans_aucun_forfait(worker, monkeypatch, faux_comptes):
+    invite = _invite(faux_comptes, claude=False, demande=False)
+    fait = []
+    monkeypatch.setattr(worker.db, "campagnes_en_attente", lambda: [])
+    monkeypatch.setattr(worker.db, "revisions_en_attente", lambda: [
+        {"id": 5, "genre": "fiche", "sujet": "VLAN", "compte_id": invite}])
+    monkeypatch.setattr(worker.db, "maj_revision", lambda i, statut, **k: fait.append((i, statut, k.get("erreur"))))
+    monkeypatch.setattr(worker.db, "mettre_en_demande", lambda table, i: fait.append("demande") or True)
+    monkeypatch.setattr(worker, "traiter_revision", lambda kd, rev: fait.append("claude appelé"))
+    worker.revisions_en_attente(FauxKD({}))
+    assert fait == [(5, "erreur", worker.SANS_FORFAIT)]   # « Aucun » : ni Claude, ni demande à l'admin
 
 
 def test_fichier_d_un_invite_sans_forfait_lu_en_local(worker, monkeypatch, faux_comptes):
