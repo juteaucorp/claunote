@@ -26,14 +26,14 @@
 <div class="grille">
   {% for matiere, types in arbre[niveau].items() %}
   <div class="carte">
-    <div class="tete-matiere"><strong>{{ matiere }}</strong>
-    {% if partage %}{% set pub = (niveau, matiere) in publiques %}
-    <form method="post" action="/bibliotheque/visibilite"><input type="hidden" name="niveau" value="{{ niveau }}"><input type="hidden" name="matiere" value="{{ matiere }}">
-      <button name="valeur" value="{{ 'prive' if pub else 'public' }}" class="pastille-vis {{ 'publique' if pub }}" title="{{ 'Publique : les autres comptes lisent ses cours (sans les modifier). Cliquer pour la rendre privée.' if pub else 'Privée : toi seul. Cliquer pour la rendre publique : les autres comptes liront ses cours, sans les modifier.' }}" aria-label="{{ 'Matière publique, rendre privée' if pub else 'Matière privée, rendre publique' }}">{{ '🌐 Publique' if pub else '🔒 Privée' }}</button></form>{% endif %}</div>
+    <div class="tete-matiere"><strong>{{ matiere }}</strong></div>
     <div class="pastilles">
       {% for t in types %}
       <a href="/liste?niveau={{ niveau|urlencode }}&matiere={{ matiere|urlencode }}&type={{ t.type|urlencode }}">{{ t.type }} · {{ t.n }}</a>
       {% endfor %}
+    {% if partage %}{% set pub = (niveau, matiere) in publiques %}
+    <form method="post" action="/bibliotheque/visibilite" class="vis-matiere"><input type="hidden" name="niveau" value="{{ niveau }}"><input type="hidden" name="matiere" value="{{ matiere }}">
+      <button name="valeur" value="{{ 'prive' if pub else 'public' }}" class="pastille-vis {{ 'publique' if pub }}" title="{{ 'Publique : les autres comptes lisent ses cours (sans les modifier). Cliquer pour la rendre privée.' if pub else 'Privée : toi seul. Cliquer pour la rendre publique : les autres comptes liront ses cours, sans les modifier.' }}" aria-label="{{ 'Matière publique, rendre privée' if pub else 'Matière privée, rendre publique' }}">{{ '🌐 Publique' if pub else '🔒 Privée' }}</button></form>{% endif %}
     </div>
   </div>
   {% endfor %}
@@ -64,8 +64,13 @@
   .carte-partagee { border-style: dashed; }
   .petit-texte { font-size: .8rem; }
   .ligne-alerte { display: block; padding: 10px 16px; color: inherit; text-decoration: none; }
-  .tete-matiere { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .tete-matiere form { margin: 0; }
+  .tete-matiere { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .tete-matiere strong { min-width: 0; overflow-wrap: anywhere; }
+  /* Public ou privé : en bas à droite de la carte, sur la ligne des types. Le nom de la matière garde toute la
+     largeur (grille à 3-4 colonnes sur PC : la pastille ne le coupe plus en colonne étroite ni ne flotte au milieu) */
+  .grille > .carte { display: flex; flex-direction: column; }
+  .carte > .pastilles { display: flex; flex-wrap: wrap; align-items: center; margin-top: auto; }
+  .vis-matiere { margin: 6px 0 0 auto; }
   .pastille-vis { display: inline-block; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--bord); background: var(--fond-doux);
                   color: var(--doux); font-size: .8rem; font-weight: 500; white-space: nowrap; }
   button.pastille-vis:hover { border-color: var(--accent); color: var(--accent-fonce); }
