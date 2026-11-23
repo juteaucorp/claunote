@@ -48,6 +48,7 @@ TYPES = {
     "connexion_echec": ("attention", "Mot de passe refusé"),
     "faceid_echec": ("attention", "Face ID refusé"),
     "code_echec": ("attention", "Code d'appareil refusé"),
+    "captcha": ("attention", "Captcha Turnstile refusé"),
     "code_cree": ("info", "Code d'appareil créé"),
     "appareil_ajoute": ("alerte", "Nouvel appareil approuvé"),
     "appareil_retire": ("attention", "Appareil retiré"),

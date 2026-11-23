@@ -200,6 +200,20 @@ Ces réglages arrêtent les attaques **avant** qu'elles n'arrivent chez toi :
 | 8 | **Mon profil → Authentification** | **2FA activée sur ton compte Cloudflare** : c'est la clé de tout le reste |
 | 9 | **Zero Trust → Réseaux → Tunnels** | ne partage jamais le jeton du tunnel ; s'il fuit : **Actualiser le jeton**, puis mets le nouveau dans `.env` |
 
+### Étape 10. Captcha Turnstile *(facultatif, gratuit, 5 minutes)*
+
+Une vérification « je ne suis pas un robot » (le plus souvent **invisible**) sur la **connexion**, le **code
+d'appareil** et l'**invitation**, **par Internet seulement** : par le VPN, rien ne change.
+
+1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Turnstile** → **Ajouter un widget**.
+2. Nom : `Claunote`. **Nom d'hôte** : **exactement celui du tunnel**, par exemple **`claunote.ton-domaine.fr`**
+   (pas l'adresse du VPN, pas une IP). Mode : **Géré**. « Pré-autorisation » : **non**.
+3. Copie la **clé du site** et la **clé secrète** dans **Réglages → Installation → Accès par Internet**, puis
+   **Tester la clé secrète** et **Enregistrer**. La clé secrète est chiffrée comme les autres jetons.
+4. Pour l'éteindre : vide la clé du site.
+
+> Si tu es bloqué par Internet (Cloudflare refuse le captcha), passe par le **VPN** : il n'y a jamais de captcha.
+
 > ❗ **Pas de « Cloudflare Access » ni de WARP** devant le site : l'appli iPhone ne s'en sort pas (voir plus haut).
 
 ---
@@ -232,6 +246,7 @@ protège déjà l'adresse.
 | « accès refusé (adresse bloquée) » | 20 échecs en 24 h ou 100 requêtes en 10 min sans appareil approuvé | par le VPN : **Réglages → Sécurité → Lever les blocages** |
 | « accès refusé (pays non autorisé) » | pays hors de `CLAUNOTE_PAYS` | à l'étranger : `CLAUNOTE_PAYS=FR,XX` dans `.env`, puis `docker compose up -d web` |
 | Alerte « faux en-têtes Cloudflare » | cloudflared lancé hors de ce docker-compose | `CLAUNOTE_CLOUDFLARED=<son adresse>` dans `.env` ; sinon, une machine du réseau triche |
+| « Vérification anti-robot… » refusée | nom d'hôte du widget Turnstile ≠ adresse du tunnel, ou clés inversées | Turnstile → ton widget → **Noms d'hôte** ; sinon vide la clé du site par le VPN |
 | `cloudflared` ne démarre pas | `COMPOSE_PROFILES=tunnel` absent du `.env` | ajoute la ligne, puis `docker compose up -d` |
 
 ---
