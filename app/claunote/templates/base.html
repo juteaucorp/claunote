@@ -447,6 +447,11 @@
         const type = r.headers.get("content-type") || "";
         if (!r.ok || r.redirected || !type.startsWith("text/html")) throw new Error(r.status);
         const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+        // Apparence changée sur un autre appareil (elle est enregistrée sur le compte) : on la reprend
+        const h = doc.documentElement, ici = document.documentElement;
+        if ((h.dataset.theme !== ici.dataset.theme || h.dataset.style !== ici.dataset.style) && !modifie(document.body)) {
+          location.reload(); return;
+        }
         document.querySelectorAll(".maj[id]").forEach((el) => {
           const neuf = doc.getElementById(el.id);
           if (neuf && neuf.outerHTML !== el.outerHTML) { el.replaceWith(neuf); if (window.htmx) htmx.process(neuf); }

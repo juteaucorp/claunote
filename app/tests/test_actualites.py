@@ -608,3 +608,13 @@ def test_logo_vigie_garde_le_papillon():
     statique = pathlib.Path(main.__file__).parent / "static"
     papillon = lambda f: [l for l in (statique / f).read_text().splitlines() if "<path" in l][0].split(' d="')[1]
     assert papillon("logo.svg") == papillon("logo-vigie.svg")
+
+
+def test_apparence_suit_le_compte_sur_tous_les_appareils(client, anonyme):
+    from fastapi.testclient import TestClient
+    client.post("/reglages/apparence", data={"mode": "sombre", "style": "claunote"})
+    autre = TestClient(main.app)   # un deuxième appareil, même compte
+    autre.post("/connexion", data={"utilisateur": "admin", "mot_de_passe": "claunote"})
+    r = autre.get("/reglages")
+    assert 'data-theme="sombre"' in r.text   # enregistré sur le compte, pas dans le navigateur
+    assert "h.dataset.theme !== ici.dataset.theme" in r.text   # reprise sans recharger à la main
