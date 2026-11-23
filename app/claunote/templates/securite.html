@@ -60,7 +60,9 @@
     <div class="tuile"><strong>{{ r.requetes_24h }}</strong><span>requête{{ 's' if r.requetes_24h > 1 }} en 24 h</span></div>
     <div class="tuile {{ 'rouge' if r.fenetre >= cf_seuil }}"><strong>{{ r.fenetre }}</strong><span>événement{{ 's' if r.fenetre > 1 }} en 15 min</span></div>
   </div>
-  {% if r.regles %}
+  {% if r.manques %}<p class="doux">Pas disponible avec ton offre Cloudflare : {{ r.manques|join(' ; ') }}.</p>{% endif %}
+  {% if r.echantillon %}<p class="doux">Comptes sur un échantillon (offre gratuite) : au moins ces nombres.</p>{% endif %}
+  {% if r.sans_evenements %}{% elif r.regles %}
   <table class="cf">
     <thead><tr><th>Règle</th><th>Action</th><th>24 h</th></tr></thead>
     <tbody>{% for g in r.regles[:10] %}<tr><td>{{ g.source }}{% if g.regle %}<br><span class="doux">{{ g.regle }}</span>{% endif %}</td><td>{{ g.action }}</td><td>{{ g.n }}</td></tr>{% endfor %}</tbody>

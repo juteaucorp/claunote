@@ -238,6 +238,11 @@ dépassent **5 fois l'habitude (au moins 60)**, une seule fois par vague. Deux p
 6. **Réglages → Installation → Accès par Internet** → colle le jeton et les identifiants → **Tester la supervision**
    → **Enregistrer**. Le jeton est chiffré comme les autres.
 
+> Offre gratuite : certains jeux de données de l'API sont fermés (« does not have access to the path »). Ce n'est
+> **pas** un problème de jeton : Claunote lit chaque jeu à part, se rabat sur les événements un par un
+> (échantillon) si les totaux sont fermés, et affiche « pas disponible avec ton offre » pour le reste.
+> Filtre d'adresses IP sur le jeton : mets l'**adresse publique de la VM** (c'est elle qui appelle Cloudflare).
+
 > Le jeton ne peut **rien modifier** chez Cloudflare. S'il fuit : **Jetons API → Rouler** (ou supprimer), puis colle
 > le nouveau. Offre gratuite : événements gardés 31 jours ; Claunote n'affiche que les dernières 24 h.
 
