@@ -3206,8 +3206,10 @@ def page_vigie(request: Request):
     Pas d'iframe : Vigie demande une connexion et la CSP (frame-src 'self') reste fermée ; une carte et un lien.
     La trouver débloque le style Vigie dans Réglages → Apparence."""
     nouveau = apparence.debloquer_vigie(moi())
-    return templates.TemplateResponse(request, "vigie.html", {"url": VIGIE_URL, "nouveau": nouveau,
-                                                              "style": apparence.lire(moi())["style"]})
+    ap = apparence.lire(moi())
+    return templates.TemplateResponse(request, "vigie.html", {   # la page cachée est toujours en Vigie sombre (aperçu)
+        "url": VIGIE_URL, "nouveau": nouveau, "style": ap["style"],
+        "apparence_forcee": {**ap, "style": "vigie", "theme": "sombre"}})
 
 
 VIGIE_URL = "https://vigie.dix-neuf.ovh"

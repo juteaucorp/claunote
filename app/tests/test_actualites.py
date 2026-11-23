@@ -584,6 +584,7 @@ def test_vigie_debloque_le_style(client):
     assert 'data-theme="sombre" data-style="claunote"' in r.text   # Vigie refusé tant que l'easter egg n'est pas trouvé
     r = client.get("/actualites/vigie")
     assert "Style Vigie débloqué" in r.text and "Appliquer le style Vigie" in r.text
+    assert 'data-theme="sombre" data-style="vigie"' in r.text   # la page cachée est déjà en Vigie sombre
     assert "Style Vigie débloqué" not in client.get("/actualites/vigie").text   # une seule fois
     r = client.post("/reglages/apparence", data={"mode": "sombre", "style": "vigie", "suite": "/actualites/vigie"},
                     follow_redirects=False)
