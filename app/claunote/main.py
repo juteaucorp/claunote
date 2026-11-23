@@ -100,7 +100,8 @@ async def _servir_compte(request: Request, call_next, compte: dict, droit: str |
     texte = f"Ton compte n'a pas le droit « {comptes.DROITS[droit][0]} »." if droit in comptes.DROITS \
         else "Réservé à l'admin."
     if request.method != "GET" and droit == "claude":
-        texte += " Les fiches, quiz et programmes demandent Claude : vois avec l'admin."
+        texte = ("Ton compte n'a pas accès au forfait Claude de l'admin : les fiches, quiz et programmes demandent "
+                 "Claude. Vois avec l'admin.")
     if request.headers.get("HX-Request") or request.method != "GET":
         return Response(texte, status_code=403)
     return templates.TemplateResponse(request, "refuse.html", {"droit": comptes.DROITS.get(droit)}, status_code=403)
@@ -120,8 +121,9 @@ async def exiger_connexion(request: Request, call_next):
         if chemin == "/" and comptes.est_admin(compte) and installation.a_faire():
             return RedirectResponse("/installation", status_code=303)   # installation neuve : l'assistant d'abord
         droit = comptes.droit_requis(chemin, request.method)
-        if comptes.peut(compte, droit) and comptes.besoin_claude(chemin, request.method):
-            droit = "claude"
+        if comptes.peut(compte, droit) and (comptes.besoin_claude(chemin, request.method) or (
+                comptes.creation_ia(chemin, request.method) and comptes.niveau_forfait(compte) == "aucun")):
+            droit = "claude"   # refusé : pas de forfait en autonomie (ou « Aucun » pour une fiche, un quiz…)
         jeton = _moi.set(compte)
         # La base ne montre que les données de ce compte (« Tout voir » : l'admin voit tout), refus compris
         try:
@@ -941,8 +943,9 @@ async def installation_enregistrer(request: Request, etape: str):
 
 def _page_comptes(request: Request, statut: int = 200, **plus):
     return templates.TemplateResponse(request, "comptes.html", {
-        "comptes": db.comptes(), "invitations": db.invitations_recentes(15), "droits": comptes.DROITS,
-        "droits_invite": comptes.DROITS_INVITE, "roles": comptes.ROLES, "duree_min": comptes.DUREE_JETON // 60,
+        "comptes": db.comptes(), "invitations": db.invitations_recentes(15), "droits": {d: comptes.DROITS[d] for d in comptes.DROITS_CASES},
+        "droits_invite": comptes.DROITS_INVITE, "forfaits": comptes.FORFAIT, "forfait_invite": comptes.FORFAIT_INVITE,
+        "niveau_forfait": comptes.niveau_forfait, "roles": comptes.ROLES, "duree_min": comptes.DUREE_JETON // 60,
         "maintenant": dt.datetime.now(dt.timezone.utc), "disque": disque.etat(), **plus}, status_code=statut)
 
 
@@ -956,8 +959,9 @@ def page_comptes(request: Request, message: str = ""):
 
 
 @app.post("/comptes/inviter", response_class=HTMLResponse)
-def inviter(request: Request, role: str = Form("invite"), droits: list[str] = Form([]), note: str = Form("")):
-    jeton, fin = comptes.inviter(moi()["id"], role, droits, note)
+def inviter(request: Request, role: str = Form("invite"), droits: list[str] = Form([]), note: str = Form(""),
+            forfait: str = Form(comptes.FORFAIT_INVITE)):
+    jeton, fin = comptes.inviter(moi()["id"], role, comptes.avec_forfait(droits, forfait), note)
     securite.noter("invitation", request, f"jeton créé ({comptes.ROLES.get(role, role)}, valable "
                    f"{comptes.DUREE_JETON // 60} min){' : ' + note.strip()[:60] if note.strip() else ''}")
     return _page_comptes(request, jeton={"valeur": jeton, "lien": _lien_jeton(request, jeton), "fin": fin,
@@ -977,7 +981,8 @@ def _retour_comptes(message: str) -> RedirectResponse:
 
 @app.post("/comptes/{compte_id}/modifier", response_class=HTMLResponse)
 def modifier_compte(request: Request, compte_id: int, role: str = Form("invite"), droits: list[str] = Form([]),
-                    actif: str = Form(""), expire_le: str = Form(""), nom: str = Form("")):
+                    actif: str = Form(""), expire_le: str = Form(""), nom: str = Form(""),
+                    forfait: str = Form(comptes.FORFAIT_INVITE)):
     cible = _cible(compte_id)
     role = role if role in comptes.ROLES else "invite"
     actif_ = actif == "1"
@@ -991,7 +996,7 @@ def modifier_compte(request: Request, compte_id: int, role: str = Form("invite")
         fin = dt.datetime.combine(dt.date.fromisoformat(expire_le), dt.time(23, 59), pronote.PARIS) if expire_le else None
     except ValueError:
         return _page_comptes(request, 400, erreur="Date de fin d'accès illisible.")
-    droits_ = [d for d in droits if d in comptes.DROITS]
+    droits_ = comptes.avec_forfait(droits, forfait)
     db.maj_compte(compte_id, role=role, droits=droits_, actif=actif_, expire_le=fin, nom=nom.strip()[:60] or None,
                   **({"tout_voir": False} if role != "admin" else {}))
     if not actif_:

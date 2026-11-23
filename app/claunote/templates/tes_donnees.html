@@ -56,7 +56,9 @@
 </ul>
 {% if compte %}<p class="carte accent">Ton compte <strong>@{{ compte.identifiant }}</strong> :
   {% if compte.role == 'admin' %}admin (tous les droits).{% elif 'claude' in (compte.droits or []) %}utilise le forfait
-  Claude de l'admin : tes documents peuvent être envoyés à Anthropic.{% else %}n'utilise pas Claude : tes documents sont
+  Claude de l'admin : tes documents peuvent être envoyés à Anthropic.{% elif 'claude_demande' in (compte.droits or []) %}utilise
+  le forfait Claude de l'admin <strong>sur demande</strong> : tes documents ne sont envoyés à Anthropic que pour une demande
+  que l'admin a acceptée.{% else %}n'utilise pas Claude : tes documents sont
   lus sur la machine de l'admin, rien n'est envoyé à Anthropic.{% endif %}</p>{% endif %}
 
 <h2>Combien de temps</h2>

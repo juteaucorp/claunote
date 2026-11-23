@@ -55,7 +55,7 @@ def test_invitation_cree_un_compte_une_seule_fois(client, faux_comptes):
     invite, r = _creer(jeton)
     assert r.status_code == 303                                      # connecté tout de suite
     k = db.compte_par_identifiant("camille")
-    assert k["role"] == "invite" and k["droits"] == ["bibliotheque", "reviser"]
+    assert k["role"] == "invite" and k["droits"] == ["bibliotheque", "reviser", "claude_demande"]   # « Sur demande »
     assert k["conditions_version"] == comptes.CONDITIONS_VERSION    # consentement enregistré
     assert invite.get("/bibliotheque").status_code == 200
     _, r = _creer(jeton, "dominique")                                 # jeton déjà utilisé
@@ -271,3 +271,41 @@ def test_demander_l_acces_a_tous_les_cours(client, monkeypatch):
     client.post("/demandes/acces/2", data={"reponse": "oui"})
     client.post("/demandes/acces/2", data={"reponse": "retirer"})
     assert decisions == [(2, "accorde"), (2, None)] and notifs[-1][0] == 2
+
+
+def test_forfait_claude_a_trois_niveaux(client, monkeypatch):
+    assert comptes.avec_forfait(["reviser", "claude"], "demande") == ["reviser", "claude_demande"]
+    assert comptes.avec_forfait(["reviser"], "autonomie") == ["reviser", "claude"]
+    assert comptes.avec_forfait(["reviser", "claude_demande"], "aucun") == ["reviser"]
+    assert comptes.niveau_forfait({"role": "admin", "droits": []}) == "autonomie"
+    assert comptes.niveau_forfait({"role": "invite", "droits": ["claude_demande"]}) == "demande"
+    assert comptes.niveau_forfait({"role": "invite", "droits": []}) == "aucun"
+    page = client.get("/comptes").text
+    assert "En autonomie" in page and "Sur demande" in page and 'name="forfait"' in page
+    assert 'value="claude"' not in page and 'value="claude_demande"' not in page   # plus des cases à cocher
+    client.post("/comptes/inviter", data={"role": "invite", "droits": ["bibliotheque", "reviser"], "forfait": "aucun"})
+    invite, _ = _creer(_inviter(client, ["bibliotheque", "reviser"]), "dominique")
+    k = db.compte_par_identifiant("dominique")
+    client.post(f"/comptes/{k['id']}/modifier", data={"role": "invite", "droits": ["bibliotheque", "reviser"],
+                                                      "actif": "1", "forfait": "aucun"})
+    assert db.compte_par_identifiant("dominique")["droits"] == ["bibliotheque", "reviser"]
+    comptes.oublier()
+    r = invite.post("/reviser", data={"genre": "fiche", "niveau_matiere": "BTS1|Réseaux"})
+    assert r.status_code == 403 and "forfait Claude" in r.text                      # « Aucun » : refusé tout de suite
+    client.post(f"/comptes/{k['id']}/modifier", data={"role": "invite", "droits": ["bibliotheque", "reviser"],
+                                                      "actif": "1", "forfait": "autonomie"})
+    assert db.compte_par_identifiant("dominique")["droits"] == ["bibliotheque", "reviser", "claude"]
+
+
+def test_migration_invites_sur_demande(faux_comptes, monkeypatch):
+    etat = {}
+    monkeypatch.setattr(db, "etat_valeur", lambda cle: etat.get(cle))
+    monkeypatch.setattr(db, "etat_ecrire", lambda cle, v: etat.__setitem__(cle, v))
+    a = faux_comptes.creer_compte("camille", "h", "invite", ["reviser"])
+    b = faux_comptes.creer_compte("dominique", "h", "invite", ["reviser", "claude"])
+    comptes.migrer_forfait()
+    assert faux_comptes.comptes[a]["droits"] == ["reviser", "claude_demande"]
+    assert faux_comptes.comptes[b]["droits"] == ["reviser", "claude"] and faux_comptes.comptes[1]["droits"] == []
+    faux_comptes.comptes[a]["droits"] = ["reviser"]                 # l'admin choisit « Aucun » ensuite
+    comptes.migrer_forfait()                                         # une seule fois : son choix reste
+    assert faux_comptes.comptes[a]["droits"] == ["reviser"]
