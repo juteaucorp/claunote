@@ -1,13 +1,16 @@
 <!doctype html>
-<html lang="fr">
+{% set ap = apparence_forcee or apparence() %}
+<html lang="fr" data-theme="{{ ap.theme }}" data-style="{{ ap.style }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{% block titre %}Claunote{% endblock %} · Claunote</title>
-<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<link rel="icon" href="/static/{{ 'logo-vigie.svg' if ap.style == 'vigie' else 'logo.svg' }}" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#232220" media="(prefers-color-scheme: dark)">
+{% if ap.theme == 'clair' %}<meta name="theme-color" content="#faf9f5">
+{% elif ap.theme == 'sombre' %}<meta name="theme-color" content="#232220">
+{% else %}<meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#232220" media="(prefers-color-scheme: dark)">{% endif %}
 <link rel="apple-touch-icon" href="/static/icone-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -60,8 +63,8 @@
     --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(217, 119, 87, .16), transparent 60%),
       radial-gradient(90% 50% at 0% 100%, rgba(240, 190, 140, .18), transparent 60%);
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
+  /* Sombre : celui de l'appareil (Auto) sauf si « Clair » est choisi dans Réglages → Apparence, ou « Sombre » choisi */
+  {% set sombre %}
       --fond: #1c1b1a; --fond-doux: #232220; --carte: #262523; --texte: #eeebe4; --doux: #a7a299;
       --bord: #38362f; --accent: #e08a6d; --accent-fonce: #f0a487; --accent-pale: #3a2a23;
       --alerte: #f0a487; --ok: #7cc28d; --ombre: none;
@@ -70,8 +73,11 @@
       --verre-ombre: 0 8px 32px rgba(0, 0, 0, .45); --entete: rgba(35, 34, 32, .82);
       --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(224, 138, 109, .14), transparent 60%),
         radial-gradient(90% 50% at 0% 100%, rgba(160, 90, 60, .12), transparent 60%);
-    }
-  }
+  {% endset %}
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="clair"]) { {{ sombre }} } }
+  :root[data-theme="sombre"] { {{ sombre }} }
+  :root[data-theme="clair"] { color-scheme: light; } :root[data-theme="sombre"] { color-scheme: dark; }
+{% include "_style_vigie.html" %}
   * { box-sizing: border-box; }
   html { background: var(--fond-doux); overscroll-behavior-y: none; }  /* l'en-tête ne descend plus quand on tire la page */
   body { margin: 0; font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texte); min-height: 100vh;
@@ -218,12 +224,13 @@
   blockquote.encadre { --e: var(--accent); margin: 14px 0; padding: 10px 14px; border-left: 4px solid var(--e); border-radius: 0 12px 12px 0; background: color-mix(in srgb, var(--e) 9%, transparent); }
   blockquote.encadre > :first-child { margin-top: 0; } blockquote.encadre > :last-child { margin-bottom: 0; }
   blockquote.encadre > p:first-child > strong:first-child { color: var(--e); }
-  .e-attention { --e: #c0392b !important; } .e-exemple { --e: #3b6fb6 !important; } .e-methode { --e: #3f8a57 !important; } .e-definition { --e: #8a4fb8 !important; }
+  .e-attention { --e: var(--e-attention, #c0392b) !important; } .e-exemple { --e: var(--e-exemple, #3b6fb6) !important; } .e-methode { --e: var(--e-methode, #3f8a57) !important; } .e-definition { --e: var(--e-definition, #8a4fb8) !important; }
   /* Ajouts de l'IA hors des cours de l'élève (Réviser, mode par défaut) : pointillés ambrés */
-  .e-ia { --e: #a0701c !important; border-left-style: dashed; }
-  .ajout-ia { display: inline-block; font: 600 .72rem system-ui, sans-serif; padding: 0 7px; border: 1px dashed #a0701c; border-radius: 999px; color: #8a5f14; background: color-mix(in srgb, #a0701c 8%, transparent); white-space: nowrap; vertical-align: .1em; }
-  @media (prefers-color-scheme: dark) { .e-ia { --e: #e0b55c !important; } .ajout-ia { color: #e0b55c; border-color: #e0b55c; } }
-  @media (prefers-color-scheme: dark) { .e-attention { --e: #f08a7c !important; } .e-exemple { --e: #8db4ec !important; } .e-methode { --e: #86cf9c !important; } .e-definition { --e: #c9a0ec !important; } }
+  .e-ia { --e: var(--e-ia, #a0701c) !important; border-left-style: dashed; }
+  .ajout-ia { display: inline-block; font: 600 .72rem system-ui, sans-serif; padding: 0 7px; border: 1px dashed var(--e-ia, #a0701c); border-radius: 999px; color: var(--e-ia, #8a5f14); background: color-mix(in srgb, #a0701c 8%, transparent); white-space: nowrap; vertical-align: .1em; }
+  {% set encadres_sombres %}--e-ia: #e0b55c; --e-attention: #f08a7c; --e-exemple: #8db4ec; --e-methode: #86cf9c; --e-definition: #c9a0ec;{% endset %}
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="clair"]) { {{ encadres_sombres }} } }
+  :root[data-theme="sombre"] { {{ encadres_sombres }} }
   iframe { width: 100%; height: 72vh; border: 1px solid var(--bord); border-radius: 12px; background: #fff; }
   b { background: var(--accent-pale); color: inherit; border-radius: 3px; padding: 0 2px; }
   #retour-scan:empty { display: none; }
@@ -318,7 +325,7 @@
 {% endmacro %}
 <header>
   <div class="barre">
-    <a class="marque" href="/"><img src="/static/logo.svg" alt="">Claunote</a>
+    <a class="marque" href="/"><img src="/static/{{ 'logo-vigie.svg' if ap.style == 'vigie' else 'logo.svg' }}" alt="">Claunote</a>
     <nav class="haut" aria-label="Menu">
       {% if peut('actualites') %}<a href="/actualites" id="maj-h-actus" class="maj {{ 'actif' if rubrique == 'actualites' }}">Actualités{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
       {% if peut('bibliotheque') %}<a href="/bibliotheque" id="maj-h-cours" class="maj {{ 'actif' if rubrique == 'cours' }}" title="{{ nb_cours }} cours classés">Cours{% if nb_cours %}<span class="compteur">{{ nb_cours }}</span>{% endif %}</a>{% endif %}
@@ -401,6 +408,21 @@
     sw.postMessage({ precharger: a.href });
   };
   document.addEventListener("touchstart", precharger, { passive: true });
+  // Easter egg : 10 appuis rapides sur l'onglet Actualités (en-tête ou barre du bas) → page cachée de Vigie.
+  // Le compte survit au premier chargement de la page (sessionStorage) ; déjà sur Actualités, un appui
+  // remonte en haut au lieu de recharger, pour pouvoir enchaîner.
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest("a.maj[href='/actualites']");
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    let n = 0, t = Date.now();
+    try {
+      const avant = JSON.parse(sessionStorage.getItem("claunote-oeuf") || "{}");
+      n = t - (avant.t || 0) < 1500 ? (avant.n || 0) + 1 : 1;
+      sessionStorage.setItem("claunote-oeuf", JSON.stringify({ n: n >= 10 ? 0 : n, t }));
+    } catch (_) { return; }
+    if (n >= 10) { e.preventDefault(); location.href = "/actualites/vigie"; return; }
+    if (location.pathname === "/actualites") { e.preventDefault(); scrollTo({ top: 0, behavior: "smooth" }); }
+  });
   document.addEventListener("mousedown", precharger);
   {% if not sans_nav %}
   // Rafraîchissement invisible : toutes les 20 s quand la page est à l'écran, et dès le retour

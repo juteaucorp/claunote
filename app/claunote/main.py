@@ -27,7 +27,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
-from claunote import (actualites, agent, anki, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande, demandes_ia,
+from claunote import (actualites, agent, anki, apparence, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local, turnstile)
@@ -343,6 +343,7 @@ templates.env.globals["turnstile_requis"] = turnstile.requis   # captcha par Int
 templates.env.globals["turnstile_cle"] = turnstile.cle_site
 templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_defaut"))
 templates.env.globals["moi"] = moi
+templates.env.globals["apparence"] = lambda: apparence.lire(moi())   # thème et style du compte (base.html)
 templates.env.globals["peut"] = lambda droit: comptes.peut(moi(), droit)
 # Boutons Public / Privé : seulement s'il y a d'autres comptes, et sur ses propres éléments
 templates.env.globals["partage_possible"] = lambda: bool(moi()) and db.plusieurs_comptes()
@@ -1351,6 +1352,21 @@ def _sans_erreur(f, defaut=None):
         return f()
     except Exception:
         return defaut
+
+
+@app.get("/reglages/apparence", response_class=HTMLResponse)
+def page_apparence(request: Request, message: str = ""):
+    return templates.TemplateResponse(request, "apparence.html", {
+        "ap": apparence.lire(moi()), "modes": apparence.MODES, "styles": apparence.STYLES, "message": message})
+
+
+@app.post("/reglages/apparence")
+def enregistrer_apparence(mode: str = Form("auto"), style: str = Form("claunote"), suite: str = Form("")):
+    if moi():
+        apparence.enregistrer(moi(), mode, style)
+    if suite == "/actualites/vigie":
+        return RedirectResponse(suite, status_code=303)
+    return RedirectResponse("/reglages/apparence?message=" + quote("Apparence enregistrée."), status_code=303)
 
 
 @app.get("/reglages", response_class=HTMLResponse)
@@ -3182,6 +3198,21 @@ def actualite_lue(article_id: int):
     db.article_maj(article_id, lu=True)
     actualites.noter_lecture()
     return {"ok": True}
+
+
+@app.get("/actualites/vigie", response_class=HTMLResponse)
+def page_vigie(request: Request):
+    """Page cachée (easter egg : 10 appuis rapides sur l'onglet Actualités, voir base.html) : Vigie, l'outil de veille d'un ami d'Anto.
+    Pas d'iframe : Vigie demande une connexion et la CSP (frame-src 'self') reste fermée ; une carte et un lien.
+    La trouver débloque le style Vigie dans Réglages → Apparence."""
+    nouveau = apparence.debloquer_vigie(moi())
+    ap = apparence.lire(moi())
+    return templates.TemplateResponse(request, "vigie.html", {   # la page cachée est toujours en Vigie sombre (aperçu)
+        "url": VIGIE_URL, "nouveau": nouveau, "style": ap["style"],
+        "apparence_forcee": {**ap, "style": "vigie", "theme": "sombre"}})
+
+
+VIGIE_URL = "https://vigie.dix-neuf.ovh"
 
 
 @app.post("/actualites/tout-lu")
