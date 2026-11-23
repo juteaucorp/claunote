@@ -57,7 +57,7 @@ MARQUE = "===CLASSEMENT==="
 # La transcription est écrite en clair avant le JSON, pas dedans : pas d'échappement à produire
 # (le LaTeX plein de \\ cassait souvent le JSON, et tout était relu par un modèle plus fort).
 PROMPT = """Tu analyses un document scanné d'un élève (du collège au BTS SIO) : le fichier `{nom}`.
-Lis-le en entier avec l'outil Read (s'il a plus de 10 pages, lis-le par tranches de pages).
+{lire}
 
 Réponds UNIQUEMENT dans ce format, sans aucun texte autour :
 1. la transcription complète en Markdown ;
@@ -79,7 +79,7 @@ Règles :
 
 PROMPT_MORCEAU = """Tu transcris une partie d'un long document scanné d'un élève (du collège au BTS SIO) :
 le fichier `{nom}` contient les pages {debut} à {fin} (sur {total}) de « {document} ».
-Lis-le en entier avec l'outil Read.
+{lire}
 
 Réponds UNIQUEMENT avec la transcription en Markdown de ces pages, sans aucun texte autour.
 """ + REGLE_TRANSCRIPTION + "\n"
@@ -589,6 +589,90 @@ def texte_pdf(chemin: Path) -> str | None:
     return "\n\n---\n\n".join("  \n".join(l.strip() for l in t.splitlines() if l.strip()) for t in textes)
 
 
+# Claude Code ne lit un PDF page par page qu'avec poppler, et il le cherche lui-même (pdftoppm -v, 5 s) :
+# sur une VM chargée, il a déjà conclu « pdftoppm n'est pas installé » et rendu un faux résumé. Les pages
+# sont donc dessinées ici en images, que Read lit toujours, et le texte déjà présent dans le PDF est fourni.
+COTE_IMAGE = 1568          # pixels, plus grand côté : la taille que Claude lit sans la réduire
+LIRE_FICHIER = "Lis-le en entier avec l'outil Read."
+
+
+def pdf_en_images(chemin: Path, dossier: Path | None = None) -> list[Path]:
+    """Pages d'un PDF en JPEG couleur (dans `dossier`, à côté du PDF par défaut). Vide si poppler échoue."""
+    dossier = dossier or chemin.parent
+    dossier.mkdir(parents=True, exist_ok=True)
+    prefixe = dossier / f"{chemin.stem}-page"
+    try:
+        subprocess.run(["pdftoppm", "-jpeg", "-jpegopt", "quality=85", "-scale-to", str(COTE_IMAGE),
+                        str(chemin), str(prefixe)], capture_output=True, timeout=600, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return sorted(dossier.glob(f"{prefixe.name}-*.jpg"))
+
+
+def scanne(chemin: Path) -> bool:
+    """Vrai si une page du PDF est une grande image (scan ou photo), ou s'il est illisible par pypdf."""
+    from pypdf import PdfReader
+    try:
+        return any(l * h >= GRANDE_IMAGE for page in PdfReader(chemin).pages for l, h in _images(page))
+    except Exception:
+        return True
+
+
+def texte_present(chemin: Path) -> str:
+    """Texte déjà présent dans un PDF (pdftotext), vide pour un scan sans couche texte."""
+    try:
+        p = subprocess.run(["pdftotext", "-layout", str(chemin), "-"], capture_output=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    texte = p.stdout.decode("utf-8", errors="replace")
+    return texte if sum(c.isalpha() for c in texte) >= 100 else ""
+
+
+def consigne_lecture(chemin: Path) -> tuple[str, str | None]:
+    """(consigne de lecture, texte à fournir sur l'entrée) pour un fichier lu par Claude avec Read.
+
+    Un PDF est donné en images de ses pages (plus besoin de poppler côté Claude Code), avec son texte
+    s'il en a un : un PDF illustré garde ses mots exacts.
+    """
+    if chemin.suffix.lower() != ".pdf":
+        return LIRE_FICHIER, None
+    images = pdf_en_images(chemin)
+    if not images:
+        return LIRE_FICHIER, None
+    noms = ", ".join(f"`{i.name}`" for i in images)
+    pages = f"Ses {len(images)} pages sont fournies" if len(images) > 1 else "Sa page est fournie"
+    consigne = (f"{pages} en images, dans l'ordre : {noms}. "
+                "Lis-les toutes avec l'outil Read (ne lis pas le PDF lui-même).")
+    texte = "" if scanne(chemin) else texte_present(chemin)   # la couche OCR d'un scan trompe plus qu'elle n'aide
+    if not texte:
+        return consigne, None
+    consigne += (" Le texte déjà présent dans le PDF est sur l'entrée : sers-t'en pour les mots exacts, "
+                 "les images pour la mise en page, les schémas et ce qui manque au texte.")
+    return consigne, f"Texte extrait du PDF (mise en page perdue) :\n\n{texte}"
+
+
+# Claude n'a pas pu ouvrir le fichier et l'a écrit à la place de la transcription : ce n'est pas un cours.
+LECTURE_RATEE = re.compile(r"pdftoppm|poppler|n'a pas pu être lu|n'ai pas pu (le )?lire|impossible de lire|"
+                           r"aucune transcription|could not (be )?read|unable to read", re.I)
+
+
+def lecture_ratee(transcription: str | None) -> bool:
+    """Vrai si la « transcription » est en fait le compte rendu d'une lecture ratée."""
+    t = (transcription or "").strip()
+    return bool(t) and len(t) < 1500 and LECTURE_RATEE.search(t[:500]) is not None
+
+
+def _verifier_lecture(transcription: str | None):
+    if lecture_ratee(transcription):
+        raise ErreurAgent(f"Claude n'a pas pu lire le fichier : {transcription.strip()[:200]}")
+
+
+def _analyse_lue(texte: str) -> Analyse:
+    a = parse_reponse(texte)
+    _verifier_lecture(a.transcription)
+    return a
+
+
 def pages_pdf(chemin: Path) -> int:
     from pypdf import PdfReader
     try:
@@ -622,6 +706,7 @@ def _transcription(texte: str) -> str:
     texte = _sans_cloture(texte)
     if not texte:
         raise ErreurAgent("transcription vide")
+    _verifier_lecture(texte)
     return texte
 
 
@@ -642,8 +727,11 @@ def transcrire_par_morceaux(chemin: Path, memoire: Path | None = None, contexte:
         garde = memoire / f"{debut:03d}-{fin:03d}.md" if memoire else None
         if garde and garde.exists():
             return garde.read_text(), ""
-        prompt = PROMPT_MORCEAU.format(nom=fichier.name, debut=debut, fin=fin, total=total, document=chemin.name)
-        texte, modele = demander("scan", prompt + contexte, chemin.parent, lire=_transcription, outils=["Read"])
+        lire, entree = consigne_lecture(fichier)
+        prompt = PROMPT_MORCEAU.format(nom=fichier.name, debut=debut, fin=fin, total=total, document=chemin.name,
+                                       lire=lire)
+        texte, modele = demander("scan", prompt + contexte, chemin.parent, lire=_transcription, outils=["Read"],
+                                 entree=entree)
         if garde:
             garde.write_text(texte)
         return texte, modele
@@ -729,7 +817,7 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
                                "relève de l'une d'elles, reprends exactement ce nom.\n" if matieres else "")
     pour_classer += formations.CONTEXTE.get()   # matières exactes de sa formation, année par année
 
-    prompt, tache = None, "texte"
+    prompt, tache, entree = None, "texte", None
     if texte is not None:
         a, classeur = classer_texte(texte, nom, origine, pour_classer)
         a.transcription, lecteur = texte, classeur
@@ -738,8 +826,10 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
         a, classeur = classer_texte(transcription, nom, "transcription d'un scan", pour_classer)
         a.transcription, lecteur = transcription, lecteur or classeur
     else:
-        prompt, tache = PROMPT.format(nom=nom, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES)) + pour_classer, "scan"
-        a, classeur = demander(tache, prompt, chemin.parent, lire=parse_reponse, outils=["Read"])
+        lire, entree = consigne_lecture(chemin)
+        prompt = PROMPT.format(nom=nom, lire=lire, niveaux=", ".join(NIVEAUX), types=", ".join(TYPES)) + pour_classer
+        tache = "scan"
+        a, classeur = demander(tache, prompt, chemin.parent, lire=_analyse_lue, outils=["Read"], entree=entree)
         lecteur = classeur
     a.modele = lecteur
     if a.confiance >= SEUIL_CONFIANCE or (fort := modeles.plus_fort(classeur)) is None:
@@ -748,7 +838,8 @@ def analyser(chemin: Path, dossiers: list[str] | None = None, indice: str = "",
     # sinon donne un second avis sur le classement à partir du texte (bien moins coûteux).
     if tache == "scan" and illisible(a.transcription):
         try:
-            b, m = demander(tache, prompt, chemin.parent, lire=parse_reponse, outils=["Read"], modele=fort)
+            b, m = demander(tache, prompt, chemin.parent, lire=_analyse_lue, outils=["Read"], entree=entree,
+                            modele=fort)
         except ErreurAgent:
             return a
         if b.confiance >= a.confiance:

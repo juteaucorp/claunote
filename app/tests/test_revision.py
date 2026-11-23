@@ -324,3 +324,13 @@ def test_titre_court_d_une_longue_demande():
     assert revision.titre_du_support("# Algèbre de Boole — FICHE SYNTHÈSE", "x", "Mathématiques") == \
         "Mathématiques : Algèbre de Boole"
     assert revision.titre_du_support("pas de titre", "x") is None
+
+
+def test_piece_jointe_pdf_donnee_en_images_avec_son_texte(tmp_path):
+    from tests.test_agent import COURS, _pdf
+    pdf = _pdf(tmp_path / "source.pdf", [COURS, COURS], image=(500, 400))
+    dossier = tmp_path / "travail"
+    dossier.mkdir()
+    a_lire, texte = revision.preparer_pieces([{"nom": "Dates BTS.pdf", "contenu": pdf.read_bytes()}], dossier)
+    assert len(a_lire) == 2 and all(n.endswith(".jpg") and (dossier / n).exists() for n in a_lire)
+    assert "Dates BTS.pdf" in texte and texte.count("VLAN") == 10
