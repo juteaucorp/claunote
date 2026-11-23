@@ -52,7 +52,7 @@ PAGES = [
     ("/agenda/synchroniser", "admin"),
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
-    ("/piece/", "reviser"), ("/partages", "bibliotheque"),
+    ("/piece/", "reviser"), ("/partages", "bibliotheque"), ("/acces-cours", "bibliotheque"),
 ]
 ACTIONS_DOC = {"classer", "hors-cours", "supprimer", "reessayer"}
 
@@ -72,6 +72,19 @@ def droit_requis(chemin: str, methode: str = "GET") -> str | None:
 # « claude ». Les fiches, quiz, campagnes et modifications passent, elles : sans forfait, elles attendent que l'admin
 # dise oui sur la page Demandes (demandes_ia.py). Le chat (Demander) passe au modèle local.
 CLAUDE_REQUIS = re.compile(r"^/organiser/matieres/ia$")
+
+
+# Pages où un invité se sert aussi des cours partagés (publics, ou tous s'il a l'accès complet), en lecture seule :
+# choisir les cours d'une fiche ou d'une campagne, et le chat « Une question ». Ailleurs (historique, Organiser…),
+# il ne voit que ses données.
+LECTURE_PARTAGES = re.compile(r"^/(reviser/(nouvelle|documents|demande|lancer)|campagne/nouvelle|demander(/.*)?)$")
+CREATION_PARTAGES = {"/reviser", "/campagne"}
+
+
+def lit_les_partages(compte: dict | None, chemin: str, methode: str = "GET") -> bool:
+    if not compte or est_admin(compte):
+        return False   # l'admin : ses données (ou « Tout voir »), comme avant
+    return bool(LECTURE_PARTAGES.match(chemin)) or (methode == "POST" and chemin in CREATION_PARTAGES)
 
 
 def besoin_claude(chemin: str, methode: str) -> bool:

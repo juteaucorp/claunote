@@ -1,5 +1,6 @@
 import base64
 import contextvars
+from contextlib import nullcontext
 import hashlib
 import datetime as dt
 import html
@@ -124,7 +125,8 @@ async def exiger_connexion(request: Request, call_next):
         jeton = _moi.set(compte)
         # La base ne montre que les données de ce compte (« Tout voir » : l'admin voit tout), refus compris
         try:
-            with comptes.pour(compte["id"], comptes.est_admin(compte) and compte.get("tout_voir")):
+            with comptes.pour(compte["id"], comptes.est_admin(compte) and compte.get("tout_voir")), \
+                    (db.partages() if comptes.lit_les_partages(compte, chemin, request.method) else nullcontext()):
                 return await _servir_compte(request, call_next, compte, droit)
         finally:
             _moi.reset(jeton)
@@ -1314,10 +1316,11 @@ def bibliotheque(request: Request):
         for r in db.bibliotheque_partagee():
             autres[r["niveau"]][r["matiere"]].append(r)
     niveaux_autres = [n for n in reversed(NIVEAUX) if n in autres] + sorted(n for n in autres if n not in NIVEAUX)
+    acces = None if comptes.est_admin(moi()) else ((comptes.trouver(moi()["id"]) or {}).get("acces_cours") or "")
     return templates.TemplateResponse(request, "bibliotheque.html", {
         "arbre": arbre, "niveaux": niveaux, "nb_hors_cours": db.nb_hors_cours(),
         "partage": partage, "publiques": db.matieres_publiques() if partage else set(),
-        "autres": autres, "niveaux_autres": niveaux_autres})
+        "autres": autres, "niveaux_autres": niveaux_autres, "acces": acces})
 
 
 @app.get("/liste", response_class=HTMLResponse)
@@ -1330,6 +1333,8 @@ def liste(request: Request, niveau: str, matiere: str, type: str):
 def document(request: Request, doc_id: int):
     doc = db.document(doc_id)
     if doc is None:
+        if not comptes.est_admin(moi()) and db.document_partage(doc_id):   # un cours partagé (cité par le chat, une fiche) : sa page en lecture seule
+            return RedirectResponse(f"/partages/doc/{doc_id}", status_code=303)
         raise HTTPException(404)
     # Aperçu : le fichier lui-même s'il s'affiche dans le navigateur, sinon son autre format (PDF d'un
     # PowerPoint), sinon rien (un .pptx dans une iframe fait planter Safari sur iPhone).
@@ -1864,7 +1869,12 @@ def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str
     return templates.TemplateResponse(request, "reviser.html", {
         **contexte, "campagnes": campagnes, "du_jour": du_jour, "jour": jour, "compte": db.compte_revisions(),
         "evaluations": evaluations, "paris": pronote.PARIS,
-        "a_choisir": bool(db.niveaux_matieres()), "a_archiver": archivage.nb_propositions()})
+        "a_choisir": bool(db.niveaux_matieres()) or _partages_utilisables(), "a_archiver": archivage.nb_propositions()})
+
+
+def _partages_utilisables() -> bool:
+    """Un invité sans cours à lui peut réviser ceux qu'on lui partage."""
+    return not comptes.est_admin(moi()) and bool(db.bibliotheque_partagee())
 
 
 @app.get("/reviser/nouvelle", response_class=HTMLResponse)
@@ -2030,7 +2040,9 @@ def voir_revision(request: Request, rev_id: int):
             corrige = avec_sources(rendu_markdown(corr), reperes, web) if corr else None
         else:
             contenu = avec_sources(rendu_markdown(rev["contenu"]), reperes, web)
-    sources = db.documents(list(reperes.values()))
+    # Sources : ses cours, et ceux qu'on lui partage (un invité fait aussi ses fiches avec les cours de l'admin)
+    with (nullcontext() if comptes.est_admin(moi()) else db.partages()):
+        sources = db.documents(list(reperes.values()))
     par_id = {d["id"]: d for d in sources}
     return templates.TemplateResponse(request, "revision.html", {
         "rev": rev, "genres": revision.GENRES, "contenu": contenu, "corrige": corrige, "questions": questions,
@@ -3503,7 +3515,31 @@ def page_demandes(request: Request):
     demandes = db.demandes_ia()
     cours = db.titres_documents_tous([i for d in demandes for i in (d.get("doc_ids") or [])])
     return templates.TemplateResponse(request, "demandes.html", {
-        "demandes": demandes, "cours": cours, "genres": demandes_ia.GENRES})
+        "demandes": demandes, "cours": cours, "genres": demandes_ia.GENRES,
+        "acces_attente": db.acces_cours("attente"), "acces_accordes": db.acces_cours("accorde")})
+
+
+@app.post("/demandes/acces/{compte_id}")
+def decider_acces(compte_id: int, reponse: str = Form(...)):
+    if reponse == "retirer":
+        demandes_ia.retirer_acces(compte_id)
+    elif reponse in ("oui", "non"):
+        demandes_ia.decider_acces(compte_id, reponse == "oui")
+    else:
+        raise HTTPException(400)
+    comptes.oublier(compte_id)
+    return RedirectResponse("/demandes", status_code=303)
+
+
+@app.post("/acces-cours/demander")
+def demander_acces_cours(request: Request):
+    """Un invité demande à lire tous les cours de l'environnement, privés compris : l'admin dit oui ou non."""
+    compte = moi()
+    if not compte or comptes.est_admin(compte):
+        raise HTTPException(400)
+    demandes_ia.demander_acces(compte)
+    comptes.oublier(compte["id"])
+    return RedirectResponse("/bibliotheque#acces-cours", status_code=303)
 
 
 @app.post("/demandes/{quoi}/{item_id}")

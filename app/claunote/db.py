@@ -645,6 +645,25 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS validation TEXT;
 ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS validation TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS demande_le TIMESTAMPTZ;
 ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS demande_le TIMESTAMPTZ;
+-- Accès d'un invité à TOUS les cours de l'environnement, privés compris, en lecture seule (demandes_ia.py) :
+-- NULL : jamais demandé ; 'attente' : chez l'admin ; 'accorde' ; 'refuse'.
+ALTER TABLE comptes ADD COLUMN IF NOT EXISTS acces_cours TEXT;
+ALTER TABLE comptes ADD COLUMN IF NOT EXISTS acces_cours_le TIMESTAMPTZ;
+CREATE OR REPLACE FUNCTION claunote_acces_complet() RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public AS
+$$ SELECT EXISTS (SELECT 1 FROM comptes WHERE id = claunote_compte() AND acces_cours = 'accorde' AND actif) $$;
+-- Un cours lisible par le compte de la requête sur les pages qui montrent les partages : public, ou accès complet
+CREATE OR REPLACE FUNCTION claunote_cours_lisible(doc INT) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public AS
+$$ SELECT EXISTS (SELECT 1 FROM documents d WHERE d.id = doc AND d.statut = 'classe'
+                  AND (claunote_acces_complet() OR claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere))) $$;
+DROP POLICY IF EXISTS partage ON documents;
+CREATE POLICY partage ON documents FOR SELECT
+    USING (claunote_partages() AND statut = 'classe'
+           AND (claunote_acces_complet() OR claunote_document_public(compte_id, public, niveau, matiere)));
+-- Passages (recherche du chat « Une question ») : ceux des cours partagés, en lecture seule
+DROP POLICY IF EXISTS partage ON passages;
+CREATE POLICY partage ON passages FOR SELECT USING (claunote_partages() AND claunote_cours_lisible(document_id));
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -3084,7 +3103,7 @@ def plusieurs_comptes() -> bool:
 # ici (pas seulement dans la base) : avec « Tout voir », l'admin y voit la même chose que les autres.
 _AUTEUR = "coalesce(nullif(a.nom, ''), a.identifiant) AS auteur"
 _DOC_PUBLIC = ("d.statut = 'classe' AND d.compte_id <> claunote_compte() "
-               "AND claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere)")
+               "AND (claunote_acces_complet() OR claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere))")
 _REV_PUBLIQUE = ("r.statut = 'pret' AND r.compte_id <> claunote_compte() "
                  "AND (r.public OR claunote_campagne_publique(r.campagne_id))")
 
@@ -3189,7 +3208,8 @@ def nb_demandes_ia() -> int:
         return c.execute(
             "SELECT (SELECT count(*) FROM revisions WHERE validation = 'attente' AND statut = 'en_attente' "
             "AND campagne_id IS NULL) + (SELECT count(*) FROM campagnes WHERE validation = 'attente' "
-            "AND statut = 'en_attente') AS n").fetchone()["n"]
+            "AND statut = 'en_attente') + (SELECT count(*) FROM comptes WHERE acces_cours = 'attente' AND actif) "
+            "AS n").fetchone()["n"]
 
 
 def decider_demande(quoi: str, item_id: int, oui: bool, erreur: str = ""):
@@ -3252,3 +3272,27 @@ def titres_documents_tous(ids: list[int]) -> dict[int, str]:
     with sans_compte(), connect() as c:
         return {r["id"]: r["titre"] or r["nom"] for r in
                 c.execute("SELECT id, titre, nom FROM documents WHERE id = ANY(%s)", (list(set(ids)),)).fetchall()}
+
+
+# --- Accès d'un invité à tous les cours (privés compris), accordé par l'admin ----------
+
+def demander_acces_cours(compte_id: int) -> bool:
+    """Vrai si la demande vient d'être faite (pas déjà en attente ni accordée)."""
+    with sans_compte(), connect() as c:
+        return c.execute("UPDATE comptes SET acces_cours = 'attente', acces_cours_le = now() WHERE id = %s "
+                         "AND role <> 'admin' AND acces_cours IS DISTINCT FROM 'attente' "
+                         "AND acces_cours IS DISTINCT FROM 'accorde'", (compte_id,)).rowcount == 1
+
+
+def decider_acces_cours(compte_id: int, statut: str | None) -> bool:
+    """'accorde', 'refuse', ou None pour retirer un accès accordé."""
+    assert statut in ("accorde", "refuse", None)
+    with sans_compte(), connect() as c:
+        return c.execute("UPDATE comptes SET acces_cours = %s, acces_cours_le = now() WHERE id = %s "
+                         "AND role <> 'admin'", (statut, compte_id)).rowcount == 1
+
+
+def acces_cours(statut: str):
+    with sans_compte(), connect() as c:
+        return c.execute("SELECT id, identifiant, nom, acces_cours_le, coalesce(nullif(nom, ''), identifiant) AS auteur "
+                         "FROM comptes WHERE acces_cours = %s AND actif ORDER BY acces_cours_le", (statut,)).fetchall()

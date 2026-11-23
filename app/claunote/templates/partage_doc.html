@@ -7,6 +7,13 @@
   · <a href="/partages/doc/{{ doc.id }}/fichier" target="_blank">original</a>
   {% if doc.chapitre and doc.chapitre != doc.titre %} · {{ doc.chapitre }}{% endif %}
   {% if doc.date_doc %} · {{ doc.date_doc.strftime('%d/%m/%Y') }}{% endif %}</p>
+{% if peut('reviser') %}
+<div class="actions actions-partage">
+  <a class="bouton principal" href="/reviser/nouvelle?doc={{ doc.id }}">Faire une fiche ou un quiz</a>
+  <a class="bouton" href="/demander?niveau={{ doc.niveau|urlencode }}&matiere={{ doc.matiere|urlencode }}">Poser une question sur ce cours</a>
+</div>
+<style>.actions-partage { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }</style>
+{% endif %}
 {% if doc.resume %}<p>{{ doc.resume }}</p>{% endif %}
 {% if transcription %}<div class="carte transcription">{{ transcription|safe }}</div>
 {% else %}<div class="carte doux">Pas de texte lu pour ce cours : ouvre l'original.</div>{% endif %}

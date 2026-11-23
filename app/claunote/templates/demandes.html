@@ -8,7 +8,18 @@
 <p class="doux">Les comptes <strong>sans le droit « Forfait Claude »</strong> demandent ici une fiche, un quiz, une campagne
   ou une modification. <strong>Oui</strong> : Claude la prépare sur <strong>ton forfait</strong> et le résultat arrive sur
   leur compte. <strong>Non</strong> : la demande s'arrête et la personne est prévenue.</p>
-{% if not demandes %}
+{% for c in acces_attente %}
+<div class="carte demande">
+  <div class="tete-demande"><strong>🔑 Accès à tous les cours · {{ c.auteur }}</strong>
+    {% if c.acces_cours_le %}<span class="doux">{{ c.acces_cours_le.astimezone(paris_tz).strftime('%d/%m à %H:%M') }}</span>{% endif %}</div>
+  <p class="doux">Lire <strong>tous</strong> les cours de l'environnement, <strong>privés compris</strong>, et s'en servir dans le chat et ses fiches. Lecture seule, retirable à tout moment.</p>
+  <form method="post" action="/demandes/acces/{{ c.id }}" class="actions">
+    <button name="reponse" value="oui" class="principal">{{ icone('check', 18) }} Oui, accorder</button>
+    <button name="reponse" value="non">Non</button>
+  </form>
+</div>
+{% endfor %}
+{% if not demandes and not acces_attente %}
 <div class="carte">Aucune demande en attente.</div>
 {% endif %}
 {% for d in demandes %}
@@ -35,7 +46,17 @@
   </div>
 </div>
 {% endfor %}
+{% if acces_accordes %}
+<h2>Accès à tous les cours accordés</h2>
+<div class="carte">
+  {% for c in acces_accordes %}
+  <form method="post" action="/demandes/acces/{{ c.id }}" class="ligne-acces"><span>🔑 {{ c.auteur }}</span>
+    <button name="reponse" value="retirer" class="petit">Retirer</button></form>
+  {% endfor %}
+</div>
+{% endif %}
 <style>
+  .ligne-acces { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 6px 0; }
   .tete-demande { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
   .demande .prompt { background: var(--fond-doux); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 6px; margin: 10px 0; }
   .demande .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }

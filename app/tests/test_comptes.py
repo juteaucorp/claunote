@@ -240,3 +240,34 @@ def test_invite_voit_les_cours_publics_en_lecture_seule(client, monkeypatch):
     liste = invite.get("/partages/liste", params={"niveau": "BTS1", "matiere": "Réseau", "type": "cours"}).text
     assert 'href="/partages/doc/9"' in liste and 'href="/doc/9"' not in liste and "lecture seule" in liste
     assert "Cours partagés" not in client.get("/bibliotheque").text             # l'admin : ses propres cours
+
+
+def test_invite_se_sert_des_partages_sur_reviser_et_le_chat():
+    invite = {"id": 2, "role": "invite"}
+    assert comptes.lit_les_partages(invite, "/demander") and comptes.lit_les_partages(invite, "/demander/message/3")
+    assert comptes.lit_les_partages(invite, "/reviser/nouvelle") and comptes.lit_les_partages(invite, "/reviser", "POST")
+    assert comptes.lit_les_partages(invite, "/campagne", "POST") and comptes.lit_les_partages(invite, "/reviser/lancer", "POST")
+    assert not comptes.lit_les_partages(invite, "/reviser") and not comptes.lit_les_partages(invite, "/revision/4/modifier", "POST")
+    assert not comptes.lit_les_partages(invite, "/organiser") and not comptes.lit_les_partages(invite, "/bibliotheque")
+    assert not comptes.lit_les_partages({"id": 1, "role": "admin"}, "/demander")   # l'admin : comme avant
+
+
+def test_demander_l_acces_a_tous_les_cours(client, monkeypatch):
+    invite, _ = _creer(_inviter(client, ["bibliotheque"]))
+    demandes, decisions, notifs = [], [], []
+    monkeypatch.setattr(db, "demander_acces_cours", lambda i: demandes.append(i) or True)
+    monkeypatch.setattr(db, "decider_acces_cours", lambda i, statut: decisions.append((i, statut)) or True)
+    monkeypatch.setattr(db, "notifier_compte", lambda *a: notifs.append(a) or True)
+    assert "Demander l'accès à tous les cours" in invite.get("/bibliotheque").text
+    invite.post("/acces-cours/demander")
+    assert demandes == [2] and notifs[-1][0] is None and notifs[-1][4] == "/demandes"
+    assert client.post("/acces-cours/demander").status_code == 400                # pas pour l'admin
+    assert invite.post("/demandes/acces/2", data={"reponse": "oui"}).status_code == 403   # l'invité ne décide pas
+    monkeypatch.setattr(db, "demandes_ia", lambda: [])
+    monkeypatch.setattr(db, "acces_cours", lambda statut: [{"id": 2, "auteur": "camille", "acces_cours_le": None}]
+                        if statut == "attente" else [])
+    page = client.get("/demandes").text
+    assert "Accès à tous les cours · camille" in page and "privés compris" in page
+    client.post("/demandes/acces/2", data={"reponse": "oui"})
+    client.post("/demandes/acces/2", data={"reponse": "retirer"})
+    assert decisions == [(2, "accorde"), (2, None)] and notifs[-1][0] == 2
