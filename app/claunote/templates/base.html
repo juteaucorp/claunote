@@ -288,6 +288,12 @@
     iframe.scan { display: none; }
     .scan-mobile { display: flex; }
   }
+  /* Pas de zoom involontaire dans l'appli : ni double-tap, ni pincement (Android), ni zoom d'iOS sur un champ.
+     Les images et schémas restent zoomables au pincement (voir le script plus bas). */
+  * { touch-action: pan-x pan-y; }
+  main :where(img, figure, figure *, canvas, iframe) { touch-action: pan-x pan-y pinch-zoom; }
+  /* iOS zoome sur tout champ écrit en moins de 16 px : jamais en dessous sur écran tactile */
+  @media (pointer: coarse) { input, select, textarea { font-size: max(16px, 1em) !important; } }
 </style>
 </head>
 <body>
@@ -360,6 +366,16 @@
   <div id="contenu"{% if vivant %} data-vivant="{{ vivant }}" data-empreinte="{{ contenu_html|empreinte }}"{% endif %}>{{ contenu_html }}</div>
   {% if false %}{% block contenu %}{% endblock %}{% block vivant %}{% endblock %}{% endif %}
 </main>
+<script>
+  // iPhone : Safari ignore touch-action pour le pincement, on bloque donc ses gestes de zoom.
+  // Exceptions : un pincement commencé sur une image ou un schéma (pour lire le détail),
+  // et pour revenir à la taille normale si la page est déjà zoomée.
+  const zoomPermis = (e) => (window.visualViewport && visualViewport.scale > 1.01)
+    || (e.target.closest && e.target.closest("main img, main figure, main canvas, main iframe") && !e.target.closest(".zone-photo"));
+  for (const type of ["gesturestart", "gesturechange"]) {
+    document.addEventListener(type, (e) => { if (!zoomPermis(e)) e.preventDefault(); }, { passive: false });
+  }
+</script>
 <script>
   // Sur ordinateur : « / » place le curseur dans la recherche (de la page, sinon de l'en-tête)
   document.addEventListener("keydown", (e) => {
