@@ -358,6 +358,11 @@ def preparer_pieces(pieces: list[dict], dossier: Path) -> tuple[list[str], str]:
                 textes.append(f"Pièce jointe « {p['nom']} » :\n{agent.texte_bureautique(chemin)[:30_000]}")
             elif extension in agent.VIEUX_OFFICE:
                 textes.append(f"Pièce jointe « {p['nom']} » :\n{agent.texte_vieux_office(chemin)[:30_000]}")
+            elif extension == ".pdf":   # pages en images : Read n'a alors pas besoin de poppler (voir agent)
+                images = agent.pdf_en_images(chemin)
+                a_lire += [i.name for i in images] or [chemin.name]
+                if texte := agent.texte_present(chemin):
+                    textes.append(f"Pièce jointe « {p['nom']} » (texte du PDF) :\n{texte[:30_000]}")
             else:
                 a_lire.append((agent.heic_en_jpeg(chemin) if extension in HEIC_PJ else chemin).name)
         except Exception as e:  # une pièce illisible ne bloque pas le support

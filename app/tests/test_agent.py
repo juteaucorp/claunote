@@ -421,3 +421,39 @@ def test_extrait_pour_classer():
     e = agent.extrait(long)
     assert len(e) < 17_500 and e.startswith("D" * 12_000) and e.endswith("F" * 3_000)
     assert "M" * 2_000 in e and e.count("extrait : le document fait 80000 caractères") == 2
+
+
+# --- PDF lu par Claude : pages en images (Read sans poppler), lecture ratée jamais prise pour un cours ----
+
+ECHEC_ANTO = ("[illisible] Le contenu du PDF n'a pas pu être lu : l'outil Read exige poppler (pdftoppm), qui n'est "
+              "pas installé, et l'exécution de Python pour extraire le texte a été refusée. Aucune transcription "
+              "n'est fournie. On sait seulement que le fichier compte 3 pages de texte (polices Arial).")
+
+
+def test_pdf_illustre_donne_en_images_avec_son_texte(tmp_path):
+    pdf = _pdf(tmp_path / "1. E-Waste.pdf", [COURS, COURS, COURS], image=(500, 400))
+    consigne, entree = agent.consigne_lecture(pdf)
+    images = sorted(tmp_path.glob("*.jpg"))
+    assert len(images) == 3 and all(f"`{i.name}`" in consigne for i in images)
+    assert "ne lis pas le PDF" in consigne and entree.count("VLAN") == 15
+
+
+def test_scan_donne_en_images_sans_sa_couche_ocr(tmp_path):
+    consigne, entree = agent.consigne_lecture(_pdf(tmp_path / "scan.pdf", [COURS], image=(1240, 1754)))
+    assert "Sa page est fournie" in consigne and entree is None
+    assert agent.consigne_lecture(tmp_path / "photo.jpg") == (agent.LIRE_FICHIER, None)
+
+
+def test_lecture_ratee_reconnue():
+    assert agent.lecture_ratee(ECHEC_ANTO)
+    assert not agent.lecture_ratee(REPONSE["transcription"]) and not agent.lecture_ratee("")
+    # un vrai cours qui parle de poppler, plus loin dans le texte, reste un cours
+    assert not agent.lecture_ratee("# TP Linux\n\n" + "Installer des paquets avec apt. " * 30 + "poppler-utils")
+
+
+def test_lecture_ratee_jamais_enregistree_comme_cours(claude, tmp_path):
+    appels, reponses = claude
+    reponses += [ok({**REPONSE, "transcription": ECHEC_ANTO})] * 2
+    with pytest.raises(agent.ErreurAgent, match="pas pu lire"):
+        agent.analyser(tmp_path / "scan.pdf")
+    assert appels == ["sonnet", "opus"]   # un essai avec le modèle au-dessus, puis erreur (pas de faux résumé)

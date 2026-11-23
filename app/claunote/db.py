@@ -664,6 +664,16 @@ CREATE POLICY partage ON documents FOR SELECT
 -- Passages (recherche du chat « Une question ») : ceux des cours partagés, en lecture seule
 DROP POLICY IF EXISTS partage ON passages;
 CREATE POLICY partage ON passages FOR SELECT USING (claunote_partages() AND claunote_cours_lisible(document_id));
+-- Cours dont Claude n'a pas pu ouvrir le fichier (Read sans poppler) : son message d'échec était enregistré comme
+-- transcription et résumé, et affiché comme un cours, partages compris. Ils repassent « À vérifier » (invisibles
+-- des invités), sans ce faux texte, et Claude les relit (agent.consigne_lecture : pages en images).
+DELETE FROM passages p USING documents d
+ WHERE p.document_id = d.id AND d.statut IN ('classe', 'a_verifier') AND length(d.transcription) < 1500
+   AND left(d.transcription, 500) ~* 'pdftoppm|poppler|n''a pas pu être lu|n''ai pas pu (le )?lire|impossible de lire|aucune transcription';
+UPDATE documents SET statut = 'a_verifier', relire = true, resume = NULL, transcription = NULL, indexe_le = NULL,
+       note = 'Claude n''avait pas pu ouvrir ce fichier (outil PDF manquant) : il va le relire.'
+ WHERE statut IN ('classe', 'a_verifier') AND length(transcription) < 1500
+   AND left(transcription, 500) ~* 'pdftoppm|poppler|n''a pas pu être lu|n''ai pas pu (le )?lire|impossible de lire|aucune transcription';
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
