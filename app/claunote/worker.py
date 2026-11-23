@@ -33,7 +33,7 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (actualites, agent, coherence, comptes, db, decoupage, demandes_ia, disque, formations, importation, index, lecture, local, modeles,
+from claunote import (actualites, agent, cloudflare, coherence, comptes, db, decoupage, demandes_ia, disque, formations, importation, index, lecture, local, modeles,
                       notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
                       stockage_local)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
@@ -1615,6 +1615,17 @@ def verification_boucle():
         ARRET.wait(60)
 
 
+def cloudflare_boucle():
+    """Supervision Cloudflare : une relève toutes les 15 min (2 requêtes HTTP, pas d'IA), seulement avec un jeton."""
+    while not ARRET.is_set():
+        if cloudflare.due(cloudflare.etat()):
+            try:
+                cloudflare.tour()
+            except Exception as e:
+                log(f"cloudflare : relève impossible : {e}")
+        ARRET.wait(60)
+
+
 def arreter(signum, _frame):
     if not ARRET.is_set():
         log("arrêt demandé : je termine le travail en cours, puis je m'arrête")
@@ -1678,6 +1689,7 @@ def main():
     threading.Thread(target=notifications.boucle, daemon=True, name="notifications").start()
     threading.Thread(target=actualites_boucle, daemon=True, name="actualites").start()
     threading.Thread(target=verification_boucle, daemon=True, name="pronote-verification").start()
+    threading.Thread(target=cloudflare_boucle, daemon=True, name="cloudflare").start()
     threading.Thread(target=battement, daemon=True, name="battement").start()
     threading.Thread(target=surveiller, daemon=True, name="surveillance").start()
     prochaine_synchro, dernier_nettoyage = 0.0, float("-inf")

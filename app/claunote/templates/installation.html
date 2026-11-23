@@ -178,7 +178,17 @@
     {{ champ('TURNSTILE_SITE_KEY', 'turnstile_site') }}
     {{ secret('TURNSTILE_SECRET_KEY', 'turnstile_secret') }}
     <p class="doux">{% if turnstile_actif %}<strong>Captcha allumé</strong> par Internet.{% else %}Captcha éteint.{% endif %}</p>
-    {% call boutons('cloudflare') %}<button name="action" value="tester" formnovalidate>Tester la clé secrète</button>{% endcall %}
+    <h3>Supervision Cloudflare (facultatif, gratuit)</h3>
+    <p class="doux">Toutes les 15 min, Claunote lit ce que Cloudflare a <strong>bloqué avant ta VM</strong> (géoblocage,
+      limite de débit, robots…) et l'affiche dans <a href="/securite#cloudflare">Sécurité</a>, avec une alerte sur un pic.
+      Jeton <strong>en lecture seule</strong> : <strong>Zone · Analytics · Lecture</strong> sur ta zone
+      (+ <strong>Compte · Account Analytics · Lecture</strong> pour les chiffres Turnstile). Il ne peut rien modifier.</p>
+    {{ secret('CLOUDFLARE_API_TOKEN', 'cf_jeton') }}
+    {{ champ('CLOUDFLARE_ZONE_ID', 'cf_zone') }}
+    {{ champ('CLOUDFLARE_ACCOUNT_ID', 'cf_compte') }}
+    <p class="doux">{% if supervision_active %}<strong>Supervision allumée.</strong>{% else %}Supervision éteinte.{% endif %}</p>
+    {% call boutons('cloudflare') %}<button name="action" value="tester" formnovalidate>Tester la clé secrète</button>
+      <button name="action" value="tester_cf" formnovalidate>Tester la supervision</button>{% endcall %}
   </form>
 </section>
 {% endif %}

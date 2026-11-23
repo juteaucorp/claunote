@@ -214,6 +214,33 @@ d'appareil** et l'**invitation**, **par Internet seulement** : par le VPN, rien 
 
 > Si tu es bloqué par Internet (Cloudflare refuse le captcha), passe par le **VPN** : il n'y a jamais de captcha.
 
+### Étape 11. Supervision Cloudflare *(facultatif, gratuit, 5 minutes)*
+
+Claunote lit **toutes les 15 min** ce que Cloudflare a arrêté **avant ta VM** (règle « France seulement », limite de
+débit sur `/connexion`, robots, niveau de sécurité), et l'affiche dans **Réglages → Sécurité → Cloudflare** : règles,
+pays, pages visées, trafic, captchas Turnstile. **Notification push** si les blocages des 15 dernières minutes
+dépassent **5 fois l'habitude (au moins 60)**, une seule fois par vague. Deux petites requêtes HTTP par relève, pas d'IA.
+
+1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Mon profil** (en haut à droite) → **Jetons API** →
+   **Créer un jeton** → **Créer un jeton personnalisé** → **Commencer**.
+2. Nom : `Claunote supervision`. **Autorisations** (toutes en **Lecture**, rien d'autre) :
+
+   | Type | Autorisation | Accès |
+   |---|---|---|
+   | **Zone** | **Analytics** | **Lecture** |
+   | **Compte** | **Account Analytics** | **Lecture** *(facultatif : seulement pour les chiffres Turnstile)* |
+
+3. **Ressources de zone** : *Inclure → Zone spécifique → ton domaine*. **Ressources de compte** (si tu as ajouté la
+   2e ligne) : *Inclure → ton compte*. Filtrage IP et durée : facultatifs.
+4. **Continuer vers le résumé** → **Créer le jeton** → copie-le (il n'est affiché **qu'une fois**).
+5. Ton domaine → **Vue d'ensemble** → colonne de droite, section **API** : copie l'**ID de zone** (et l'**ID de
+   compte** pour Turnstile).
+6. **Réglages → Installation → Accès par Internet** → colle le jeton et les identifiants → **Tester la supervision**
+   → **Enregistrer**. Le jeton est chiffré comme les autres.
+
+> Le jeton ne peut **rien modifier** chez Cloudflare. S'il fuit : **Jetons API → Rouler** (ou supprimer), puis colle
+> le nouveau. Offre gratuite : événements gardés 31 jours ; Claunote n'affiche que les dernières 24 h.
+
 > ❗ **Pas de « Cloudflare Access » ni de WARP** devant le site : l'appli iPhone ne s'en sort pas (voir plus haut).
 
 ---

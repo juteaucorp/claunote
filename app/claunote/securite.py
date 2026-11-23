@@ -79,6 +79,8 @@ TYPES = {
     "lien_mot_de_passe": ("attention", "Lien de nouveau mot de passe créé"),
     "tout_voir": ("attention", "Admin : « Tout voir »"),
     "conditions": ("info", "Conditions d'utilisation acceptées"),
+    "cloudflare_pic": ("alerte", "Pic d'attaques arrêté par Cloudflare"),
+    "cloudflare_erreur": ("attention", "Supervision Cloudflare en panne"),
 }
 TOUJOURS = {"appareil_ajoute", "cle_ajoutee", "mot_de_passe", "deconnexion_partout", "connexion_ok", "compte_cree",
             "compte_supprime"}
