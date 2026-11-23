@@ -3,7 +3,7 @@
     page web (admin) ──► reglages.ecrire() ──► table reglages (secrets chiffrés, jamais réaffichés)
     démarrage du site et du worker ──► charger_dans_env() : la base passe avant le .env
 
-Les secrets (jeton Claude, jeton kDrive, jeton du tunnel Cloudflare) sont chiffrés (Fernet : AES + HMAC) avec
+Les secrets (jeton Claude, jeton kDrive, jeton du tunnel Cloudflare, clé secrète Turnstile) sont chiffrés (Fernet : AES + HMAC) avec
 une clé gardée HORS de la base, dans le volume Docker `secrets` (fichier /secrets/claunote.key) : une copie de
 la base seule ne suffit pas à les lire. Un secret enregistré n'est jamais renvoyé au navigateur.
 
@@ -42,6 +42,10 @@ CATALOGUE = [
             aide="sur un ordinateur avec Claude Code : claude setup-token (valable 1 an)"),
     Reglage("CLOUDFLARE_TUNNEL_TOKEN", "Jeton du tunnel Cloudflare", "cloudflare", secret=True,
             aide="Zero Trust → Réseaux → Tunnels → ton tunnel → jeton"),
+    Reglage("TURNSTILE_SITE_KEY", "Captcha Turnstile : clé du site", "cloudflare",
+            aide="dash.cloudflare.com → Turnstile → Ajouter un widget → « Clé du site » (vide = pas de captcha)"),
+    Reglage("TURNSTILE_SECRET_KEY", "Captcha Turnstile : clé secrète", "cloudflare", secret=True,
+            aide="même widget → « Clé secrète »"),
     Reglage("CLAUNOTE_PAYS", "Pays acceptés par Internet", "cloudflare", aide="codes à 2 lettres séparés par des virgules (FR,BE), ou * pour tous"),
     Reglage("CLAUNOTE_CONTACT", "Contact affiché dans les mentions légales", "compte"),
 ]

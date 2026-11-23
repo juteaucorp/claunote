@@ -1,0 +1,10 @@
+{# Captcha Cloudflare Turnstile : seulement par Internet et quand les deux clés sont saisies (voir turnstile.py).
+   Le widget ajoute au formulaire un champ caché cf-turnstile-response, vérifié par le serveur (siteverify). #}
+{% macro captcha(action) -%}
+{% if turnstile_requis(request) %}
+<div class="cf-turnstile" data-sitekey="{{ turnstile_cle() }}" data-action="{{ action }}" data-language="fr"
+     data-theme="auto" data-size="flexible" data-appearance="interaction-only"></div>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<style>.cf-turnstile { margin: 4px 0 12px; } .cf-turnstile:empty { margin: 0; }</style>
+{% endif %}
+{%- endmacro %}

@@ -170,7 +170,15 @@
       <span>Tunnel allumé{% if not maj_present %} <span class="doux">(le service maj ne tourne pas : commande à lancer sur la VM)</span>{% endif %}</span></label></p>
     {{ champ('CLAUNOTE_PAYS', 'pays') }}
     <p class="doux">Par Internet, les visites d'autres pays sont refusées (FR par défaut).</p>
-    {% call boutons('cloudflare') %}{% endcall %}
+    <h3>Captcha anti-robot (Cloudflare Turnstile, gratuit)</h3>
+    <p class="doux">Une case « Je ne suis pas un robot » (souvent invisible) sur la connexion, le code d'appareil et
+      l'invitation, <strong>seulement par Internet</strong> : par le VPN, rien ne change. Dans le widget Turnstile,
+      déclare le nom de domaine du tunnel{% if hote_public %} (<code>{{ hote_public }}</code>){% endif %}.
+      Clé du site vide = pas de captcha.</p>
+    {{ champ('TURNSTILE_SITE_KEY', 'turnstile_site') }}
+    {{ secret('TURNSTILE_SECRET_KEY', 'turnstile_secret') }}
+    <p class="doux">{% if turnstile_actif %}<strong>Captcha allumé</strong> par Internet.{% else %}Captcha éteint.{% endif %}</p>
+    {% call boutons('cloudflare') %}<button name="action" value="tester" formnovalidate>Tester la clé secrète</button>{% endcall %}
   </form>
 </section>
 {% endif %}

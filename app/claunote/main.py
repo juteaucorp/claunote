@@ -30,7 +30,7 @@ from starlette.datastructures import FormData
 from claunote import (actualites, agent, anki, appareils, archivage, auth, carte_mentale, cles, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
-                      stockage_local)
+                      stockage_local, turnstile)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -219,6 +219,9 @@ CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 
        "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob:; "
        "frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; "
        "form-action 'self'; frame-ancestors 'self'")
+# Captcha Turnstile allumé : son script et son iframe viennent de challenges.cloudflare.com (et rien d'autre)
+CSP_TURNSTILE = CSP.replace("script-src 'self'", f"script-src 'self' {turnstile.ORIGINE}").replace(
+    "frame-src 'self'", f"frame-src 'self' {turnstile.ORIGINE}")
 EN_TETES = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN",
             "Referrer-Policy": "same-origin", "Cross-Origin-Opener-Policy": "same-origin",
             "Cross-Origin-Resource-Policy": "same-origin",
@@ -239,6 +242,8 @@ async def en_tetes_securite(request: Request, call_next):
             securite.erreur_serveur(request, f"réponse 500 sur {request.url.path}")
     for nom, valeur in EN_TETES.items():
         r.headers.setdefault(nom, valeur)
+    if turnstile.actif() and r.headers.get("content-security-policy") == CSP:
+        r.headers["content-security-policy"] = CSP_TURNSTILE
     if appareils.par_tunnel(request.headers):   # nom de domaine Cloudflare : HTTPS obligatoire pendant 1 an
         r.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
     return r
@@ -334,6 +339,8 @@ templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirme
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
 templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
 templates.env.globals["installation_a_faire"] = installation.a_faire
+templates.env.globals["turnstile_requis"] = turnstile.requis   # captcha par Internet (_turnstile.html)
+templates.env.globals["turnstile_cle"] = turnstile.cle_site
 templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_defaut"))
 templates.env.globals["moi"] = moi
 templates.env.globals["peut"] = lambda droit: comptes.peut(moi(), droit)
@@ -479,10 +486,14 @@ def page_connexion(request: Request, suite: str = "/"):
 
 
 @app.post("/connexion", response_class=HTMLResponse)
-def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str = Form(...), suite: str = Form("/")):
+def connexion(request: Request, utilisateur: str = Form(...), mot_de_passe: str = Form(...), suite: str = Form("/"),
+              captcha: str = Form("", alias=turnstile.CHAMP)):
     limiteur = request.app.state.limiteur
     ip = appareils.ip_client(request)
     attente = limiteur.bloque(ip) or _verrou_internet(request)
+    refus_robot = None if attente else _captcha(request, captcha, "connexion")
+    if refus_robot:
+        return _page_connexion(request, suite, refus_robot, 403)
     compte = db.compte_par_identifiant(utilisateur) if not attente else None
     ok = not attente and auth.verifier_compte(compte, mot_de_passe)   # toujours un scrypt : même durée
     if ok and not comptes.utilisable(compte):
@@ -510,6 +521,14 @@ def _page_connexion(request: Request, suite: str, erreur: str, statut: int) -> H
     return templates.TemplateResponse(request, "connexion.html", {"suite": _suite_sure(suite), "erreur": erreur,
                                                                    "sans_nav": True, "face_id": _face_id(request)},
                                       status_code=statut)
+
+
+def _captcha(request: Request, jeton: str, action: str) -> str | None:
+    """Captcha Turnstile (par Internet, clés saisies) : None si passé, sinon le message ; jamais par le VPN."""
+    refus = turnstile.verifier(request, jeton, action)
+    if refus:
+        securite.noter("captcha", request, f"{action} : {refus}")
+    return refus
 
 
 def _verrou_internet(request: Request) -> int:
@@ -565,10 +584,15 @@ def page_appareil(request: Request, suite: str = "/"):
 
 
 @app.post("/appareil", response_class=HTMLResponse)
-def approuver_appareil(request: Request, code: str = Form(...), nom: str = Form("Appareil"), suite: str = Form("/")):
+def approuver_appareil(request: Request, code: str = Form(...), nom: str = Form("Appareil"), suite: str = Form("/"),
+                       captcha: str = Form("", alias=turnstile.CHAMP)):
     limiteur = request.app.state.limiteur
     ip = appareils.ip_client(request)
     attente = limiteur.bloque(ip) or _verrou_internet(request)
+    refus_robot = None if attente else _captcha(request, captcha, "appareil")
+    if refus_robot:
+        return templates.TemplateResponse(request, "appareil.html", {"suite": _suite_sure(suite), "sans_nav": True,
+                                                                     "erreur": refus_robot, "nom": nom}, status_code=403)
     valeur = None if attente else appareils.utiliser_code(code, nom)
     if not valeur:
         if not attente:
@@ -743,6 +767,8 @@ def _page_installation(request: Request, etape: str | None, statut: int = 200, *
         "copie_kdrive": _json_ou_rien(db.etat_valeur("copie_kdrive")), "disque": disque.etat(), "besoins": disque.BESOINS,
         "besoin_total": disque.BESOIN_INSTALLATION, "tunnel_actif": maj.tunnel_actif(), "maj_present": maj.present(),
         "analyse": local.reglages(), "compte_admin": db.compte(moi()["id"]), "a_faire": installation.a_faire(),
+        "turnstile_actif": turnstile.actif(),
+        "hote_public": cles.hote(request.headers.get("host", "")) if appareils.par_tunnel(request.headers) else None,
         **plus}, status_code=statut)
 
 
@@ -880,10 +906,44 @@ def _etape_claude(request: Request, form: FormData, action: str) -> tuple[str | 
     return "Jeton Claude enregistré (chiffré). « Tester » vérifie qu'il marche.", None
 
 
-def _etape_cloudflare(request: Request, form: FormData) -> tuple[str | None, str | None]:
+def _turnstile(request: Request, form: FormData, action: str) -> tuple[str, str | None]:
+    """Clés du captcha Turnstile : (message, erreur). Clé du site vide = captcha éteint."""
+    cle_site = (form.get("turnstile_site") or "").strip()
+    saisi = (form.get("turnstile_secret") or "").strip()
+    secret = saisi or os.environ.get("TURNSTILE_SECRET_KEY", "")
+    if cle_site and not turnstile.format_ok(cle_site):
+        return "", "Clé du site Turnstile : elle ressemble à 0x4AAAA… (Turnstile → ton widget)."
+    if saisi and not turnstile.format_ok(saisi):
+        return "", "Clé secrète Turnstile : elle ressemble à 0x4AAAA… (Turnstile → ton widget → Clé secrète)."
+    if cle_site and not secret:
+        return "", "Pour allumer le captcha, colle aussi la clé secrète Turnstile."
+    message = ""
+    if saisi or (action == "tester" and secret):
+        etat, message = turnstile.tester(secret)
+        if etat == "refuse":
+            return "", message
+        message = " " + message
+    if action == "tester":
+        return (message.strip(), None) if secret else ("", "Colle d'abord la clé secrète Turnstile.")
+    avant = turnstile.actif()
+    compte_id = moi()["id"]
+    if saisi:
+        reglages.ecrire("TURNSTILE_SECRET_KEY", saisi, compte_id)
+    reglages.ecrire("TURNSTILE_SITE_KEY", cle_site, compte_id)
+    if saisi or avant != turnstile.actif():
+        _noter_reglage(request, "captcha Turnstile " + ("allumé" if turnstile.actif() else "éteint"))
+    return message, None
+
+
+def _etape_cloudflare(request: Request, form: FormData, action: str = "enregistrer") -> tuple[str | None, str | None]:
     pays, erreur = installation.pays(form.get("pays"))
     if erreur:
         return None, erreur
+    message_captcha, erreur = _turnstile(request, form, action)
+    if erreur:
+        return None, erreur
+    if action == "tester":
+        return message_captcha, None
     compte_id = moi()["id"]
     saisi = (form.get("tunnel_token") or "").strip()
     actif = form.get("tunnel") == "1"
@@ -896,7 +956,7 @@ def _etape_cloudflare(request: Request, form: FormData) -> tuple[str | None, str
     if saisi or actif != maj.tunnel_actif():
         suite = " " + maj.tunnel(actif)
         _noter_reglage(request, "tunnel Cloudflare " + ("allumé" if actif else "éteint"))
-    return "Accès par Internet enregistré." + suite, None
+    return "Accès par Internet enregistré." + suite + message_captcha, None
 
 
 @app.post("/installation/{etape}", response_class=HTMLResponse)
@@ -919,7 +979,7 @@ async def installation_enregistrer(request: Request, etape: str):
             elif etape == "claude":
                 message, erreur = await run_in_threadpool(_etape_claude, request, form, action)
             elif etape == "cloudflare":
-                message, erreur = await run_in_threadpool(_etape_cloudflare, request, form)
+                message, erreur = await run_in_threadpool(_etape_cloudflare, request, form, action)
             elif etape == "fin":
                 installation.terminer()
                 return RedirectResponse("/", status_code=303)
@@ -1080,12 +1140,17 @@ def page_invitation(request: Request, jeton: str = ""):
 
 @app.post("/invitation", response_class=HTMLResponse)
 def utiliser_invitation(request: Request, jeton: str = Form(...), identifiant: str = Form(""), nom: str = Form(""),
-                        mot_de_passe: str = Form(""), confirmation: str = Form(""), accepte: str = Form("")):
+                        mot_de_passe: str = Form(""), confirmation: str = Form(""), accepte: str = Form(""),
+                        captcha: str = Form("", alias=turnstile.CHAMP)):
     limiteur = request.app.state.limiteur
     ip = appareils.ip_client(request)
     attente = limiteur.bloque(ip) or _verrou_internet(request)
     if attente:
         return _page_invitation(request, "", 429, erreur=f"Trop d'essais : réessaie dans {attente // 60 + 1} min.")
+    refus_robot = _captcha(request, captcha, "invitation")
+    if refus_robot:   # le jeton reste dans la page : la personne n'a qu'à réessayer
+        jeton_ok = jeton if comptes.invitation(jeton) else ""
+        return _page_invitation(request, jeton_ok, 403, erreur=refus_robot, identifiant=identifiant, nom=nom)
     inv = comptes.invitation(jeton)
     if not inv:
         limiteur.echec(ip)

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block titre %}Appareil à approuver{% endblock %}
 {% block contenu %}
+{% from "_turnstile.html" import captcha with context %}
 <div class="connexion">
   <img src="/static/logo.svg" alt="">
   <h1>Claunote</h1>
@@ -11,6 +12,7 @@
     <p><label>Code d'appareil<br><input name="code" placeholder="ABCD-EFGH" autocomplete="one-time-code"
        autocapitalize="characters" spellcheck="false" maxlength="12" required autofocus></label></p>
     <p><label>Nom de cet appareil<br><input name="nom" maxlength="60" value="{{ nom or '' }}" required></label></p>
+    {{ captcha("appareil") }}
     <button class="principal">Approuver cet appareil</button>
     <p class="doux">Le code se crée dans <em>Réglages → Compte → Appareils par Internet</em>, depuis un appareil
       déjà approuvé ou par ton VPN. Il vaut 15 minutes, une seule fois.</p>

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block titre %}{% if inv and inv.genre == 'mot_de_passe' %}Nouveau mot de passe{% else %}Créer ton compte{% endif %}{% endblock %}
 {% block contenu %}
+{% from "_turnstile.html" import captcha with context %}
 <div class="connexion invitation">
   <img src="/static/logo.svg" alt="">
   <h1>{% if inv and inv.genre == 'mot_de_passe' %}Nouveau mot de passe{% else %}Créer ton compte{% endif %}</h1>
@@ -18,6 +19,7 @@
     <p>Compte <strong>@{{ cible.identifiant if cible else '?' }}</strong> : choisis ton nouveau mot de passe. Tes autres appareils seront déconnectés.</p>
     <p><label>Nouveau mot de passe ({{ mdp_min }} caractères au moins)<br><input type="password" name="mot_de_passe" minlength="{{ mdp_min }}" autocomplete="new-password" required></label></p>
     <p><label>Encore une fois<br><input type="password" name="confirmation" minlength="{{ mdp_min }}" autocomplete="new-password" required></label></p>
+    {{ captcha("invitation") }}
     <button class="principal">Changer le mot de passe</button>
   </form>
   {% else %}
@@ -43,6 +45,7 @@
         <span>J'ai lu et j'accepte les <a href="/conditions" target="_blank">conditions d'utilisation</a> (version {{ version }})
         et la page <a href="/tes-donnees" target="_blank">Tes données</a>. J'ai 15 ans ou plus, ou l'accord d'un parent.</span></label>
     </div>
+    {{ captcha("invitation") }}
     <button class="principal">Créer mon compte</button>
   </form>
   {% endif %}
