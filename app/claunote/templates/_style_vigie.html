@@ -1,0 +1,22 @@
+{# Style Vigie (easter egg des Actualités, voir apparence.py) : couleurs d'accent et titres façon terminal.
+   Le fond reste celui du thème (clair ou sombre). Inclus dans le <style> de base.html. #}
+  :root[data-style="vigie"] {
+    --accent: #12915c; --accent-fonce: #0b6e45; --accent-pale: #e0f4ea; --alerte: #c2410c; --ok: #12915c;
+    --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(18, 145, 92, .12), transparent 60%),
+      radial-gradient(90% 50% at 0% 100%, rgba(56, 189, 248, .10), transparent 60%);
+  }
+  {% set vigie_sombre %}
+    --accent: #3ddc97; --accent-fonce: #6ee7b7; --accent-pale: #11291f; --alerte: #fb923c; --ok: #3ddc97;
+    --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(61, 220, 151, .10), transparent 60%),
+      radial-gradient(90% 50% at 0% 100%, rgba(56, 189, 248, .07), transparent 60%);
+  {% endset %}
+  @media (prefers-color-scheme: dark) { :root[data-style="vigie"]:not([data-theme="clair"]) { {{ vigie_sombre }} --sur-accent: #0b0f14; } }
+  :root[data-style="vigie"][data-theme="sombre"] { {{ vigie_sombre }} --sur-accent: #0b0f14; }
+  [data-style="vigie"] .badge, [data-style="vigie"] button.principal, [data-style="vigie"] a.bouton.principal { color: var(--sur-accent, #fff); }
+  [data-style="vigie"] h1, [data-style="vigie"] h2, [data-style="vigie"] .marque {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; letter-spacing: -.03em; }
+  [data-style="vigie"] h1::before { content: "# "; color: var(--accent); }
+  [data-style="vigie"] .titre-groupe::before { content: "// "; }
+  [data-style="vigie"] .marque img { background: #0b0f14; border-color: #1d2733; }
+  [data-style="vigie"] .carte { border-radius: 10px; }
+  [data-style="vigie"] input:focus, [data-style="vigie"] select:focus, [data-style="vigie"] textarea:focus { outline-style: dashed; }

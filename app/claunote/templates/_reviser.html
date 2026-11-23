@@ -1,7 +1,9 @@
 {# Styles et petits scripts communs aux pages Réviser, Campagne et Révision #}
 <style>
   :root { --g-fiche: #c4623f; --g-quiz: #3b6fb6; --g-cartes: #3f8a57; --g-examen: #8a4fb8; --g-plan: #2f8b8b; }
-  @media (prefers-color-scheme: dark) { :root { --g-fiche: #ee9a7b; --g-quiz: #8db4ec; --g-cartes: #86cf9c; --g-examen: #c9a0ec; --g-plan: #7fd0cf; } }
+  {% set g_sombre %}--g-fiche: #ee9a7b; --g-quiz: #8db4ec; --g-cartes: #86cf9c; --g-examen: #c9a0ec; --g-plan: #7fd0cf;{% endset %}
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="clair"]) { {{ g_sombre }} } }
+  :root[data-theme="sombre"] { {{ g_sombre }} }
   .g-fiche { --g: var(--g-fiche); } .g-quiz { --g: var(--g-quiz); } .g-cartes { --g: var(--g-cartes); }
   .g-examen { --g: var(--g-examen); } .g-plan { --g: var(--g-plan); }
   .pastille-genre { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 12px;

@@ -43,6 +43,7 @@
 {% endif %}
 {% if groupes and vue != 'favoris' %}
 <form method="post" action="/actualites/tout-lu" class="tout-lu"><input type="hidden" name="vue" value="{{ vue }}">
+  <a class="oeuf" href="/actualites/vigie" aria-label="Un secret" title="👁">{{ icone('vigie', 16) }}</a>
   <button class="petit">{{ icone('check', 18) }}Tout marquer comme lu</button></form>
 {% endif %}
 
@@ -141,7 +142,10 @@
   .favori.actif svg { fill: currentColor; }
   .vide .bouton { margin-top: 4px; }
   .pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
-  .tout-lu { margin: 4px 0 6px; display: flex; justify-content: flex-end; }
+  .tout-lu { margin: 4px 0 6px; display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+  /* Easter egg : un œil presque invisible, qui mène à la page cachée de Vigie */
+  .tout-lu .oeuf { display: inline-flex; padding: 8px; border-radius: 50%; color: var(--doux); opacity: .18; transition: opacity .3s, color .3s, transform .4s; }
+  .tout-lu .oeuf:hover, .tout-lu .oeuf:focus-visible { opacity: 1; color: var(--accent); transform: rotate(-12deg) scale(1.15); }
   .tout-lu button { display: inline-flex; align-items: center; gap: 6px; }
   @media (max-width: 760px) { .actus li.cible { margin: 0 -16px; padding-left: 16px; padding-right: 16px; } }
   @media (max-width: 420px) { .entete-actu .actions span { display: none; } }

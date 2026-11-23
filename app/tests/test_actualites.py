@@ -557,3 +557,46 @@ def test_flux_jamais_vers_le_reseau_local(monkeypatch):
                      event_hooks={"request": [ac._seulement_internet]})
     with pytest.raises(ac.FluxIllisible, match="réseau local"):
         ac.decouvrir("https://ex.fr/flux", c)
+
+
+def test_easter_egg_vigie(client, monkeypatch):
+    a = {**article(1, "Faille A"), "lu": False, "favori": False, "noms_sujets": [], "total": 1}
+    monkeypatch.setattr(db, "articles", lambda *x, **k: ([a], 1))
+    monkeypatch.setattr(db, "sujets", lambda: [])
+    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed",
+                                                     "releve_le": MAINTENANT, "sujet": None, "sujet_id": None,
+                                                     "notifier": False, "n": 1, "dernier": MAINTENANT,
+                                                     "erreur": None, "echecs": 0, "site": ""}])
+    r = client.get("/actualites")
+    assert 'href="/actualites/vigie"' in r.text
+    assert r.text.index('href="/actualites/vigie"') < r.text.index("Tout marquer comme lu")   # à sa gauche
+    r = client.get("/actualites/vigie")
+    assert r.status_code == 200 and 'href="https://vigie.dix-neuf.ovh"' in r.text and "noindex" in r.text
+    assert "frame-src 'self' blob:" in r.headers["content-security-policy"]   # pas d'iframe, CSP inchangée
+
+
+def test_vigie_debloque_le_style(client):
+    from claunote import apparence
+    r = client.get("/reglages/apparence")
+    assert r.status_code == 200 and 'value="sombre"' in r.text and 'value="vigie"' not in r.text   # pas encore trouvé
+    client.post("/reglages/apparence", data={"mode": "sombre", "style": "vigie"})
+    r = client.get("/reglages")
+    assert 'data-theme="sombre" data-style="claunote"' in r.text   # Vigie refusé tant que l'easter egg n'est pas trouvé
+    r = client.get("/actualites/vigie")
+    assert "Style Vigie débloqué" in r.text and "Appliquer le style Vigie" in r.text
+    assert "Style Vigie débloqué" not in client.get("/actualites/vigie").text   # une seule fois
+    r = client.post("/reglages/apparence", data={"mode": "sombre", "style": "vigie", "suite": "/actualites/vigie"},
+                    follow_redirects=False)
+    assert r.headers["location"] == "/actualites/vigie"
+    r = client.get("/reglages/apparence")
+    assert 'data-theme="sombre" data-style="vigie"' in r.text and "/static/logo-vigie.svg" in r.text
+    assert 'value="vigie" checked' in r.text and '<meta name="theme-color" content="#232220">' in r.text
+    client.post("/reglages/apparence", data={"mode": "nimporte", "style": "claunote"})
+    assert apparence.lire({"id": 1})["mode"] == "auto"
+
+
+def test_logo_vigie_garde_le_papillon():
+    import pathlib
+    statique = pathlib.Path(main.__file__).parent / "static"
+    papillon = lambda f: [l for l in (statique / f).read_text().splitlines() if "<path" in l][0].split(' d="')[1]
+    assert papillon("logo.svg") == papillon("logo-vigie.svg")

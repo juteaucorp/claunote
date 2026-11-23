@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Apparence{% endblock %}
+{% block contenu %}
+<p class="doux retour"><a href="/reglages">‹ Réglages</a></p>
+<h1>Apparence</h1>
+{% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
+
+<form method="post" action="/reglages/apparence" class="carte apparence">
+  <fieldset>
+    <legend>Thème</legend>
+    <div class="choix">
+      {% for cle, nom in modes.items() %}
+      <label class="option"><input type="radio" name="mode" value="{{ cle }}" {{ 'checked' if ap.mode == cle }}>
+        <span class="apercu apercu-{{ cle }}" aria-hidden="true"></span><span>{{ nom }}</span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  {% if ap.vigie %}
+  <fieldset>
+    <legend>Style</legend>
+    <div class="choix">
+      {% for cle, nom in styles.items() %}
+      <label class="option"><input type="radio" name="style" value="{{ cle }}" {{ 'checked' if ap.style == cle }}>
+        <img src="/static/{{ 'logo-vigie.svg' if cle == 'vigie' else 'logo.svg' }}" alt="" width="40" height="40"><span>{{ nom }}</span></label>
+      {% endfor %}
+    </div>
+    <p class="doux">Vigie change les couleurs, les titres et le logo (toujours le papillon), pas le fond. 👁 Bien trouvé.</p>
+  </fieldset>
+  {% else %}
+  <input type="hidden" name="style" value="claunote">
+  {% endif %}
+
+  <button class="principal">Enregistrer</button>
+</form>
+<p class="doux">Rien que pour ton compte : chacun choisit le sien.</p>
+
+<style>
+  .retour { margin: 0 0 6px; }
+  .apparence { max-width: 640px; }
+  .apparence fieldset { border: 0; padding: 0; margin: 0 0 18px; }
+  .apparence legend { font-weight: 600; margin-bottom: 8px; }
+  .apparence .choix { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .apparence .option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--bord); border-radius: 12px; cursor: pointer; }
+  .apparence .option:has(input:checked) { border-color: var(--accent); background: var(--accent-pale); }
+  .apparence .option input { margin: 0; accent-color: var(--accent); }
+  .apparence .option img { border-radius: 10px; border: 1px solid var(--bord); }
+  .apparence .apercu { width: 34px; height: 24px; border-radius: 7px; border: 1px solid var(--bord); flex: none; }
+  .apercu-clair { background: #faf9f5; }
+  .apercu-sombre { background: #232220; }
+  .apercu-auto { background: linear-gradient(135deg, #faf9f5 50%, #232220 50%); }
+  .apparence > p.doux { margin-top: -6px; }
+</style>
+{% endblock %}
