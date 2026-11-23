@@ -2645,12 +2645,28 @@ def articles_trier(resultats: list[dict]):
                       "WHERE id = %(id)s", {"alerte": False, "evenement": None, "notion": None, **r})
 
 
-def articles_a_annoncer():
+def articles_a_annoncer(jours_alertes: int = 2):
+    """Articles triés pas encore décidés, plus les alertes récentes même déjà décidées : une alerte apparue
+    après coup (articles relus quand un sujet change, premier relevé d'un nouveau flux) sonne quand même.
+    Le doublon est évité par la clé de la notification (`actu-alerte:…`), pas par `annonce`."""
     with connect() as c:
         return c.execute(
             """SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, f.notifier AS flux_notifier
                FROM articles a JOIN flux f ON f.id = a.flux_id
-               WHERE NOT a.annonce AND a.tri <> 'attente' ORDER BY a.publie_le""").fetchall()
+               WHERE a.tri <> 'attente'
+                 AND (NOT a.annonce OR (a.alerte AND a.publie_le > now() - make_interval(days => %s)))
+               ORDER BY a.publie_le""", (jours_alertes,)).fetchall()
+
+
+def alerte_deja_envoyee(cles: list[str], cves: list[str], jours: int = 7) -> bool:
+    """Une de ces clés a déjà servi, ou une alerte des derniers jours citait déjà une de ces CVE."""
+    with connect() as c:
+        return c.execute(
+            """SELECT 1 FROM notifications WHERE cle = ANY(%(cles)s)
+                  OR (cle LIKE 'actu-alerte:%%' AND cree_le > now() - make_interval(days => %(jours)s)
+                      AND EXISTS (SELECT 1 FROM unnest(%(cves)s::text[]) v
+                                  WHERE notifications.titre || ' ' || notifications.corps ILIKE '%%' || v || '%%'))
+               LIMIT 1""", {"cles": cles, "cves": cves, "jours": jours}).fetchone() is not None
 
 
 def alertes_recentes(jours: int = 7) -> list[str]:

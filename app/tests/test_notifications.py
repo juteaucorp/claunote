@@ -211,6 +211,12 @@ def test_meme_texte_pas_renvoye_et_rafale_resumee(base, monkeypatch):
     nt.vider_file(LUNDI)
     assert len(envois) == 2 and envois[1]["titre"] == "5 nouveautés sur Claunote" and "Truc 4" in envois[1]["corps"]
     assert all(base.file[f"x:{i}"]["statut"] == "envoye" for i in range(5))
+    # Une alerte urgente dans la rafale part seule, avec son titre, en plus du résumé des autres
+    for i in range(5, 9):
+        base.notifier(f"y:{i}", f"Truc {i}")
+    base.notifier("actu-alerte:cve-2026-76466", "🚨 Faille Cisco exploitée")
+    nt.vider_file(LUNDI)
+    assert [e["titre"] for e in envois[2:]] == ["🚨 Faille Cisco exploitée", "4 nouveautés sur Claunote"]
 
 
 def test_revision_prete(base):

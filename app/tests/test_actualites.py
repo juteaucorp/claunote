@@ -52,6 +52,8 @@ class Base:
         monkeypatch.setattr(db, "articles_a_trier", lambda limite=200: [a for a in self.articles_ if a["tri"] == "attente"])
         monkeypatch.setattr(db, "articles_trier", lambda r: self.tries.extend(r))
         monkeypatch.setattr(db, "articles_a_annoncer", lambda: self.articles_)
+        self.envoyees = set()
+        monkeypatch.setattr(db, "alerte_deja_envoyee", lambda cles, cves: bool(self.envoyees & set(cles)))
         monkeypatch.setattr(db, "articles_annonces", lambda ids: self.annonces.extend(ids))
         monkeypatch.setattr(db, "abonnements", lambda: [{"endpoint": "x"}] if self.abonnes else [])
         monkeypatch.setattr(db, "notifier", lambda *a, **k: self.notifs.append(a) or True)
@@ -156,6 +158,34 @@ def test_seules_les_alertes_sonnent_une_fois_par_evenement(monkeypatch):
          "/actualites?article=1#a1"),
         ("actu:ex.fr/7", "Alerte CERT", "CERT-FR", "/actualites?article=7#a7")]
     assert sorted(b.annonces) == [1, 2, 3, 4, 5, 6, 7]   # tout est décidé une fois pour toutes
+
+
+def test_alerte_apparue_apres_coup_sonne_quand_meme(monkeypatch):
+    """Cas réel : faille Cisco dans « L'essentiel » sans notification (article déjà décidé avant que l'IA en
+    fasse une alerte : relu après un changement de sujet, ou premier relevé d'un nouveau flux Google)."""
+    cisco = article(1, "Cisco Expressway : faille critique CVE-2026-76466 exploitée", tri="ia", sujets=[7],
+                    score=0.95, alerte=True, evenement="cisco-faille-critique", annonce=True,
+                    source="Google Actualités : Réseaux")
+    vieux_flux = article(2, "Nouveauté d'un flux suivi", tri="ia", sujets=[], score=0.5, flux_notifier=True,
+                         annonce=True)   # déjà décidé : ne resonne pas
+    b = Base(SUJETS, [cisco, vieux_flux])
+    b.brancher(monkeypatch)
+    assert ac.annoncer(MAINTENANT) == 1
+    assert b.notifs[0][0] == "actu-alerte:cve-2026-76466" and b.notifs[0][1].startswith("🚨 Cisco")
+    assert b.annonces == []   # rien de neuf à marquer
+    # Une fois partie, elle ne repart plus, même relayée par un autre site sous une autre étiquette
+    b.envoyees.add("actu-alerte:cve-2026-76466")
+    b.articles_.append(article(3, "Cisco corrige la CVE-2026-76466", tri="ia", sujets=[7], score=0.9, alerte=True,
+                               evenement="cisco-expressway-cve"))
+    b.notifs.clear()
+    assert ac.annoncer(MAINTENANT) == 0 and b.notifs == []
+
+
+def test_cles_alerte_par_cve_sinon_etiquette():
+    a = article(1, "Faille CVE-2026-1111 et cve-2026-2222", evenement="fortinet")
+    assert ac._cles_alerte(a) == (["actu-alerte:cve-2026-1111", "actu-alerte:cve-2026-2222"],
+                                  ["CVE-2026-1111", "CVE-2026-2222"])
+    assert ac._cles_alerte(article(2, "Fuite géante", evenement="fuite-x")) == (["actu-alerte:fuite-x"], [])
 
 
 def test_sans_appareil_rien_ne_sonne_mais_tout_est_note(monkeypatch):

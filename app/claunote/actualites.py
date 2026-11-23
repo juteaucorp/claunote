@@ -821,37 +821,65 @@ def quotidien(maintenant: dt.datetime | None = None) -> bool:
 
 # --- Notifications ------------------------------------------------------------------
 
+CVE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.I)
+
+
+def _cles_alerte(a: dict) -> tuple[list[str], list[str]]:
+    """(clés de notification, CVE citées) d'une alerte. Une CVE identifie mieux la faille que l'étiquette de
+    l'IA : deux sites qui donnent deux étiquettes à la même CVE ne sonnent qu'une fois, et une étiquette
+    réutilisée pour une autre faille (« cisco-faille-critique ») ne bloque pas la nouvelle."""
+    texte = " ".join(str(a.get(k) or "") for k in ("titre", "pourquoi", "extrait", "evenement"))
+    cves = sorted({c.upper() for c in CVE.findall(texte)})
+    if cves:
+        return [f"actu-alerte:{c.lower()}" for c in cves], cves
+    return [f"actu-alerte:{a.get('evenement') or a['cle']}"[:400]], []
+
+
 def annoncer(maintenant: dt.datetime | None = None) -> int:
-    """Décide une fois pour toutes, pour chaque article trié, s'il sonne.
+    """Décide, pour chaque article trié, s'il sonne.
 
     Sonne : une alerte (rare et grave, jugée par l'IA) d'un sujet « à notifier », une seule fois par événement
     même si plusieurs sites en parlent ; ou chaque nouveauté d'un flux marqué « tout m'intéresse ».
+    Une alerte de moins de 2 jours reste candidate même déjà décidée (relue après un changement de sujet,
+    venue d'un flux à son premier relevé) : seule une notification déjà partie pour elle l'arrête.
     Sans l'IA, rien ne sonne pour les sujets : les mots-clés ne savent pas juger de la gravité.
     """
     articles = db.articles_a_annoncer()
     if not articles:
         return 0
     maintenant = maintenant or dt.datetime.now(dt.timezone.utc)
-    actif = notifications.preferences().get("actualites", True) and bool(db.abonnements())
+    pref = notifications.preferences().get("actualites", True)
+    appareils = bool(db.abonnements())
+    actif = pref and appareils
     sujets = {s["id"]: s for s in db.sujets()}
     notifiants = {i for i, s in sujets.items() if s["notifier"]}
     n, vus = 0, set()
     for a in sorted(articles, key=lambda a: -(a["score"] or 0)):
-        if not actif or a["publie_le"] < maintenant - dt.timedelta(days=AGE_NOTIF):
-            continue
+        neuf = not a.get("annonce")
+        recent = a["publie_le"] >= maintenant - dt.timedelta(days=AGE_NOTIF)
         resume = a["pourquoi"] or a["extrait"][:200]
         url = f"/actualites?article={a['id']}#a{a['id']}"
-        if a.get("alerte") and any(s in notifiants for s in a["sujets"]):
-            evenement = a.get("evenement") or a["cle"]
-            if evenement in vus:
+        if a.get("alerte") and a["sujets"]:
+            pourquoi_pas = ("notifications Actualités coupées" if not pref else "aucun appareil abonné" if not appareils
+                            else "trop ancienne" if not recent
+                            else "sujet sans « Me notifier »" if not any(s in notifiants for s in a["sujets"]) else None)
+            if pourquoi_pas:
+                if neuf:
+                    log(f"alerte non notifiée ({pourquoi_pas}) : {a['titre'][:80]}")
                 continue
-            vus.add(evenement)
-            # La clé de l'événement : la même fuite relayée par trois sites ne sonne qu'une fois
-            n += db.notifier(f"actu-alerte:{evenement}"[:400], f"🚨 {a['titre']}"[:120],
-                             f"{resume} ({a['source']})"[:300], url)
-        elif a["flux_notifier"] and (a["tri"] != "ia" or (a["score"] or 0) >= 0.3 or not a["sujets"]):
-            n += db.notifier(f"actu:{a['cle']}"[:400], a["titre"][:120], (f"{a['source']} : {resume}" if resume else a["source"])[:300], url)
-    db.articles_annonces([a["id"] for a in articles])
+            cles, cves = _cles_alerte(a)
+            if vus & set(cles) or db.alerte_deja_envoyee(cles, cves):
+                vus.update(cles)
+                continue
+            vus.update(cles)
+            if db.notifier(cles[0], f"🚨 {a['titre']}"[:120], f"{resume} ({a['source']})"[:300], url):
+                n += 1
+                log(f"alerte notifiée : {a['titre'][:80]}")
+        elif neuf and actif and recent and a["flux_notifier"] and (
+                a["tri"] != "ia" or (a["score"] or 0) >= 0.3 or not a["sujets"]):
+            n += db.notifier(f"actu:{a['cle']}"[:400], a["titre"][:120],
+                             (f"{a['source']} : {resume}" if resume else a["source"])[:300], url)
+    db.articles_annonces([a["id"] for a in articles if not a.get("annonce")])
     return n
 
 
