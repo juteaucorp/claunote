@@ -6,6 +6,17 @@
 <h1>Sources et sujets</h1>
 {% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
 {% if erreur %}<p class="carte alerte">{{ erreur }}</p>{% endif %}
+{% if suivi is not none %}
+<p class="carte doux">Tu es admin : choisis le <a href="#defaut"><strong>fil par défaut</strong></a> que reçoivent tous les comptes.</p>
+{% elif not personnalise %}
+<p class="carte etat-fil">{{ icone('actualites', 18) }}<span>Tu suis le <strong>fil par défaut</strong>, choisi par l'admin : il se met
+  à jour tout seul, avec les <strong>alertes urgentes activées</strong>. Change une source ou un sujet et ton fil devient le tien.</span></p>
+{% else %}
+<form method="post" action="/actualites/suivre-defaut" class="carte etat-fil"
+  onsubmit="return confirm('Remplacer tes sources et tes sujets par le fil par défaut ?')">
+  <span><strong>Ton fil est personnalisé.</strong> <span class="doux">Le fil par défaut de l'admin ne le change plus.</span></span>
+  <button>Revenir au fil par défaut</button></form>
+{% endif %}
 
 <h2 id="sujets">Sujets suivis</h2>
 <p class="doux">L'IA lit chaque nouvel article, le résume en une phrase et garde dans « Pour toi » ceux qui touchent
@@ -101,7 +112,35 @@
   <button class="principal">Enregistrer</button>
 </form>
 
+{% if suivi is not none %}
+{% set suivent, perso = suivi %}
+<h2 id="defaut">Fil par défaut pour tout le monde</h2>
+<div class="carte defaut">
+  <p>Tout compte qui n'a rien changé reçoit ce fil, et le suit quand tu le changes.
+    <strong>Alertes urgentes activées</strong> sur chaque sujet, notifications Actualités activées pour chaque nouveau compte.</p>
+  <p><strong>Aujourd'hui :</strong> {% if defaut.depart %}la sélection de départ{% else %}ton fil, copié le {{ defaut_le }}{% endif %}
+    · {{ defaut.sujets|length }} sujet{{ 's' if defaut.sujets|length > 1 }} · {{ defaut.flux|length }} flux</p>
+  <details><summary>Voir le contenu</summary>
+    <p><strong>Sujets :</strong> {% for x in defaut.sujets %}{{ x.nom }}{% if x.notifier %} {{ icone('cloche', 14) }}{% endif %}{% if x.recherche %} (+ Google Actualités){% endif %}{{ ', ' if not loop.last }}{% endfor %}</p>
+    <p><strong>Flux :</strong> {% for x in defaut.flux %}{{ x.titre or x.url }}{{ ', ' if not loop.last }}{% endfor %}</p>
+  </details>
+  <p class="doux">Suivent le fil par défaut : {{ suivent|map(attribute='nom')|join(', ') or 'personne pour l’instant' }}.
+    {% if perso %}Fil personnalisé (non touché) : {{ perso|map(attribute='nom')|join(', ') }}.{% endif %}</p>
+  <form method="post" action="/actualites/defaut" class="actions"
+    onsubmit="return confirm('Changer le fil par défaut de tous les comptes qui n’ont rien changé ?')">
+    <button class="principal" name="depuis" value="mon-fil">Mettre mon fil par défaut pour tout le monde</button>
+    {% if not defaut.depart %}<button name="depuis" value="depart">Revenir à la sélection de départ</button>{% endif %}
+  </form>
+</div>
+{% endif %}
+
 <style>
+  .etat-fil { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: space-between; }
+  .etat-fil > svg { flex: none; }
+  .etat-fil span { flex: 1 1 240px; }
+  .defaut p { margin: 0 0 10px; }
+  .defaut details { margin-bottom: 10px; }
+  .defaut .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .retour-actu { margin: 0 0 4px; }
   .retour-actu a { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
   .sujet summary, .ajout summary { cursor: pointer; display: flex; align-items: center; gap: 8px; }

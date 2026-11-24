@@ -25,6 +25,8 @@ class FauxComptes:
         m(db, "compte_par_identifiant", lambda ident: next(
             (dict(k) for k in self.comptes.values() if k["identifiant"] == ident.strip().lower()), None))
         m(db, "comptes", lambda: [dict(k) for k in self.comptes.values()])
+        m(db, "comptes_actualites", lambda: [i for i, k in self.comptes.items() if k.get("actif", True)
+                                             and (k["role"] == "admin" or "actualites" in (k.get("droits") or []))])
         m(db, "creer_compte", self.creer_compte)
         m(db, "maj_compte", lambda i, **ch: self.comptes[i].update(ch) if i in self.comptes else None)
         m(db, "renommer_compte", lambda i, ident: self.comptes[i].update(identifiant=ident) or True)
