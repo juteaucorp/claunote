@@ -3433,7 +3433,7 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
     essentiel = None
     if vue == "pour_toi" and page == 1 and not sujet and not flux:
         p = actualites.point()
-        if p and p.get("points") and time.time() - float(p.get("le") or 0) < 36 * 3600:
+        if p and p.get("points") and time.time() - float(p.get("le") or 0) < actualites.POINT_AFFICHE:
             sources = {a["id"]: a for a in db.articles_par_ids(sorted({i for x in p["points"] for i in x["ids"]}))}
             essentiel = {**p, "le_txt": dt.datetime.fromtimestamp(float(p["le"]), pronote.PARIS).strftime("%H:%M"),
                          "points": [{**x, "articles": [sources[i] for i in x["ids"] if i in sources]}

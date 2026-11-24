@@ -226,3 +226,53 @@ def test_fil_deja_change_avant_le_fil_par_defaut_reste_le_sien(base):
         db.sujet_ajouter("Jeux vidéo", "", ["jeu"])
         actualites.initialiser()
         assert actualites.personnalise() and _noms()[0] == ["Jeux vidéo"]
+
+
+# --- « L'essentiel du jour » pour les autres comptes (droit « essentiel ») -----------------------------------
+
+def _fil_essentiel(compte_id, sujet="Cybersécurité"):
+    _fil(compte_id, sujet=sujet)
+    with db.pour_compte(compte_id):
+        flux_id = db.flux_liste()[0]["id"]
+        db.articles_ajouter(flux_id, [{"cle": "ex.fr/chrome", "lien": "https://ex.fr/chrome", "extrait": "",
+                                       "titre": "Faille Chrome 9,6/10 corrigée", "publie_le": dt.datetime.now(dt.timezone.utc)}],
+                            annonce=False)
+
+
+def test_essentiel_pour_les_comptes_avec_le_droit(base, monkeypatch):
+    meme_fil = db.creer_compte("camille", "h", "invite", ["actualites", "essentiel"])
+    sans_droit = db.creer_compte("dominique", "h", "invite", ["actualites"])
+    autre_fil = db.creer_compte("eli", "h", "invite", ["actualites", "essentiel"])
+    for c in (1, meme_fil, sans_droit):
+        _fil_essentiel(c)
+    _fil_essentiel(autre_fil, sujet="Failles")   # un autre sujet : fil différent de celui de l'admin
+    db.etat_ecrire("actualites_releve", str(9e12))
+    points = []
+
+    def demander(tache, prompt, cwd, entree=None, timeout=0, lire=None, **k):
+        ids = [json.loads(l)["id"] for l in entree.splitlines()]
+        if tache == "actualites_point":
+            points.append((db.compte_actuel(), agent.forfait_autorise()))
+            return lire(json.dumps({"points": [{"texte": f"Point {i}", "ids": [i]} for i in ids]})), "opus"
+        return lire(json.dumps([{"id": i, "sujets": ["S1"], "score": 0.9, "resume": f"Résumé {i}",
+                                 "alerte": False, "evenement": f"e{i}"} for i in ids])), "haiku"
+    monkeypatch.setattr(agent, "demander", demander)
+    monkeypatch.setattr(notifications, "en_silence", lambda m, p: False)
+    actualites.tour(lambda: True)
+
+    # Claude : l'admin, et le compte au fil différent (sur le forfait de l'admin, sans autonomie) ; pas les autres
+    assert points == [(1, True), (autre_fil, True)]
+    with db.pour_compte(1):
+        admin = actualites.point()
+    with db.pour_compte(meme_fil):   # même fil : le point de l'admin, relié à SES articles
+        p = actualites.point()
+        a_moi = {a["id"] for a in db.articles("tout")[0]}
+        assert p["copie"] and [x["texte"] for x in p["points"]] == [x["texte"] for x in admin["points"]]
+        assert {i for x in p["points"] for i in x["ids"]} == a_moi
+    with db.pour_compte(sans_droit):
+        assert actualites.point() is None
+    with db.pour_compte(autre_fil):
+        assert len(actualites.point()["points"]) == 2
+
+    actualites.tour(lambda: True)    # rien de nouveau : ni Claude, ni nouvelle copie
+    assert len(points) == 2

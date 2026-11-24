@@ -25,6 +25,7 @@ DROITS = {
     "reviser": ("Réviser", "Fiches, quiz, campagnes, flashcards, questions sur ses cours"),
     "agenda": ("Agenda Pronote", "Voir l'agenda et les notes Pronote de l'environnement"),
     "actualites": ("Actualités", "Son propre fil d'actualités (sources, sujets, alertes)"),
+    "essentiel": ("L'essentiel du jour", "Le point du jour des actualités fait par Claude (forfait de l'admin, même sans autonomie)"),
     # Le forfait Claude : un choix à trois niveaux (FORFAIT), pas une case. Gardés ici pour les droits enregistrés.
     "claude": ("Forfait Claude de l'admin", "En autonomie : l'IA de Claude sur ton abonnement, sans demander"),
     "claude_demande": ("Forfait Claude sur demande", "Chaque fiche, quiz ou campagne attend ton oui (page Demandes IA)"),
@@ -40,7 +41,7 @@ FORFAIT = {
 }
 FORFAIT_DROIT = {"autonomie": "claude", "demande": "claude_demande", "aucun": None}
 DROITS_CASES = [d for d in DROITS if d not in ("claude", "claude_demande")]   # les autres : des cases à cocher
-DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "actualites", "claude_demande"]   # par défaut
+DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "actualites", "essentiel", "claude_demande"]   # par défaut
 FORFAIT_INVITE = "demande"
 ROLES = {"admin": "Admin", "invite": "Invité"}
 DUREE_JETON = 15 * 60
@@ -211,6 +212,7 @@ def pour(compte_id: int | None, tout_voir: bool = False):
 def migrer():
     """Le compte 1 (admin) reprend l'identifiant et le mot de passe d'avant (page Compte, sinon .env)."""
     migrer_forfait()
+    migrer_essentiel()
     admin = db.compte(1)
     if admin is None or admin.get("hash"):
         return
@@ -235,6 +237,18 @@ def migrer_forfait():
         if k["role"] != "admin" and "claude" not in droits and "claude_demande" not in droits:
             db.maj_compte(k["id"], droits=droits + ["claude_demande"])
     db.etat_ecrire("forfait_niveaux", "fait")
+    oublier()
+
+
+def migrer_essentiel():
+    """Une seule fois : les invités qui ont déjà les Actualités reçoivent « L'essentiel du jour » (case à décocher)."""
+    if db.etat_valeur("droit_essentiel") == "fait":
+        return
+    for k in db.comptes():
+        droits = list(k.get("droits") or [])
+        if k["role"] != "admin" and "actualites" in droits and "essentiel" not in droits:
+            db.maj_compte(k["id"], droits=droits + ["essentiel"])
+    db.etat_ecrire("droit_essentiel", "fait")
     oublier()
 
 
