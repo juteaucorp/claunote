@@ -41,6 +41,22 @@
   </form>
 </div>
 
+<details class="carte" style="max-width: 640px" id="notif-test">
+  <summary><strong>Envoyer une notification de test</strong>
+    <br><span class="doux">À un ou plusieurs comptes, sur tous leurs appareils abonnés (même pendant leurs heures de silence).</span></summary>
+  <form method="post" action="/comptes/notification-test">
+    <fieldset class="droits"><legend>À qui</legend>
+      {% for k in comptes if k.actif %}
+      {% set n = appareils.get(k.id, 0) %}
+      <label><input type="checkbox" name="comptes" value="{{ k.id }}" {{ 'disabled' if not n }}> <span><strong>{{ k.nom or k.identifiant }}</strong>
+        <span class="doux">@{{ k.identifiant }}{% if k.id == moi().id %} (toi){% endif %} · {% if n %}{{ n }} appareil{{ 's' if n > 1 }}{% else %}aucun appareil abonné{% endif %}</span></span></label>
+      {% endfor %}
+    </fieldset>
+    <p><label>Message (facultatif)<br><input name="texte" maxlength="200" placeholder="Notification de test envoyée par l'admin 🔔"></label></p>
+    <button class="principal">Envoyer le test</button>
+  </form>
+</details>
+
 <h2>Comptes ({{ comptes|length }})</h2>
 {% for k in comptes %}
 <details class="carte compte" {{ 'open' if comptes|length <= 2 and k.id != moi().id }}>

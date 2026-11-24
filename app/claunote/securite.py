@@ -73,6 +73,7 @@ TYPES = {
     "invitation_echec": ("attention", "Jeton d'invitation refusé"),
     "compte_cree": ("alerte", "Nouveau compte créé"),
     "compte_modifie": ("attention", "Compte modifié (droits, rôle, accès)"),
+    "notification_test": ("info", "Notification de test envoyée à des comptes"),
     "compte_deconnecte": ("info", "Compte déconnecté de ses appareils"),
     "compte_supprime": ("alerte", "Compte supprimé"),
     "reglage": ("alerte", "Réglage de l'installation changé"),

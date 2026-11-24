@@ -43,6 +43,7 @@ class FauxComptes:
         m(db, "compte_du_fichier", lambda kdrive_id: self.depots.get(kdrive_id, 1))
         m(db, "noter_depot", lambda kdrive_id, compte_id: self.depots.update({kdrive_id: compte_id}))
         m(db, "abonnements_de", lambda compte_id: db.abonnements())
+        m(db, "nb_appareils_par_compte", lambda: {})
         # Public ou privé : le partage ne s'affiche qu'à plusieurs comptes
         m(db, "plusieurs_comptes", lambda: sum(1 for k in self.comptes.values() if k["actif"]) > 1)
         m(db, "matieres_publiques", lambda: set(self.matieres_publiques))

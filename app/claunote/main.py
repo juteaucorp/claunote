@@ -1052,7 +1052,8 @@ def _page_comptes(request: Request, statut: int = 200, **plus):
         "comptes": db.comptes(), "invitations": db.invitations_recentes(15), "droits": {d: comptes.DROITS[d] for d in comptes.DROITS_CASES},
         "droits_invite": comptes.DROITS_INVITE, "forfaits": comptes.FORFAIT, "forfait_invite": comptes.FORFAIT_INVITE,
         "niveau_forfait": comptes.niveau_forfait, "roles": comptes.ROLES, "duree_min": comptes.DUREE_JETON // 60,
-        "maintenant": dt.datetime.now(dt.timezone.utc), "disque": disque.etat(), **plus}, status_code=statut)
+        "maintenant": dt.datetime.now(dt.timezone.utc), "disque": disque.etat(),
+        "appareils": db.nb_appareils_par_compte(), **plus}, status_code=statut)
 
 
 def _lien_jeton(request: Request, jeton: str) -> str:
@@ -1072,6 +1073,33 @@ def inviter(request: Request, role: str = Form("invite"), droits: list[str] = Fo
                    f"{comptes.DUREE_JETON // 60} min){' : ' + note.strip()[:60] if note.strip() else ''}")
     return _page_comptes(request, jeton={"valeur": jeton, "lien": _lien_jeton(request, jeton), "fin": fin,
                                          "genre": "compte"})
+
+
+TEXTE_TEST = "Notification de test envoyée par l'admin 🔔"
+
+
+@app.post("/comptes/notification-test", response_class=HTMLResponse)
+def notification_test_comptes(request: Request, comptes_: list[int] = Form([], alias="comptes"),
+                              texte: str = Form("")):
+    """L'admin envoie une notification de test aux comptes choisis (sur tous leurs appareils abonnés)."""
+    choisis = [k for k in db.comptes() if k["id"] in set(comptes_)]
+    if not choisis:
+        return _page_comptes(request, 400, erreur="Coche au moins un compte pour envoyer la notification de test.")
+    corps = " ".join(texte.split())[:200] or TEXTE_TEST
+    resultats = []
+    for k in choisis:
+        with db.pour_compte(k["id"]):   # pastille de l'icône calculée pour ce compte
+            envoyes, erreurs = notifications.envoyer_a_tous("Claunote", corps, "/notifications", "test-admin",
+                                                            compte_id=k["id"])
+        nom = k["nom"] or k["identifiant"]
+        if envoyes:
+            resultats.append(f"{nom} : reçue sur {envoyes} appareil{'s' if envoyes > 1 else ''}")
+        elif erreurs:
+            resultats.append(f"{nom} : échec ({erreurs[0][:80]})")
+        else:
+            resultats.append(f"{nom} : aucun appareil abonné")
+    securite.noter("notification_test", request, f"vers {', '.join('@' + k['identifiant'] for k in choisis)}")
+    return _retour_comptes("Notification de test : " + " ; ".join(resultats) + ".")
 
 
 def _cible(compte_id: int) -> dict:

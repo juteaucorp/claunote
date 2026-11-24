@@ -174,6 +174,29 @@ def test_chaque_requete_travaille_pour_son_compte(client, monkeypatch):
     assert vus[-1] == (2, (2, False))
 
 
+def test_admin_envoie_une_notification_de_test_aux_comptes_choisis(client, faux_comptes, monkeypatch):
+    invite, _ = _creer(_inviter(client))
+    _creer(_inviter(client), identifiant="lea")
+    monkeypatch.setattr(db, "nb_appareils_par_compte", lambda: {2: 2, 3: 1})
+    page = client.get("/comptes").text
+    assert "Envoyer une notification de test" in page and "2 appareils" in page and "aucun appareil abonné" in page
+    envois = []
+
+    def faux_envoi(titre, corps, url, tag="", compte_id=None):
+        envois.append((compte_id, corps, db.compte_actuel()))
+        return (2, []) if compte_id == 2 else (0, [])
+    monkeypatch.setattr(main.notifications, "envoyer_a_tous", faux_envoi)
+    r = client.post("/comptes/notification-test", data={"comptes": ["2", "3"], "texte": "  Coucou   toi "})
+    assert r.status_code == 200
+    assert envois == [(2, "Coucou toi", 2), (3, "Coucou toi", 3)]   # chacun sur ses appareils, sa pastille
+    assert "camille : reçue sur 2 appareils" in r.text and "lea : aucun appareil abonné" in r.text
+    envois.clear()
+    client.post("/comptes/notification-test", data={"comptes": ["3", "99"]})
+    assert envois == [(3, main.TEXTE_TEST, 3)]                       # compte inconnu ignoré, texte par défaut
+    assert client.post("/comptes/notification-test", data={}).status_code == 400
+    assert invite.post("/comptes/notification-test", data={"comptes": ["1"]}).status_code == 403   # admin seul
+
+
 def test_desactiver_supprimer_et_garde_fous(client, faux_comptes):
     invite, _ = _creer(_inviter(client))
     r = client.post("/comptes/2/modifier", data={"role": "invite", "droits": ["bibliotheque"], "nom": "Camille"},
