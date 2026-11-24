@@ -1937,6 +1937,13 @@ def abonnements_de(compte_id: int | None):
                ORDER BY a.cree_le""", {"c": compte_id}).fetchall()
 
 
+def nb_appareils_par_compte() -> dict[int, int]:
+    """Nombre d'appareils abonnés aux notifications, par compte (page Comptes de l'admin)."""
+    with sans_compte(), connect() as c:
+        return {r["compte_id"]: r["n"] for r in c.execute(
+            "SELECT compte_id, count(*) AS n FROM abonnements_push WHERE compte_id IS NOT NULL GROUP BY compte_id")}
+
+
 def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str = "attente") -> bool:
     """Met une notification dans la file ; faux si cette clé a déjà servi.
 
