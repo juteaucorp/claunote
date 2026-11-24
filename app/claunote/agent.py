@@ -105,13 +105,38 @@ _places = threading.BoundedSemaphore(PARALLELE)
 # `claude -p`, qui n'a plus que CLAUDE_CODE_OAUTH_TOKEN. Claude Code n'achète jamais de crédits : au-delà de
 # la limite, il s'arrête (sauf si l'« usage supplémentaire » est activé sur le compte claude.ai).
 FACTURATION_API = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-ENV_FORFAIT = {k: v for k, v in os.environ.items() if k not in FACTURATION_API}
+# Et rien d'autre : le prompt contient du texte écrit par les comptes (consigne, cours déposés), et Claude a l'outil
+# Read. Son environnement ne garde donc que ce dont Claude Code a besoin (jeton du forfait, PATH, proxy, langue…) :
+# jamais le mot de passe de la base, le jeton kDrive, les clés VAPID ou Cloudflare de .env.
+ENV_GARDE = {"PATH", "HOME", "USER", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TERM", "SHELL",
+             "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+             "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"}
+ENV_PREFIXES = ("LC_", "CLAUDE_CODE_", "CLAUDE_CONFIG_DIR", "DISABLE_", "XDG_")
+
+
+def env_claude(environ=None) -> dict[str, str]:
+    environ = os.environ if environ is None else environ
+    return {k: v for k, v in environ.items()
+            if k not in FACTURATION_API and (k in ENV_GARDE or k.startswith(ENV_PREFIXES))}
+
+
+ENV_FORFAIT = env_claude()
+
+# Claude ne lit que les fichiers qu'on lui donne (dossier de travail) : jamais les secrets de la VM, les fichiers des
+# autres comptes ni l'environnement des processus (/proc/1/environ = tout .env). Aucun outil qui écrit ou exécute.
+LECTURES_INTERDITES = ("//proc/**", "//sys/**", "//secrets/**", "//fichiers/**", "//tunnel/**", "//caddy/**",
+                       "//maj/**", "//etc/**", "//root/**", "//home/**", "//srv/**", "//var/**", "//run/**",
+                       "//dev/**", "//opt/**", "//mnt/**", "//data/**", "~/**")
+OUTILS_INTERDITS = ("Bash", "Edit", "Write", "NotebookEdit")
+REGLAGES_CLAUDE = json.dumps({"permissions": {
+    "deny": [*OUTILS_INTERDITS, *(f"{outil}({chemin})" for outil in ("Read", "Grep", "Glob")
+                                  for chemin in LECTURES_INTERDITES)]}})
 
 
 def rafraichir_env():
     """Jeton du forfait changé sur le site (Réglages → Installation) : les prochains appels l'utilisent."""
     global ENV_FORFAIT
-    ENV_FORFAIT = {k: v for k, v in os.environ.items() if k not in FACTURATION_API}
+    ENV_FORFAIT = env_claude()
 
 
 class LimiteAtteinte(Exception):
@@ -305,7 +330,8 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
     """
     if not _forfait.get():
         raise SansForfait("ce compte n'utilise pas le forfait Claude de l'admin (modèles locaux seulement)")
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", modeles.identifiant(modele)]
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", modeles.identifiant(modele),
+           "--settings", REGLAGES_CLAUDE, "--disallowedTools", ",".join(OUTILS_INTERDITS)]
     if modele == "opus" and not modeles.obligatoire(tache):
         cmd += ["--fallback-model", "sonnet"]  # Opus surchargé : Sonnet prend le relais (sauf création de contenu)
     if outils:

@@ -3360,7 +3360,10 @@ def demander_acces_cours(compte_id: int) -> bool:
     with sans_compte(), connect() as c:
         return c.execute("UPDATE comptes SET acces_cours = 'attente', acces_cours_le = now() WHERE id = %s "
                          "AND role <> 'admin' AND acces_cours IS DISTINCT FROM 'attente' "
-                         "AND acces_cours IS DISTINCT FROM 'accorde'", (compte_id,)).rowcount == 1
+                         "AND acces_cours IS DISTINCT FROM 'accorde' "
+                         # un refus : pas de nouvelle demande (ni de notification à l'admin) avant 24 h
+                         "AND NOT coalesce(acces_cours = 'refuse' AND acces_cours_le > now() - interval '1 day', false)",
+                         (compte_id,)).rowcount == 1
 
 
 def decider_acces_cours(compte_id: int, statut: str | None) -> bool:
