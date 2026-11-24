@@ -79,6 +79,9 @@ flowchart TD
 - **Fil par défaut** : un compte qui n'a rien changé suit le fil choisi par l'admin (*Sources et sujets → Fil par
   défaut pour tout le monde*, « Mettre mon fil par défaut »), sinon la sélection de départ, alertes urgentes
   activées. Il change une source ou un sujet : son fil devient le sien ; « Revenir au fil par défaut » l'y remet.
+- **Fil de l'admin par défaut, en permanence** (activé tant que l'admin ne le coupe pas) : chaque changement de son
+  fil devient le fil par défaut. Un compte qui le suit reprend ses articles, son tri par l'IA et son « Essentiel » :
+  ni relevé ni IA pour lui ; seules ses alertes (sur ses appareils), ses lectures et ses favoris sont à lui.
 - **L'essentiel du jour pour les autres comptes** : avec le droit « L'essentiel du jour » (page Comptes). Même fil
   que l'admin : son point est repris, sans rappeler Claude ; fil différent : Claude Opus le fait sur le forfait de
   l'admin, même sans autonomie.

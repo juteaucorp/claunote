@@ -2907,6 +2907,32 @@ def articles_pour_point(heures: int = 24, seuil: float = 0.6, limite: int = 14):
             {"heures": heures, "seuil": max(seuil, SEUIL_POUR_TOI), "limite": limite}).fetchall()
 
 
+def articles_miroir(compte_id: int, depuis, jours: int = 14) -> int:
+    """Fil identique à celui de l'admin : ses articles triés sont recopiés dans le fil de ce compte (mêmes adresses
+    de flux, sujets retrouvés par leur nom), avec le verdict de l'IA. Ni relevé ni IA pour lui. Lu, favori et
+    « déjà annoncé » restent à lui ; les articles arrivés chez l'admin avant `depuis` (None : tous) sont rangés
+    sans notification, les autres passent par ses alertes comme chez l'admin."""
+    with sans_compte(), connect() as c:
+        return c.execute(
+            """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, tri, sujets, score, pourquoi,
+                                     annonce, alerte, evenement, image, notion)
+               SELECT fm.id, a.cle, a.lien, a.titre, a.extrait, a.publie_le, a.tri,
+                      ARRAY(SELECT sm.id FROM sujets s JOIN sujets sm ON sm.nom = s.nom AND sm.compte_id = %(moi)s
+                            WHERE s.id = ANY(a.sujets) ORDER BY sm.id),
+                      a.score, a.pourquoi, %(depuis)s::timestamptz IS NULL OR a.cree_le < %(depuis)s,
+                      a.alerte, a.evenement, a.image, a.notion
+               FROM articles a JOIN flux f ON f.id = a.flux_id AND f.compte_id = 1
+               JOIN flux fm ON fm.compte_id = %(moi)s AND fm.url = f.url
+               WHERE a.compte_id = 1 AND a.tri <> 'attente' AND a.publie_le > now() - make_interval(days => %(jours)s)
+               ON CONFLICT (compte_id, cle) DO UPDATE SET tri = EXCLUDED.tri, sujets = EXCLUDED.sujets,
+                   score = EXCLUDED.score, pourquoi = EXCLUDED.pourquoi, alerte = EXCLUDED.alerte,
+                   evenement = EXCLUDED.evenement, notion = EXCLUDED.notion
+               WHERE (articles.tri, articles.sujets, articles.score, articles.pourquoi, articles.alerte, articles.evenement)
+                     IS DISTINCT FROM (EXCLUDED.tri, EXCLUDED.sujets, EXCLUDED.score, EXCLUDED.pourquoi,
+                                       EXCLUDED.alerte, EXCLUDED.evenement)
+               RETURNING id""", {"moi": compte_id, "depuis": depuis, "jours": jours}).rowcount
+
+
 def cles_articles(ids: list[int]) -> dict[int, str]:
     """Lien nettoyé (cle) de ces articles, quel que soit leur compte (copie de « L'essentiel » de l'admin)."""
     if not ids:

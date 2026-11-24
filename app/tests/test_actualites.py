@@ -634,3 +634,14 @@ def test_admin_met_son_fil_par_defaut(client, monkeypatch):
     assert p["sujets"][0]["nom"] == "Dev" and p["sujets"][0]["notifier"] is True
     assert [f["url"] for f in p["flux"]] == ["https://ex.fr/feed"] and not p["depart"]
     assert "ton fil, copié le" in client.get("/actualites/sources").text
+
+
+def test_admin_coupe_le_fil_par_defaut_permanent(client, monkeypatch):
+    monkeypatch.setattr(db, "sujets", lambda: [])
+    monkeypatch.setattr(db, "flux_liste", lambda: [])
+    assert "Mon fil est le fil par défaut, en permanence" in client.get("/actualites/sources").text
+    assert ac.defaut_en_permanence()
+    client.post("/actualites/defaut/permanent", data={}, follow_redirects=False)
+    assert client.etat["actualites_defaut_permanent"] == "non" and not ac.defaut_en_permanence()
+    client.post("/actualites/defaut/permanent", data={"permanent": "true"}, follow_redirects=False)
+    assert ac.defaut_en_permanence() and not json.loads(client.etat["actualites_defaut"])["depart"]

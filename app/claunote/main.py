@@ -3551,7 +3551,7 @@ def _page_sources(request: Request, message: str = "", erreur: str = "", saisie:
         "saisie": saisie or {}, "reglages": actualites.reglages(), "paris": pronote.PARIS,
         "notifs": notifications.preferences().get("actualites", True),
         "quotidien": actualites.heure_quotidienne(), "personnalise": actualites.personnalise(),
-        "defaut": (defaut := actualites.profil_defaut()),
+        "defaut": (defaut := actualites.profil_defaut()), "permanent": actualites.defaut_en_permanence(),
         "defaut_le": dt.datetime.fromtimestamp(float(defaut["le"]), pronote.PARIS).strftime("%d/%m à %H:%M")
                      if defaut.get("le") else "",
         "suivi": actualites.comptes_suivant_defaut() if comptes.est_admin(moi()) else None})
@@ -3672,6 +3672,8 @@ def actualites_suivre_defaut():
 @app.post("/actualites/defaut")
 def actualites_defaut(request: Request, depuis: str = Form("mon-fil")):
     """Admin : son fil (ou la sélection de départ) devient le fil par défaut de tous les comptes non personnalisés."""
+    if depuis == "depart":   # la sélection de départ : son fil ne la remplace plus tout seul
+        db.etat_ecrire("actualites_defaut_permanent", "non")
     p = actualites.definir_defaut(depuis_mon_fil=depuis != "depart")
     securite.noter("actualites_defaut", request, f"{'sélection de départ' if p['depart'] else 'fil de l’admin'} : "
                    f"{len(p['sujets'])} sujets, {len(p['flux'])} flux")
@@ -3679,6 +3681,17 @@ def actualites_defaut(request: Request, depuis: str = Form("mon-fil")):
     return RedirectResponse("/actualites/sources?" + urlencode(
         {"message": ("La sélection de départ" if p["depart"] else "Ton fil") + " est maintenant le fil par défaut : "
                     "les comptes qui n'ont rien changé le reçoivent d'ici une minute."}) + "#defaut", status_code=303)
+
+
+@app.post("/actualites/defaut/permanent")
+def actualites_defaut_permanent(request: Request, permanent: bool = Form(False)):
+    """Admin : son fil est-il le fil par défaut en permanence (chaque changement suivi par les autres comptes) ?"""
+    db.etat_ecrire("actualites_defaut_permanent", "oui" if permanent else "non")
+    if permanent:
+        actualites.definir_defaut()
+        db.etat_ecrire("actualites_relever", "oui")
+    securite.noter("actualites_defaut", request, f"fil de l’admin par défaut en permanence : {'oui' if permanent else 'non'}")
+    return RedirectResponse("/actualites/sources#defaut", status_code=303)
 
 
 @app.post("/actualites/reglages")

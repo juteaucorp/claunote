@@ -126,6 +126,13 @@
   </details>
   <p class="doux">Suivent le fil par défaut : {{ suivent|map(attribute='nom')|join(', ') or 'personne pour l’instant' }}.
     {% if perso %}Fil personnalisé (non touché) : {{ perso|map(attribute='nom')|join(', ') }}.{% endif %}</p>
+  <form method="post" action="/actualites/defaut/permanent" class="reglages">
+    <label class="interrupteur"><span><strong>Mon fil est le fil par défaut, en permanence</strong><br>
+      <span class="doux">Chaque changement de ton fil passe chez eux. Ils reprennent tes articles, ton tri, ton
+        « Essentiel » et tes alertes (sur leurs appareils) : rien n'est refait pour eux.</span></span>
+      <input type="checkbox" name="permanent" value="true" {{ 'checked' if permanent }} onchange="this.form.submit()"></label>
+    <noscript><button class="petit">OK</button></noscript>
+  </form>
   <form method="post" action="/actualites/defaut" class="actions"
     onsubmit="return confirm('Changer le fil par défaut de tous les comptes qui n’ont rien changé ?')">
     <button class="principal" name="depuis" value="mon-fil">Mettre mon fil par défaut pour tout le monde</button>
