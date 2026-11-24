@@ -38,6 +38,10 @@ from claunote import archivage, db, emploi_du_temps, pronote, revision
 PARIS = pronote.PARIS
 CONTACT = os.environ.get("CLAUNOTE_PUSH_CONTACT") or "mailto:claunote@example.com"
 DUREE_VIE = 12 * 3600   # Apple/Google gardent le message 12 h si le téléphone est éteint
+# « high » : Apple livre tout de suite. En « normal », il passe en priorité basse (5) : l'iPhone en veille
+# garde les messages et les sort d'un coup au prochain réveil réseau (un « Envoyer un test », par ex.).
+# Claunote n'envoie déjà que l'important, donc tout part en « high ».
+URGENCE = "high"
 INTERVALLE = 30         # secondes entre deux tours de la boucle
 MAX_PAR_TOUR = 3        # au-delà, les notifications du tour partent en un seul résumé
 DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
@@ -122,7 +126,7 @@ def envoyer(abo: dict, charge: dict) -> str | None:
     try:
         webpush({"endpoint": abo["endpoint"], "keys": {"p256dh": abo["p256dh"], "auth": abo["auth"]}},
                 json.dumps(charge), vapid_private_key=vapid(), vapid_claims={"sub": CONTACT},
-                ttl=DUREE_VIE, timeout=15, headers={"Urgency": "normal"})
+                ttl=DUREE_VIE, timeout=15, headers={"Urgency": URGENCE})
         return None
     except WebPushException as e:
         code = e.response.status_code if e.response is not None else None

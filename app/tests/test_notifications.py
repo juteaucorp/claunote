@@ -150,6 +150,7 @@ def test_envoi_chiffre_et_appareil_expire(base, monkeypatch):
     url, corps, entetes = envois[0]
     assert entetes["content-encoding"] == "aes128gcm" and b"VLAN" not in corps  # chiffré pour l'appareil
     assert entetes["ttl"] == str(nt.DUREE_VIE) and entetes["Authorization"].startswith("vapid t=")
+    assert entetes["Urgency"] == "high"  # sinon l'iPhone en veille garde tout jusqu'au prochain réveil
     assert [a["endpoint"] for a in base.abos] == ["https://web.push.apple.com/abc"]  # l'appareil désabonné est oublié
 
 
