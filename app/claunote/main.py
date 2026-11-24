@@ -3423,7 +3423,11 @@ def _page_sources(request: Request, message: str = "", erreur: str = "", saisie:
         "sujets": db.sujets(), "flux_liste": db.flux_liste(), "message": message, "erreur": erreur,
         "saisie": saisie or {}, "reglages": actualites.reglages(), "paris": pronote.PARIS,
         "notifs": notifications.preferences().get("actualites", True),
-        "quotidien": actualites.heure_quotidienne()})
+        "quotidien": actualites.heure_quotidienne(), "personnalise": actualites.personnalise(),
+        "defaut": (defaut := actualites.profil_defaut()),
+        "defaut_le": dt.datetime.fromtimestamp(float(defaut["le"]), pronote.PARIS).strftime("%d/%m à %H:%M")
+                     if defaut.get("le") else "",
+        "suivi": actualites.comptes_suivant_defaut() if comptes.est_admin(moi()) else None})
 
 
 @app.get("/actualites/sources", response_class=HTMLResponse)
@@ -3437,6 +3441,7 @@ def ajouter_flux(request: Request, url: str = Form(...), notifier: bool = Form(F
         adresse, infos, items = actualites.decouvrir(url)
     except actualites.FluxIllisible as e:
         return _page_sources(request, erreur=f"Flux non ajouté : {e}.", saisie={"url": url})
+    actualites.marquer_personnalise()
     flux_id = db.flux_ajouter(adresse, infos["titre"], infos["site"] or urlsplit(adresse).hostname or "", notifier=notifier)
     sujets = db.sujets()
     for i in items:  # déjà en ligne : rangés sans notification, triés par l'IA au prochain passage
@@ -3452,12 +3457,14 @@ def ajouter_flux(request: Request, url: str = Form(...), notifier: bool = Form(F
 
 @app.post("/actualites/flux/{flux_id}/notifier")
 def flux_notifier(flux_id: int, notifier: bool = Form(False)):
+    actualites.marquer_personnalise()
     db.flux_maj(flux_id, notifier=notifier)
     return RedirectResponse("/actualites/sources#flux", status_code=303)
 
 
 @app.post("/actualites/flux/{flux_id}/supprimer")
 def supprimer_flux(flux_id: int):
+    actualites.marquer_personnalise()
     db.flux_supprimer(flux_id)
     return RedirectResponse("/actualites/sources?message=Flux+retiré#flux", status_code=303)
 
@@ -3491,6 +3498,7 @@ def ajouter_sujet(request: Request, nom: str = Form(...), description: str = For
     nom = nom.strip()[:80]
     if not nom:
         return _page_sources(request, erreur="Donne un nom au sujet.")
+    actualites.marquer_personnalise()
     sujet_id = db.sujet_ajouter(nom, description.strip()[:500], _mots(mots_cles), notifier)
     if sujet_id is None:
         return _page_sources(request, erreur=f"Le sujet « {nom} » existe déjà.",
@@ -3509,6 +3517,7 @@ def modifier_sujet(sujet_id: int, nom: str = Form(...), description: str = Form(
         raise HTTPException(404)
     champs = {"nom": nom.strip()[:80] or avant["nom"], "description": description.strip()[:500],
               "mots_cles": _mots(mots_cles), "notifier": notifier}
+    actualites.marquer_personnalise()
     db.sujet_maj(sujet_id, **champs)
     _recherche_sujet(sujet_id, recherche)
     if (champs["description"], champs["mots_cles"], champs["nom"]) != (avant["description"], avant["mots_cles"],
@@ -3519,8 +3528,30 @@ def modifier_sujet(sujet_id: int, nom: str = Form(...), description: str = Form(
 
 @app.post("/actualites/sujets/{sujet_id}/supprimer")
 def supprimer_sujet(sujet_id: int):
+    actualites.marquer_personnalise()
     db.sujet_supprimer(sujet_id)
     return RedirectResponse("/actualites/sources?message=Sujet+retiré#sujets", status_code=303)
+
+
+@app.post("/actualites/suivre-defaut")
+def actualites_suivre_defaut():
+    """Revenir au fil par défaut (ses changements sont remplacés)."""
+    actualites.suivre_defaut()
+    db.etat_ecrire("actualites_relever", "oui")
+    return RedirectResponse("/actualites/sources?" + urlencode(
+        {"message": "Ton fil suit de nouveau le fil par défaut."}), status_code=303)
+
+
+@app.post("/actualites/defaut")
+def actualites_defaut(request: Request, depuis: str = Form("mon-fil")):
+    """Admin : son fil (ou la sélection de départ) devient le fil par défaut de tous les comptes non personnalisés."""
+    p = actualites.definir_defaut(depuis_mon_fil=depuis != "depart")
+    securite.noter("actualites_defaut", request, f"{'sélection de départ' if p['depart'] else 'fil de l’admin'} : "
+                   f"{len(p['sujets'])} sujets, {len(p['flux'])} flux")
+    db.etat_ecrire("actualites_relever", "oui")
+    return RedirectResponse("/actualites/sources?" + urlencode(
+        {"message": ("La sélection de départ" if p["depart"] else "Ton fil") + " est maintenant le fil par défaut : "
+                    "les comptes qui n'ont rien changé le reçoivent d'ici une minute."}) + "#defaut", status_code=303)
 
 
 @app.post("/actualites/reglages")

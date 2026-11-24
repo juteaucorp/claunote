@@ -23,6 +23,7 @@ def base(monkeypatch):
     db._etat_connexion.clear()
     with db.connect() as c:
         c.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+    db._etat["le"] = 0   # cache d'état (2 s) d'un test précédent : vide
     db.init()
     db.init()   # rejouable : le site et le worker l'exécutent à chaque démarrage
     yield

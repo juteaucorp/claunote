@@ -75,6 +75,7 @@ TYPES = {
     "compte_cree": ("alerte", "Nouveau compte créé"),
     "compte_modifie": ("attention", "Compte modifié (droits, rôle, accès)"),
     "notification_test": ("info", "Notification de test envoyée à des comptes"),
+    "actualites_defaut": ("info", "Fil d'actualités par défaut changé"),
     "compte_deconnecte": ("info", "Compte déconnecté de ses appareils"),
     "compte_supprime": ("alerte", "Compte supprimé"),
     "reglage": ("alerte", "Réglage de l'installation changé"),

@@ -354,3 +354,8 @@ def test_migration_invites_sur_demande(faux_comptes, monkeypatch):
     faux_comptes.comptes[a]["droits"] = ["reviser"]                 # l'admin choisit « Aucun » ensuite
     comptes.migrer_forfait()                                         # une seule fois : son choix reste
     assert faux_comptes.comptes[a]["droits"] == ["reviser"]
+
+
+def test_fil_par_defaut_reserve_a_l_admin():
+    assert comptes.droit_requis("/actualites/defaut", "POST") == "admin"
+    assert comptes.droit_requis("/actualites/suivre-defaut", "POST") == "actualites"
