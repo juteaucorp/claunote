@@ -24,7 +24,7 @@ DROITS = {
     "organiser": ("Organiser", "Classer, corriger, « À vérifier », supprimer ses documents"),
     "reviser": ("Réviser", "Fiches, quiz, campagnes, flashcards, questions sur ses cours"),
     "agenda": ("Agenda Pronote", "Voir l'agenda et les notes Pronote de l'environnement"),
-    "actualites": ("Actualités", "Lire et régler les actualités partagées"),
+    "actualites": ("Actualités", "Son propre fil d'actualités (sources, sujets, alertes)"),
     # Le forfait Claude : un choix à trois niveaux (FORFAIT), pas une case. Gardés ici pour les droits enregistrés.
     "claude": ("Forfait Claude de l'admin", "En autonomie : l'IA de Claude sur ton abonnement, sans demander"),
     "claude_demande": ("Forfait Claude sur demande", "Chaque fiche, quiz ou campagne attend ton oui (page Demandes IA)"),
@@ -71,7 +71,7 @@ PAGES = [
 # Pages de rangement où l'admin ne travaille que sur ses propres dépôts, même avec « Tout voir » : chaque compte
 # trie ses imports, choisit sa formation et range ses matières (l'admin garde l'accès aux documents des autres
 # par « Tout voir » sur Tous les documents, Bibliothèque…).
-SES_DEPOTS = ("/import", "/organiser/matieres", "/deposer")
+SES_DEPOTS = ("/import", "/organiser/matieres", "/deposer", "/actualites")   # « Actualités » : son fil à lui, pas un mélange
 
 
 def tout_voir(compte: dict | None, chemin: str) -> bool:

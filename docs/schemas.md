@@ -57,7 +57,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     F["Flux RSS que tu ajoutes<br/>+ sujets suivis (option Google Actualités)"] -->|relevé toutes les 30 min| D["Dédoublonnage par lien"]
-    D --> HClaude Haiku<br/>par lots de 40
+    D --> H["Claude Haiku<br/>par lots de 40"]
     H -->|indisponible| M["Tri par mots-clés"]
     H --> T["Score, résumé en 1 phrase,<br/>alerte ?, même événement ?, notion de cours"]
     M --> T
@@ -72,6 +72,10 @@ flowchart TD
 - **Heure de la notification du jour** : apprise de tes ouvertures des Actualités sur 28 jours (7 h 30 par défaut),
   ou fixée à la main, ou coupée (*Sources et sujets → Réglages*).
 - Rien ne sonne pendant tes heures de silence.
+- **À chaque compte son fil** : ses sources, ses sujets, ses articles lus ou favoris, son « Essentiel » et ses
+  alertes, sur ses appareils et selon ses réglages de notification. Un compte sans forfait Claude reprend le
+  résumé et l'alerte que l'IA a donnés au même article chez l'admin, rangés dans ses sujets par mots-clés
+  (pas d'« Essentiel » pour lui : la notification du jour compte ses articles).
 
 ## Qui fait le travail : local ou Claude
 
