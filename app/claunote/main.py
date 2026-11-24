@@ -3364,8 +3364,7 @@ def certificat():
 
 @app.get("/notifications", response_class=HTMLResponse)
 def page_notifications(request: Request, message: str = ""):
-    # Pronote (contrôles, emploi du temps) est celui de l'admin d'origine : ses réglages ne concernent que lui
-    pronote_a_moi = notifications._pronote((moi() or {}).get("id"))
+    pronote_a_moi = comptes.peut(moi(), "agenda")   # son Pronote à lui (Agenda)
     return templates.TemplateResponse(request, "notifications.html", {
         "p": notifications.preferences(), "appareils": db.abonnements(), "pronote_a_moi": pronote_a_moi,
         "edt": emploi_du_temps.resume(dt.datetime.now(pronote.PARIS),
@@ -3703,7 +3702,7 @@ def _agenda(request: Request, erreur: str | None = None, message: str | None = N
         etat = pronote.Client().etat()
     except pronote.ErreurPronote:
         # Service arrêté (mise à jour, redémarrage) : l'agenda de la dernière synchro reste lisible
-        etat = {"connecte": bool(db.etat_valeur("pronote_synchro")), "injoignable": True}
+        etat = {"connecte": bool(db.etat_valeur(pronote.cle("pronote_synchro"))), "injoignable": True}
     ctx = {"etat": etat, "erreur": erreur, "message": message}
     if etat.get("connecte"):
         matieres = sorted({r["matiere"] for r in db.niveaux_matieres()})
@@ -3711,8 +3710,8 @@ def _agenda(request: Request, erreur: str | None = None, message: str | None = N
                        for e in db.evenements_a_venir("evaluation", 60)]
         ctx |= {"evaluations": evaluations, "devoirs": db.evenements_a_venir("devoir", 14),
                 "documents": db.documents_pronote(30),
-                "notes": db.notes_recentes(15), "synchro": db.etat_valeur("pronote_synchro"),
-                "erreurs_synchro": db.etat_valeur("pronote_erreurs"), "paris": pronote.PARIS}
+                "notes": db.notes_recentes(15), "synchro": db.etat_valeur(pronote.cle("pronote_synchro")),
+                "erreurs_synchro": db.etat_valeur(pronote.cle("pronote_erreurs")), "paris": pronote.PARIS}
         ctx |= _emploi_du_temps(evaluations)
     return templates.TemplateResponse(request, "agenda.html", ctx)
 
@@ -3736,7 +3735,7 @@ def _emploi_du_temps(evaluations: list[dict]) -> dict:
 
 def _demander_documents():
     """Le worker récupère les documents des profs (trop long pour une page web)."""
-    db.etat_ecrire("pronote_demande", "oui")
+    db.etat_ecrire(pronote.cle("pronote_demande"), "oui")   # le sien : chaque compte a son Pronote
     db.demander_scan()  # réveille le worker
 
 

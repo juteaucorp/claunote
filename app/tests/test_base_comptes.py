@@ -267,18 +267,24 @@ def test_matieres_laissees_separees_par_compte(base):
         assert db.matieres_distinctes() == {"BTS1": {frozenset(("Maths", "Mathématiques"))}}
 
 
-def test_second_admin_synchronise_pronote(base, monkeypatch):
-    """Pronote est rangé chez le compte 1 : un autre admin qui synchronise ne bute pas sur ses lignes."""
-    from claunote import pronote
+def test_chacun_synchronise_son_pronote(base, monkeypatch):
+    """Chaque compte relie son Pronote : deux élèves de la même classe (mêmes contrôles) ont chacun leurs lignes,
+    leurs notes et leur emploi du temps, sans se gêner."""
+    from claunote import emploi_du_temps, pronote
     from tests.test_pronote import SYNCHRO, faux_service
     monkeypatch.setattr(pronote, "PREPARATION_AUTO", False)
     c = faux_service({("GET", "/etat"): (200, {"connecte": True}), ("POST", "/synchro"): (200, SYNCHRO)})
-    pronote.synchroniser(c)                       # le worker, puis un second admin
-    admin2 = db.creer_compte("dominique", "h", "admin", [])
-    with db.pour_compte(admin2):
-        assert pronote.synchroniser(c)["evenements"] == 3
+    pronote.synchroniser(c)                       # le worker, pour l'admin d'origine
+    camille = db.creer_compte("camille", "h", "invite", ["agenda"])
+    assert pronote.synchroniser(c, compte_id=camille)["evenements"] == 3
     with db.connect() as cx:
-        assert {r["compte_id"] for r in cx.execute("SELECT compte_id FROM pronote_evenements").fetchall()} == {1}
+        lignes = cx.execute("SELECT compte_id, count(*) AS n FROM pronote_evenements GROUP BY compte_id").fetchall()
+    assert {r["compte_id"]: r["n"] for r in lignes} == {1: 3, camille: 3}
+    with db.pour_compte(camille):
+        assert len(db.evenements_a_venir("evaluation", 400)) + len(db.evenements_a_venir("devoir", 400)) <= 3
+        assert db.etat_valeur(pronote.cle("pronote_synchro"))
+    assert db.etat_valeur(f"pronote_synchro:{camille}") and db.etat_valeur("pronote_synchro")
+    assert emploi_du_temps._charger(camille) == emploi_du_temps._charger(1)
 
 
 def test_chacun_range_ses_propres_depots(base):

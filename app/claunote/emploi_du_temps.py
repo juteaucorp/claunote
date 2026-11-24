@@ -48,12 +48,13 @@ def enregistrer(creneaux: list[dict] | None, du: str | None, au: str | None):
         return
     nouveaux = [{k: c.get(k) for k in ("debut", "fin", "matiere", "dispense", "genre", "salle", "prof", "statut")}
                 for c in creneaux]
-    db.etat_ecrire("pronote_edt", json.dumps(fusionner_fenetre(_charger(), nouveaux, du, au, "creneaux")))
+    db.etat_ecrire(db.cle_du_compte("pronote_edt"), json.dumps(fusionner_fenetre(_charger(), nouveaux, du, au, "creneaux")))
 
 
-def _charger() -> dict:
+def _charger(compte_id: int | None = None) -> dict:
+    """Emploi du temps du compte (celui de la requête ou du worker, ou `compte_id`) ; vide s'il n'a pas Pronote."""
     try:
-        d = json.loads(db.etat_valeur("pronote_edt") or "{}")
+        d = json.loads(db.etat_valeur(db.cle_du_compte("pronote_edt", compte_id)) or "{}")
     except ValueError:
         return {}
     return d if isinstance(d, dict) else {}

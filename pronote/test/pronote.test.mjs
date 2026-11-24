@@ -416,3 +416,16 @@ test("documents : télécharge les nouveaux, saute ceux déjà vus, respecte la 
   assert.equal(limite.documents.filter((d) => d.contenu).length, 1);
   assert.equal(limite.restant, 2);
 });
+
+test("un fichier de jeton par compte Claunote", async () => {
+  const { creerComptes, fichierDuCompte } = await import("../comptes.mjs");
+  assert.equal(fichierDuCompte("/data/compte.json", null), "/data/compte.json");
+  assert.equal(fichierDuCompte("/data/compte.json", "1"), "/data/compte.json");
+  assert.equal(fichierDuCompte("/data/compte.json", "7"), "/data/compte-7.json");
+  for (const mauvais of ["../1", "0", "1a", "-3", "1/2"]) assert.throws(() => fichierDuCompte("/data/compte.json", mauvais));
+  const dossier = await mkdtemp(join(tmpdir(), "comptes-"));
+  const comptes = creerComptes({ pawnote: {}, fichier: join(dossier, "compte.json") });
+  assert.equal(comptes.pour("7"), comptes.pour("7"));
+  assert.notEqual(comptes.pour("7"), comptes.pour(null));
+  assert.equal((await comptes.pour("7").etat()).connecte, false);
+});

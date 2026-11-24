@@ -262,15 +262,36 @@ def test_disque(monkeypatch):
     assert faux(30, total=1000)["niveau"] == "attention"     # moins de 10 % libres
 
 
-def test_pronote_relie_par_l_admin_seulement(client):
-    """Pronote est celui du site : un invité avec « Agenda » le lit, mais ne peut ni le relier, ni le couper."""
+def test_chacun_relie_son_pronote(client, monkeypatch):
+    """Chaque compte avec « Agenda » relie SON Pronote : le service reçoit son numéro de compte."""
+    from claunote import pronote
+    appels = []
+
+    class Faux:
+        def __init__(self, *a, compte_id=None, **k):
+            self.compte = compte_id or pronote.compte_courant()
+
+        def etat(self):
+            return {"connecte": False}
+
+        def connexion_identifiants(self, url, identifiant, mdp):
+            appels.append(("connexion", self.compte))
+
+        def deconnexion(self):
+            appels.append(("deconnexion", self.compte))
+
+    monkeypatch.setattr(pronote, "Client", Faux)
+    monkeypatch.setattr(pronote, "synchroniser", lambda *a, **k: {"connecte": True, "evenements": 0})
     invite, _ = _creer(_inviter(client, ["agenda"]))
-    for chemin, data in (("/agenda/connexion", {"url": "http://10.0.0.1", "identifiant": "x", "mot_de_passe": "y"}),
-                         ("/agenda/connexion-qr", {"qr": "{}", "pin": "0000"}),
-                         ("/agenda/deconnexion", {}), ("/agenda/synchroniser", {})):
-        assert invite.post(chemin, data=data).status_code == 403, chemin
-    assert comptes.droit_requis("/agenda") == "agenda"
-    assert comptes.droit_requis("/agenda/preparer", "POST") == "agenda"
+    r = invite.post("/agenda/connexion", data={"url": "http://10.0.0.1", "identifiant": "x", "mot_de_passe": "y"})
+    assert r.status_code == 200 and "Rien que pour toi" in invite.get("/agenda").text
+    invite.post("/agenda/deconnexion")
+    client.post("/agenda/deconnexion")
+    assert [a[0] for a in appels] == ["connexion", "deconnexion", "deconnexion"]
+    assert appels[0][1] == appels[1][1] != 1 and appels[2][1] == 1
+    assert not comptes.peut({"role": "invite", "droits": ["bibliotheque"], "actif": True}, "agenda")
+    assert comptes.droit_requis("/agenda/connexion", "POST") == "agenda"
+    assert pronote.Client is Faux and "agenda" in comptes.DROITS_INVITE
 
 
 def test_invite_voit_les_cours_publics_en_lecture_seule(client, monkeypatch):

@@ -1146,24 +1146,42 @@ def attendre(secondes: int):
 
 
 def synchro_pronote(prochaine: float) -> float:
-    """Synchronise Pronote si c'est l'heure ; renvoie l'heure (monotonic) de la suivante."""
-    if time.monotonic() < prochaine and not db.etat_consommer("pronote_demande"):
-        return prochaine
+    """Synchronise le Pronote de chaque compte relié si c'est l'heure (ou s'il l'a demandé) ; renvoie l'heure
+    (monotonic) de la suivante."""
+    du = time.monotonic() >= prochaine
+    rate = False
     try:
-        r = pronote.synchroniser()
+        relies = pronote.comptes_relies()
+    except Exception as e:
+        log(f"pronote : comptes illisibles : {e}")
+        relies = [1]
+    for compte_id in relies:
+        demande = db.etat_consommer(pronote.cle("pronote_demande", compte_id))
+        if du or demande:
+            rate |= not _synchro_compte(compte_id)
+    if not du:
+        return prochaine
+    return time.monotonic() + (REESSAI_PRONOTE if rate else SYNCHRO_PRONOTE)
+
+
+def _synchro_compte(compte_id: int) -> bool:
+    qui = "" if compte_id == 1 else f" (compte {compte_id})"
+    try:
+        r = pronote.synchroniser(compte_id=compte_id)
         if r["connecte"]:
-            log(f"pronote : {r['evenements']} évaluation(s)/devoir(s), {len(r['preparees'])} révision(s) lancée(s)"
+            log(f"pronote{qui} : {r['evenements']} évaluation(s)/devoir(s), {len(r['preparees'])} révision(s) lancée(s)"
                 + (f", erreurs : {r['erreurs']}" if r["erreurs"] else ""))
-            b = pronote.importer_documents(KDrive.from_env(), INBOX_ID)
-            notifications.apres_synchro_pronote(b["deposes"] if b else 0)
+            b = pronote.importer_documents(KDrive.from_env(), INBOX_ID, compte_id=compte_id)
+            with db.pour_compte(compte_id):
+                notifications.apres_synchro_pronote(b["deposes"] if b else 0, compte_id)
             if b:
-                log(f"pronote : {b['deposes']} document(s) des profs déposé(s) dans l'inbox, {b['liens']} lien(s)"
+                log(f"pronote{qui} : {b['deposes']} document(s) des profs déposé(s) dans l'inbox, {b['liens']} lien(s)"
                     + (f", {b['restant']} au prochain passage" if b["restant"] else "")
                     + (f", erreurs : {b['erreurs']}" if b["erreurs"] else ""))
+        return True
     except Exception as e:
-        log(f"pronote : synchro impossible, nouvel essai dans {REESSAI_PRONOTE // 60} min : {e}")
-        return time.monotonic() + REESSAI_PRONOTE
-    return time.monotonic() + SYNCHRO_PRONOTE
+        log(f"pronote{qui} : synchro impossible, nouvel essai dans {REESSAI_PRONOTE // 60} min : {e}")
+        return False
 
 
 def etape(nom: str, faire, *args):
@@ -1677,25 +1695,36 @@ def jour_calme(maintenant: dt.datetime, donnees: dict | None = None) -> bool:
 
 
 def verification_boucle():
-    """Cours modifiés et nouvelles notes, vérifiés à côté du worker (une longue analyse ne les retarde pas)."""
-    derniere = dt.datetime.now(pronote.PARIS)   # la synchro complète du démarrage vient de tout relever
+    """Cours modifiés et nouvelles notes de chaque compte relié, vérifiés à côté du worker (une longue analyse ne
+    les retarde pas). Chaque compte a son rythme (jour calme d'après SON emploi du temps)."""
+    debut = dt.datetime.now(pronote.PARIS)   # la synchro complète du démarrage vient de tout relever
+    dernieres: dict[int, dt.datetime] = {}
     while not ARRET.is_set():
         maintenant = dt.datetime.now(pronote.PARIS)
-        if verification_due(maintenant, derniere) and verification_due(maintenant, derniere, _calme(maintenant)):
-            derniere = maintenant
+        try:
+            relies = pronote.comptes_relies()
+        except Exception:
+            relies = [1]
+        for compte_id in relies:
+            derniere = dernieres.setdefault(compte_id, debut)
+            if not (verification_due(maintenant, derniere)
+                    and verification_due(maintenant, derniere, _calme(maintenant, compte_id))):
+                continue
+            dernieres[compte_id] = maintenant
+            qui = "" if compte_id == 1 else f" (compte {compte_id})"
             try:
-                r = pronote.verifier()
+                r = pronote.verifier(compte_id=compte_id)
                 if r.get("connecte") and (r["changements"] or r["notes"] or r["erreurs"]):
-                    log(f"pronote : {r['changements']} cours modifié(s), {r['notes']} nouvelle(s) note(s)"
+                    log(f"pronote{qui} : {r['changements']} cours modifié(s), {r['notes']} nouvelle(s) note(s)"
                         + (f", erreurs : {r['erreurs']}" if r["erreurs"] else ""))
             except Exception as e:
-                log(f"pronote : vérification rapide impossible : {e}")
+                log(f"pronote{qui} : vérification rapide impossible : {e}")
         ARRET.wait(60)
 
 
-def _calme(maintenant: dt.datetime) -> bool:
+def _calme(maintenant: dt.datetime, compte_id: int = 1) -> bool:
     try:
-        with db.pour_compte(1):   # l'emploi du temps relevé est celui de l'admin (Pronote est à lui)
+        with db.pour_compte(compte_id):   # son emploi du temps à lui
             return jour_calme(maintenant)
     except Exception:
         return False

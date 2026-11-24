@@ -16,11 +16,9 @@
 {% if not etat.connecte %}
   {% if etat.injoignable %}
   <div class="carte">Le service <code>pronote</code> ne tourne pas. Sur la VM : <code>docker compose up -d --build</code>.</div>
-  {% elif not est_admin() %}
-  <div class="carte">Pronote n'est pas encore relié : c'est l'admin qui le relie, pour tout le site.</div>
   {% else %}
-  <p class="doux">Relie ton compte Pronote : Claunote récupère tes évaluations, devoirs et notes toutes les 3 heures
-    et prépare tes révisions. {% if etat.expire %}<span class="alerte">La connexion a expiré : refais-la.</span>{% endif %}</p>
+  <p class="doux">Relie <strong>ton</strong> compte Pronote : Claunote récupère tes évaluations, devoirs, notes et ton emploi du temps
+    toutes les 3 heures, te prévient d'un cours modifié et prépare tes révisions. Rien que pour toi : les autres comptes ne voient pas ton Pronote. {% if etat.expire %}<span class="alerte">La connexion a expiré : refais-la.</span>{% endif %}</p>
 
   <form method="post" action="/agenda/connexion-qr" class="carte" id="form-qr">
     <h2 style="margin-top:0">Avec le QR code (recommandé, marche aussi via l'ENT)</h2>
@@ -57,10 +55,10 @@
     {% if etat.etablissement %}<span class="doux"> · {{ etat.etablissement }}</span>{% endif %}
     <div class="doux">Dernière synchronisation : {{ synchro|quand if synchro else 'jamais' }}
       {% if erreurs_synchro %} · <span class="alerte">{{ erreurs_synchro }}</span>{% endif %}</div>
-    {% if est_admin() %}<div class="actions" style="margin-top:10px">
+    <div class="actions" style="margin-top:10px">
       <form method="post" action="/agenda/synchroniser"><button class="principal">Synchroniser</button></form>
       <form method="post" action="/agenda/deconnexion" onsubmit="return confirm('Déconnecter Pronote ?')"><button>Déconnecter</button></form>
-    </div>{% endif %}
+    </div>
   </div>
 
   <h2 id="emploi-du-temps">Emploi du temps</h2>

@@ -174,3 +174,21 @@ def test_notification_avant_le_cours_une_fois_par_semaine(monkeypatch):
         "/cartes/session?paquet=7")
     assert nt.avant_les_cours(dimanche) is None                        # déjà proposé cette semaine
     assert nt.avant_les_cours(dimanche + dt.timedelta(days=7)) is None  # plus de cours connus après
+
+
+def test_chaque_compte_suit_son_emploi_du_temps(monkeypatch):
+    """Un invité qui a relié son Pronote : ses notifications attendent la fin de SES cours, pas de ceux de l'admin."""
+    etat = {"pronote_edt:2": json.dumps(DONNEES)}   # l'admin n'a pas d'emploi du temps, l'invité si
+    monkeypatch.setattr(db, "etat_valeur", lambda k: etat.get(k))
+    monkeypatch.setattr(db, "reserver_notifications", lambda seulement=None: [
+        {"id": 1, "cle": "a", "compte_id": None}, {"id": 2, "cle": "b", "compte_id": 2},
+        {"id": 3, "cle": "edt:x", "compte_id": 2}])
+    remis, partis = [], []
+    monkeypatch.setattr(db, "remettre_en_attente", remis.extend)
+    monkeypatch.setattr(nt, "_vider", lambda f, compte_id: partis.extend(n["id"] for n in f))
+    nt.vider_file(h(LUNDI, 9))
+    assert remis == [2] and partis == [1, 3]
+    assert db.cle_du_compte("pronote_edt", 2) == "pronote_edt:2" and db.cle_du_compte("pronote_edt", 1) == "pronote_edt"
+    with db.pour_compte(2):
+        assert edt._charger() == DONNEES and db.cle_du_compte("x") == "x:2"
+    assert edt._charger() == {}
