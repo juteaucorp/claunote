@@ -750,6 +750,8 @@ def _verifier(conn):
 # qui voient tout. Posé par le site à chaque requête connectée et par le worker le temps d'un travail.
 _compte: contextvars.ContextVar[tuple[int, bool] | None] = contextvars.ContextVar("compte", default=None)
 _partages: contextvars.ContextVar[bool] = contextvars.ContextVar("partages", default=False)
+# « Voir en tant que » (apercu.py) : les requêtes faites au nom du compte regardé ne peuvent rien écrire
+_lecture_seule: contextvars.ContextVar[bool] = contextvars.ContextVar("lecture_seule", default=False)
 _etat_connexion: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()   # connexion → contexte déjà posé
 
 
@@ -783,18 +785,34 @@ def partages():
         _partages.reset(jeton)
 
 
+@contextmanager
+def lecture_seule():
+    """Le temps du bloc, la base refuse toute écriture faite au nom du compte (pas le travail interne sans compte)."""
+    jeton = _lecture_seule.set(True)
+    try:
+        yield
+    finally:
+        _lecture_seule.reset(jeton)
+
+
+def en_lecture_seule() -> bool:
+    return _lecture_seule.get() and _compte.get() is not None
+
+
 def _appliquer_compte(conn):
     voulu = _compte.get()
     if voulu is not None:
-        voulu = (*voulu, _partages.get())
+        voulu = (*voulu, _partages.get(), _lecture_seule.get())
     if _etat_connexion.get(conn, ()) == voulu:
         return
     if voulu is None:
-        conn.execute("RESET ROLE; RESET claunote.compte; RESET claunote.tout; RESET claunote.partages")
+        conn.execute("RESET ROLE; RESET claunote.compte; RESET claunote.tout; RESET claunote.partages; "
+                     "RESET default_transaction_read_only")
     else:
         # Entiers uniquement (jamais de texte venu d'une requête) : pas d'injection possible
         conn.execute(f"SET ROLE claunote_compte; SET claunote.compte = '{int(voulu[0])}'; "
-                     f"SET claunote.tout = '{1 if voulu[1] else 0}'; SET claunote.partages = '{1 if voulu[2] else 0}'")
+                     f"SET claunote.tout = '{1 if voulu[1] else 0}'; SET claunote.partages = '{1 if voulu[2] else 0}'; "
+                     f"SET default_transaction_read_only = {'on' if voulu[3] else 'off'}")
     _etat_connexion[conn] = voulu
 
 
@@ -1621,6 +1639,8 @@ def a_revoir_par_matiere() -> dict:
 # --- Archivage (archivage.py décide quoi proposer) -----------------------------
 
 def noter_ouverture(rev_id: int):
+    if en_lecture_seule():
+        return   # l'admin qui regarde comme ce compte n'« ouvre » pas sa fiche à sa place
     with connect() as c:
         c.execute("UPDATE revisions SET ouverte_le = now() WHERE id = %s", (rev_id,))
 
@@ -2922,7 +2942,7 @@ def nb_actualites_nouvelles() -> int:
 
 def securite_noter(type: str, gravite: str, ip: str | None, pays: str | None, internet: bool, chemin: str | None,
                    navigateur: str | None, detail: str, alerte: bool) -> int:
-    with connect() as c:
+    with sans_compte(), connect() as c:   # noté même pendant un « Voir en tant que » (base en lecture seule)
         return c.execute(
             "INSERT INTO securite (type, gravite, ip, pays, internet, chemin, navigateur, detail, alerte) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",

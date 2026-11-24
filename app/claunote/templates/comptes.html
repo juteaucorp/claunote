@@ -73,7 +73,7 @@
 
 <h2>Comptes ({{ comptes|length }})</h2>
 {% for k in comptes %}
-<details class="carte compte" {{ 'open' if comptes|length <= 2 and k.id != moi().id }}>
+<details class="carte compte" id="compte-{{ k.id }}" {{ 'open' if comptes|length <= 2 and k.id != moi().id }}>
   <summary><strong>{{ k.nom or k.identifiant }}</strong> <span class="doux">@{{ k.identifiant }}</span>
     <span class="etiquette {{ 'admin' if k.role == 'admin' }}">{{ roles[k.role] }}</span>
     {% if not k.actif %}<span class="etiquette eteint">désactivé</span>{% endif %}
@@ -126,6 +126,12 @@
     <p><label>Fin d'accès (facultatif)<br><input type="date" name="expire_le" value="{{ k.expire_le.astimezone(paris_tz).date().isoformat() if k.expire_le else '' }}"></label></p>
     <button class="principal">Enregistrer</button>
   </form>
+  {% if k.id != moi().id %}
+  <form method="post" action="/comptes/{{ k.id }}/apercu" class="apercu-compte">
+    <button title="Le site tel que ce compte le voit : ses droits, son forfait, ses cours et les cours partagés, son fil d'Actualités. Lecture seule, 1 h, noté dans Sécurité.">👁 Voir en tant que {{ k.nom or k.identifiant }}</button>
+    <span class="doux">Pour vérifier ses droits : tu vois ce qu'il voit, <strong>sans rien pouvoir faire à sa place</strong>.</span>
+  </form>
+  {% endif %}
   <div class="actions">
     <form method="post" action="/comptes/{{ k.id }}/deconnecter"><button>Déconnecter partout</button></form>
     <form method="post" action="/comptes/{{ k.id }}/mot-de-passe"><button title="La personne choisit elle-même son nouveau mot de passe">Lien de nouveau mot de passe</button></form>
