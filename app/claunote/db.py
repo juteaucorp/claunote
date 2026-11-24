@@ -2880,10 +2880,28 @@ def articles_pour_point(heures: int = 24, seuil: float = 0.6, limite: int = 14):
     with connect() as c:
         return c.execute(
             f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source FROM articles a JOIN flux f ON f.id = a.flux_id
-                WHERE a.tri = 'ia' AND a.publie_le > now() - make_interval(hours => %(heures)s)
-                  AND (a.alerte OR (a.score >= %(seuil)s AND {PERTINENT}))
-                ORDER BY a.alerte DESC, a.score DESC, a.publie_le DESC LIMIT %(limite)s""",
+                WHERE a.publie_le > now() - make_interval(hours => %(heures)s)
+                  AND ((a.tri = 'ia' AND (a.alerte OR (a.score >= %(seuil)s AND {PERTINENT})))
+                       -- compte sans forfait : résumé repris de l'IA, rangé dans ses sujets par mots-clés
+                       OR (a.tri = 'mots_cles' AND a.pourquoi IS NOT NULL AND cardinality(a.sujets) > 0))
+                ORDER BY a.alerte DESC, coalesce(a.score, %(seuil)s) DESC, a.publie_le DESC LIMIT %(limite)s""",
             {"heures": heures, "seuil": max(seuil, SEUIL_POUR_TOI), "limite": limite}).fetchall()
+
+
+def cles_articles(ids: list[int]) -> dict[int, str]:
+    """Lien nettoyé (cle) de ces articles, quel que soit leur compte (copie de « L'essentiel » de l'admin)."""
+    if not ids:
+        return {}
+    with sans_compte(), connect() as c:
+        return {r["id"]: r["cle"] for r in c.execute("SELECT id, cle FROM articles WHERE id = ANY(%s)", (list(ids),)).fetchall()}
+
+
+def ids_par_cles(cles: list[str]) -> dict[str, int]:
+    """Les mêmes articles dans le fil du compte en cours."""
+    if not cles:
+        return {}
+    with connect() as c:
+        return {r["cle"]: r["id"] for r in c.execute("SELECT id, cle FROM articles WHERE cle = ANY(%s)", (list(cles),)).fetchall()}
 
 
 def articles_par_ids(ids: list[int]):

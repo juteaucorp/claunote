@@ -807,12 +807,67 @@ def lire_point(texte: str, ids: set[int]) -> dict:
     return {"points": points}
 
 
+POINT_AFFICHE = 36 * 3600   # au-delà, « L'essentiel » n'est plus montré (ni copié)
+
+
+def essentiel_permis() -> bool:
+    """« L'essentiel du jour » pour le compte en cours : l'admin, ou le droit « essentiel » (forfait de l'admin
+    pour ce seul point, même sans autonomie)."""
+    if _origine():
+        return True
+    from claunote import comptes
+    return comptes.peut(comptes.trouver(db.compte_actuel()), "essentiel")
+
+
+def _signature_fil():
+    return _cle_fil(profil_du_fil())
+
+
+def copier_point_admin(maintenant: float | None = None) -> bool | None:
+    """Même fil que l'admin (le fil par défaut, le plus souvent) : son « Essentiel » est repris, relié aux mêmes
+    articles de ce compte ; Claude n'est pas rappelé. None : rien à reprendre (fil différent, pas de point frais)."""
+    maintenant = maintenant or time.time()
+    mien = _signature_fil()
+    with db.pour_compte(1):
+        if _signature_fil() != mien:
+            return None
+        p = point()
+    if not p or not p.get("points") or maintenant - float(p.get("le") or 0) > POINT_AFFICHE:
+        return None
+    if (point() or {}).get("source_le") == p["le"]:
+        return False
+    cles = db.cles_articles(sorted({i for x in p["points"] for i in x["ids"]}))
+    miens = db.ids_par_cles(list(cles.values()))
+    points = [{"texte": x["texte"], "ids": ids} for x in p["points"]
+              if (ids := [miens[cles[i]] for i in x["ids"] if cles.get(i) in miens])]
+    if not points:
+        return None
+    db.etat_ecrire(cle("actualites_point"), json.dumps(
+        {"points": points, "le": p["le"], "ids": sorted({i for x in points for i in x["ids"]}),
+         "modele": p.get("modele"), "source_le": p["le"], "copie": True}, ensure_ascii=False))
+    log(f"« L'essentiel » de l'admin repris ({len(points)} points)")
+    return True
+
+
 def faire_point(claude_ok, maintenant: float | None = None) -> bool:
     """Refait « L'essentiel » quand de nouveaux articles importants sont arrivés (au plus toutes les 3 h,
-    tout de suite pour une alerte). Sans Claude, l'ancien point reste affiché : rien n'est inventé."""
+    tout de suite pour une alerte). Sans Claude, l'ancien point reste affiché : rien n'est inventé.
+    Un autre compte : seulement avec le droit « essentiel » ; même fil que l'admin = son point repris."""
+    if not reglages()["ia"] or local.reglages()["mode"] == "toujours":
+        return False
+    if _origine():
+        return _faire_point(claude_ok, maintenant)
+    if not essentiel_permis():
+        return False   # la notification du jour compte alors les articles pour toi
+    copie = copier_point_admin(maintenant)
+    if copie is not None:
+        return copie
+    with agent.forfait(True):   # le droit « essentiel » : ce point passe par le forfait de l'admin
+        return _faire_point(claude_ok, maintenant)
+
+
+def _faire_point(claude_ok, maintenant: float | None = None) -> bool:
     maintenant = maintenant or time.time()
-    if not reglages()["ia"] or local.reglages()["mode"] == "toujours" or not agent.forfait_autorise():
-        return False   # sans forfait : pas de point, la notification du jour compte les articles pour toi
     candidats = db.articles_pour_point(POINT_FENETRE, POINT_SEUIL, POINT_MAX)
     if len(candidats) < 2:
         return False
