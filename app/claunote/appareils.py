@@ -42,6 +42,10 @@ ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # sans 0/O, 1/I/L
 VU_TOUTES = 600                  # « vu le » mis à jour au plus toutes les 10 min
 CLE, CLE_CODE = "appareils", "appareil_code"
 ADMIN_ORIGINE = 1                # appareils d'avant les comptes : ceux de l'admin d'origine
+# Un invité gère lui-même UN appareil en plus de son appareil par défaut (lien d'invitation, ou donné par
+# l'admin) : il ne peut ni retirer celui par défaut ni en ajouter un troisième. Les admins, sans limite.
+PERSO_MAX = 1
+PERSO = "code"                   # origine d'un appareil ajouté par le compte lui-même (son emplacement libre)
 _cloudflared = {"le": float("-inf"), "ips": set()}
 # Lire, modifier, réécrire la liste d'un coup : sans ça, une requête d'un appareil (mise à jour de « vu le »)
 # pouvait réécrire l'ancienne liste juste après « Retirer » et faire revenir l'appareil retiré.
@@ -139,14 +143,17 @@ def _ecrire_codes(c: dict):
     db.etat_ecrire(CLE_CODE, json.dumps(c) if c["codes"] else None)
 
 
-def nouveau_code(compte_id: int = ADMIN_ORIGINE, maintenant: float | None = None) -> str:
+def nouveau_code(compte_id: int = ADMIN_ORIGINE, maintenant: float | None = None, par_admin: bool = False,
+                 limite: bool = False) -> str:
     """Code d'ajout d'un appareil pour ce compte (remplace son code précédent) ; renvoyé une seule fois,
-    la base n'en garde que l'empreinte."""
+    la base n'en garde que l'empreinte. `par_admin` : l'appareil sera « par défaut » (verrouillé pour l'invité) ;
+    `limite` : refusé à l'usage si l'emplacement libre du compte a été pris entre-temps."""
     code = "".join(secrets.choice(ALPHABET) for _ in range(8))
     with _verrou:
         c = _codes(maintenant)
         c["codes"] = [k for k in c["codes"] if k["compte_id"] != compte_id] + [
-            {"empreinte": _empreinte(code), "expire": (maintenant or time.time()) + CODE_DUREE, "compte_id": compte_id}]
+            {"empreinte": _empreinte(code), "expire": (maintenant or time.time()) + CODE_DUREE, "compte_id": compte_id,
+             "par_admin": par_admin, "limite": limite}]
         _ecrire_codes(c)
     return f"{code[:4]}-{code[4:]}"
 
@@ -170,10 +177,12 @@ def utiliser_code(code: str, nom: str, maintenant: float | None = None) -> str |
             return None
         c["codes"].remove(bon)   # une seule fois
         _ecrire_codes(c)
-        return _creer(nom, bon["compte_id"])
+        if bon.get("limite") and len(perso(bon["compte_id"], frais=True)) >= PERSO_MAX:
+            return None          # emplacement libre déjà pris (autre code utilisé entre-temps)
+        return _creer(nom, bon["compte_id"], "admin" if bon.get("par_admin") else PERSO)
 
 
-def _creer(nom: str, compte_id: int, origine: str = "code") -> str:
+def _creer(nom: str, compte_id: int, origine: str = PERSO) -> str:
     ident, secret = secrets.token_hex(6), secrets.token_urlsafe(32)
     _enregistrer(liste(frais=True) + [{"id": ident, "nom": (nom or "Appareil").strip()[:60] or "Appareil",
                                        "compte_id": compte_id, "origine": origine,
@@ -189,6 +198,27 @@ def approuver_par_invitation(nom: str, compte_id: int) -> str:
 
 def du_compte(compte_id: int) -> list[dict]:
     return [a for a in liste() if a["compte_id"] == compte_id]
+
+
+def par_defaut(a: dict) -> bool:
+    """Appareil par défaut du compte (lien d'invitation, donné ou déplacé par l'admin) : l'invité ne le retire pas."""
+    return a.get("origine") != PERSO
+
+
+def perso(compte_id: int, frais: bool = False) -> list[dict]:
+    """Appareils que le compte a ajoutés lui-même (son emplacement libre)."""
+    return [a for a in liste(frais) if a["compte_id"] == compte_id and not par_defaut(a)]
+
+
+def deplacer(ident: str, compte_id: int) -> dict | None:
+    """L'admin donne un appareil à un autre compte : il y devient un appareil par défaut. Renvoie l'appareil."""
+    with _verrou:
+        tous = liste(frais=True)
+        a = next((a for a in tous if a["id"] == ident), None)
+        if a:
+            a.update(compte_id=compte_id, origine="admin")
+            _enregistrer(tous)
+        return a
 
 
 def par_compte() -> dict[int, list[dict]]:
