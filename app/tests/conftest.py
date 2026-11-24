@@ -88,3 +88,11 @@ def faux_comptes(monkeypatch):
     faux.installer(monkeypatch)
     yield faux
     comptes.oublier()
+
+
+@pytest.fixture(autouse=True)
+def memoires_vides():
+    """Verdicts d'actualités gardés en mémoire du worker : vides à chaque test."""
+    from claunote import actualites
+    actualites._VERDICTS.clear()
+    yield

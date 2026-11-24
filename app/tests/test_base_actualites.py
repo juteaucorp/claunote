@@ -101,7 +101,8 @@ def test_alerte_sonne_chez_chaque_compte_selon_son_fil(base, monkeypatch):
     monkeypatch.setattr(notifications, "en_silence", lambda m, p: False)
     actualites.tour(lambda: True)
 
-    assert appels == [1, autonome]   # l'IA pour l'admin et le compte en autonomie, jamais pour les autres
+    # l'IA pour l'admin ; le compte en autonomie suit le même fil : le même verdict est repris, sans rappeler Claude
+    assert appels == [1]
     n = _notifs()
     par = {x["compte_id"]: x for x in n}
     assert sorted(par, key=lambda c: c or 0) == [None, sans_forfait, autonome]
