@@ -331,3 +331,25 @@ def test_tri_des_imports_d_avant_rendu_a_son_deposant(base):
             == {(700, camille), (701, 1)}
         assert sorted((r["compte_id"], r["resume"]) for r in c.execute("SELECT * FROM import_lots")) \
             == [(1, "Ancien"), (camille, "Ancien")]
+
+
+def test_voir_en_tant_que_ne_peut_rien_ecrire(base):
+    """« Voir en tant que » : la base refuse toute écriture au nom du compte regardé, le journal reste écrit."""
+    invite = db.creer_compte("camille", "h", "invite", ["bibliotheque"])
+    with db.pour_compte(invite):
+        d = db.creer(200, "camille.pdf")
+    with db.pour_compte(invite), db.lecture_seule():
+        assert db.en_lecture_seule()
+        assert db.document(d)["nom"] == "camille.pdf"                     # il voit ses cours
+        with pytest.raises(Exception, match="read-only"):
+            db.maj(d, nom="modifié par l'admin")
+        with pytest.raises(Exception, match="read-only"):
+            db.creer(201, "ajout.pdf")
+        db.noter_ouverture(1)                                             # ignoré, pas d'erreur
+        db.securite_noter("apercu", "attention", None, None, False, "/", None, "noté", False)   # journal : oui
+    with db.pour_compte(invite):                                          # en dehors : il écrit de nouveau
+        assert not db.en_lecture_seule()
+        db.maj(d, nom="renommé.pdf")
+        assert db.document(d)["nom"] == "renommé.pdf"
+    with db.connect() as c:
+        assert c.execute("SELECT count(*) AS n FROM securite WHERE type = 'apercu'").fetchone()["n"] == 1

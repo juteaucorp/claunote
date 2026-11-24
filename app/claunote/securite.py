@@ -80,6 +80,7 @@ TYPES = {
     "reglage": ("alerte", "Réglage de l'installation changé"),
     "lien_mot_de_passe": ("attention", "Lien de nouveau mot de passe créé"),
     "tout_voir": ("attention", "Admin : « Tout voir »"),
+    "apercu": ("attention", "Admin : « Voir en tant que »"),
     "conditions": ("info", "Conditions d'utilisation acceptées"),
     "cloudflare_pic": ("alerte", "Pic d'attaques arrêté par Cloudflare"),
     "cloudflare_erreur": ("attention", "Supervision Cloudflare en panne"),

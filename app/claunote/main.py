@@ -27,7 +27,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 
-from claunote import (actualites, agent, anki, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
+from claunote import (actualites, agent, anki, apercu, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local, turnstile)
@@ -77,6 +77,8 @@ PUBLIC = frozenset({"/appareil", "/connexion", "/cles/connexion", "/cles/connexi
 # Connecté mais conditions d'utilisation pas encore acceptées (ou changées) : seulement ces pages
 AVANT_CONDITIONS = frozenset({"/conditions", "/tes-donnees", "/deconnexion"})
 _moi: contextvars.ContextVar[dict | None] = contextvars.ContextVar("moi", default=None)
+# « Voir en tant que » en cours (apercu.py) : {"admin": l'admin, "compte": le compte regardé, "fin": instant}
+_apercu: contextvars.ContextVar[dict | None] = contextvars.ContextVar("apercu", default=None)
 
 
 def moi() -> dict | None:
@@ -87,6 +89,35 @@ def moi() -> dict | None:
 def _session(request: Request) -> dict | None:
     compte = auth.lire_session(_cle_sessions(request.app), request.cookies.get(auth.COOKIE), comptes.trouver)
     return compte if comptes.utilisable(compte) else None
+
+
+def apercu_en_cours() -> dict | None:
+    """L'aperçu « Voir en tant que » de la requête en cours, ou None."""
+    return _apercu.get()
+
+
+def _apercu_de(request: Request, admin: dict) -> dict | None:
+    """Le compte que cet admin regarde (cookie « Voir en tant que » valable), ou None."""
+    if not comptes.est_admin(admin):
+        return None
+    lu = apercu.lire(_cle_sessions(request.app), request.cookies.get(apercu.COOKIE), admin)
+    cible = comptes.trouver(lu[0]) if lu else None
+    if not cible:
+        return None
+    return {"admin": admin, "compte": cible, "fin": dt.datetime.fromtimestamp(lu[1], dt.timezone.utc)}
+
+
+def _refus_apercu(request: Request, apercu_: dict) -> Response:
+    """Pendant l'aperçu, rien n'est fait au nom du compte regardé."""
+    nom = apercu_["compte"].get("nom") or apercu_["compte"]["identifiant"]
+    texte = (f"Aperçu en lecture seule : rien n'est fait au nom de {nom}. "
+             "Reviens à ton compte (bandeau en haut) pour agir.")
+    if request.headers.get("HX-Request") or request.query_params.get("paquet"):
+        return Response(texte, status_code=403)
+    return HTMLResponse(f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                        f"<title>Aperçu en lecture seule</title><body style='font-family:system-ui;margin:24px'>"
+                        f"<p>👁 {html.escape(texte)}</p><p><a href='javascript:history.back()'>Retour</a></p>",
+                        status_code=403)
 PUBLIC_PREFIXES = ("/static/",)
 
 
@@ -111,9 +142,16 @@ async def _servir_compte(request: Request, call_next, compte: dict, droit: str |
 async def exiger_connexion(request: Request, call_next):
     chemin = request.url.path
     compte = _session(request)
+    vu = _apercu_de(request, compte) if compte else None
+    if vu:   # « Voir en tant que » : la requête est servie comme pour ce compte, sans rien écrire
+        if request.method not in METHODES_SURES and chemin not in apercu.SORTIES:
+            return _refus_apercu(request, vu)
+        compte = vu["compte"]
     if compte:
         request.state.compte = compte
-        if comptes.doit_accepter(compte) and chemin not in AVANT_CONDITIONS and not chemin.startswith("/static/"):
+        if vu:
+            pass   # l'admin regarde : pas d'arrêt sur les conditions ni sur l'assistant d'installation
+        elif comptes.doit_accepter(compte) and chemin not in AVANT_CONDITIONS and not chemin.startswith("/static/"):
             if request.method != "GET" or request.headers.get("HX-Request"):
                 return Response("conditions d'utilisation à accepter", status_code=403,
                                 headers={"HX-Redirect": "/conditions"})
@@ -124,14 +162,16 @@ async def exiger_connexion(request: Request, call_next):
         if comptes.peut(compte, droit) and (comptes.besoin_claude(chemin, request.method) or (
                 comptes.creation_ia(chemin, request.method) and comptes.niveau_forfait(compte) == "aucun")):
             droit = "claude"   # refusé : pas de forfait en autonomie (ou « Aucun » pour une fiche, un quiz…)
-        jeton = _moi.set(compte)
+        jeton, jeton_apercu = _moi.set(compte), _apercu.set(vu)
         # La base ne montre que les données de ce compte (« Tout voir » : l'admin voit tout), refus compris
         try:
             with comptes.pour(compte["id"], comptes.tout_voir(compte, chemin)), \
-                    (db.partages() if comptes.lit_les_partages(compte, chemin, request.method) else nullcontext()):
+                    (db.partages() if comptes.lit_les_partages(compte, chemin, request.method) else nullcontext()), \
+                    (db.lecture_seule() if vu else nullcontext()):
                 return await _servir_compte(request, call_next, compte, droit)
         finally:
             _moi.reset(jeton)
+            _apercu.reset(jeton_apercu)
     if _public(chemin):
         return await call_next(request)
     if request.headers.get("HX-Request"):
@@ -369,6 +409,7 @@ templates.env.globals["turnstile_requis"] = turnstile.requis   # captcha par Int
 templates.env.globals["turnstile_cle"] = turnstile.cle_site
 templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_defaut"))
 templates.env.globals["moi"] = moi
+templates.env.globals["voir_en_tant_que"] = apercu_en_cours   # « Voir en tant que » en cours (bandeau de base.html)
 templates.env.globals["apparence"] = lambda: apparence.lire(moi())   # thème et style du compte (base.html)
 templates.env.globals["peut"] = lambda droit: comptes.peut(moi(), droit)
 # Boutons Public / Privé : seulement s'il y a d'autres comptes, et sur ses propres éléments
@@ -1209,6 +1250,34 @@ def deconnecter_compte(request: Request, compte_id: int):
     return _retour_comptes(f"« {cible['identifiant']} » est déconnecté de tous ses appareils.")
 
 
+@app.post("/comptes/{compte_id}/apercu")
+def voir_en_tant_que(request: Request, compte_id: int):
+    """Admin : regarder le site comme ce compte le voit (lecture seule, 1 h, bandeau pour revenir). Voir apercu.py."""
+    cible = _cible(compte_id)
+    if compte_id == moi()["id"]:
+        return _retour_comptes("C'est ton propre compte : rien à voir de plus.")
+    securite.noter("apercu", request, f"début : « {moi()['identifiant']} » voit le site comme "
+                                      f"« {cible['identifiant']} » (lecture seule, 1 h)")
+    r = RedirectResponse(_premiere_page(cible), status_code=303)
+    r.set_cookie(apercu.COOKIE, apercu.creer(_cle_sessions(request.app), moi(), compte_id), max_age=apercu.DUREE,
+                 httponly=True, samesite="lax", secure=_https(request))
+    return r
+
+
+@app.post("/apercu/quitter")
+def quitter_apercu(request: Request):
+    """Fin du « Voir en tant que » : retour à son compte, sur la fiche du compte regardé dans Comptes."""
+    vu = apercu_en_cours()
+    suite = "/comptes"
+    if vu:
+        securite.noter("apercu", request, f"fin : « {vu['admin']['identifiant']} » ne voit plus le site comme "
+                                          f"« {vu['compte']['identifiant']} »")
+        suite = f"/comptes#compte-{vu['compte']['id']}"
+    r = RedirectResponse(suite, status_code=303)
+    r.delete_cookie(apercu.COOKIE)
+    return r
+
+
 @app.post("/comptes/{compte_id}/appareil-code", response_class=HTMLResponse)
 def code_appareil_pour(request: Request, compte_id: int):
     """L'admin crée un code d'appareil pour quelqu'un (nouveau téléphone, appli iPhone installée après coup)."""
@@ -1421,6 +1490,7 @@ def demander_mise_a_jour(request: Request, action: str):
 def deconnexion():
     r = RedirectResponse("/connexion", status_code=303)
     r.delete_cookie(auth.COOKIE)
+    r.delete_cookie(apercu.COOKIE)
     return r
 
 
