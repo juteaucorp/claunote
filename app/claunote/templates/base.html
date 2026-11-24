@@ -263,10 +263,19 @@
   .connexion form { text-align: left; }
   .tout-voir { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
   .tout-voir button { margin: 0; }
-  .bandeau-apercu { position: sticky; top: 0; z-index: 30; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  /* Sous l'en-tête (z-index 10) : le menu « ••• » et la feuille Plus passent devant le bandeau */
+  .bandeau-apercu { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
     justify-content: space-between; border: 2px solid var(--accent, #f28c28); }
   .bandeau-apercu button { margin: 0; }
-  .bandeau-apercu .refus-apercu:empty { display: none; }
+  /* Aperçu : les boutons qui écriraient au nom du compte regardé sont grisés, un message les explique */
+  .en-apercu main form[method=post]:not(.bandeau-apercu) button, .en-apercu main form[method=post] input[type=submit],
+  .en-apercu main [hx-post], .en-apercu main [hx-put], .en-apercu main [hx-patch], .en-apercu main [hx-delete] {
+    opacity: .5; cursor: not-allowed; }
+  .toast-apercu { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); z-index: 40; transform: translate(-50%, 12px);
+    width: max-content; max-width: calc(100vw - 32px); padding: 12px 16px; border-radius: 14px; background: var(--carte); color: var(--texte);
+    border: 2px solid var(--accent); box-shadow: 0 10px 30px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+  .toast-apercu.visible { opacity: 1; transform: translate(-50%, 0); }
+  @media (max-width: 720px) { .toast-apercu { bottom: calc(92px + env(safe-area-inset-bottom)); } }
   .apercu-compte { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin: 14px 0; }
   .apercu-compte button { margin: 0; }
   .connexion input { width: 100%; }
@@ -389,13 +398,38 @@
     <span>👁 Tu vois le site <strong>comme {{ vu.compte.nom or vu.compte.identifiant }}</strong> <span class="doux">@{{ vu.compte.identifiant }}</span> :
       <strong>lecture seule</strong>, rien n'est fait à sa place.{% if not vu.compte.actif %} <strong>Compte désactivé</strong> : il ne peut pas se connecter.{% endif %}
       <span class="doux">Jusqu'à {{ vu.fin.astimezone(paris_tz).strftime('%H h %M') }}.</span>
-      <span class="refus-apercu doux" id="refus-apercu"></span></span>
+</span>
     <button class="principal">Revenir à mon compte</button></form>
+  <div class="toast-apercu" id="toast-apercu" role="status" aria-live="polite"></div>
   <script>
-    // Un bouton du compte regardé (htmx) : le refus « lecture seule » s'affiche dans le bandeau
-    document.addEventListener("htmx:responseError", (e) => {
-      if (e.detail.xhr && e.detail.xhr.status === 403) document.getElementById("refus-apercu").textContent = e.detail.xhr.responseText;
-    });
+    // Aperçu en lecture seule : un bouton qui écrirait au nom du compte regardé ne part pas,
+    // un petit message au style claunote l'explique (au lieu d'une page d'erreur).
+    (() => {
+      document.documentElement.classList.add("en-apercu");
+      const SORTIES = ["/apercu/quitter", "/deconnexion"];
+      const MESSAGE = {{ ("Lecture seule : rien n'est fait au nom de " ~ (vu.compte.nom or vu.compte.identifiant) ~ ". Reviens à ton compte pour agir.")|tojson }};
+      let minuterie;
+      const montrer = (texte) => {
+        const t = document.getElementById("toast-apercu");
+        t.textContent = "👁 " + (texte || MESSAGE);
+        t.classList.add("visible");
+        clearTimeout(minuterie);
+        minuterie = setTimeout(() => t.classList.remove("visible"), 3500);
+      };
+      const sortie = (url) => { try { return SORTIES.includes(new URL(url, location.href).pathname); } catch (_) { return false; } };
+      document.addEventListener("submit", (e) => {
+        const f = e.target, verbe = ((e.submitter && e.submitter.getAttribute("formmethod")) || f.getAttribute("method") || "get").toLowerCase();
+        const cible = (e.submitter && e.submitter.getAttribute("formaction")) || f.getAttribute("action") || location.href;
+        if (verbe !== "get" && !sortie(cible)) { e.preventDefault(); e.stopImmediatePropagation(); montrer(); }
+      }, true);
+      document.addEventListener("htmx:beforeRequest", (e) => {
+        const c = e.detail.requestConfig || {};
+        if ((c.verb || "get").toLowerCase() !== "get" && !sortie(c.path || "")) { e.preventDefault(); montrer(); }
+      });
+      document.addEventListener("htmx:responseError", (e) => {
+        if (e.detail.xhr && e.detail.xhr.status === 403) montrer(e.detail.xhr.responseText);
+      });
+    })();
   </script>{% endif %}
   {% if not sans_nav %}<p id="retour-scan" class="carte accent"></p>
   {% set panne = bandeau_service() if not chemin.startswith('/etat') else None %}
