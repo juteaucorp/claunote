@@ -188,12 +188,12 @@ def respirer(arret=lambda: False, pas: float = 15.0, maximum: float = 1800.0) ->
 
 
 def etat() -> dict:
-    """Pour la page Activité."""
+    """Pour la page Analyses."""
     return {"charge": round(charge(), 2), "coeurs": coeurs(), "memoire_libre_mo": memoire_libre_mo(),
             "sature": sature(), "duree_moyenne_s": round(DUREES.moyenne), "charge_max": CHARGE_MAX,
             "attente_max_min": ATTENTE_MAX_MIN, "moyenne_max": MOYENNE_MAX, "fenetre_min": round(FENETRE / 60)}
 
 
 def publier() -> dict:
-    """Budget vu par le worker, publié pour le site (page Activité)."""
+    """Budget vu par le worker, publié pour le site (page Analyses)."""
     return {"moyenne": round(BUDGET.moyenne, 3), "instant": round(BUDGET.instant, 3), "freine": BUDGET.freine}

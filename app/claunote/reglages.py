@@ -1,4 +1,4 @@
-"""Réglages de l'installation choisis sur le site (assistant d'installation, puis Réglages → Installation).
+"""Réglages de l'installation choisis sur le site (assistant d'installation, puis Réglages → Configuration du site).
 
     page web (admin) ──► reglages.ecrire() ──► table reglages (secrets chiffrés, jamais réaffichés)
     démarrage du site et du worker ──► charger_dans_env() : la base passe avant le .env

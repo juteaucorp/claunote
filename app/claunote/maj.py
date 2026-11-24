@@ -1,4 +1,4 @@
-"""Mise à jour de Claunote depuis le site (Réglages → Mise à jour).
+"""Mise à jour de Claunote depuis le site (Réglages → Serveur → Mise à jour).
 
 Le site ne touche ni à git ni à Docker : il dépose une demande dans le volume partagé /maj,
 que le service `maj` (infra/maj) exécute, puis lit l'état et le journal que ce service y écrit.
@@ -129,7 +129,7 @@ TUNNEL_RELANCER = "tunnel_relancer"   # demande ponctuelle : (re)démarrer ou ar
 
 
 def tunnel(actif: bool) -> str:
-    """Allume ou éteint le tunnel Cloudflare depuis le site (Réglages → Installation), par le service maj.
+    """Allume ou éteint le tunnel Cloudflare depuis le site (Réglages → Configuration du site), par le service maj.
     cloudflared relit son jeton (/tunnel/token) à chaque démarrage. Renvoie ce qui va se passer."""
     if actif:
         (DOSSIER / TUNNEL_ACTIF).write_text("oui")

@@ -1,4 +1,4 @@
-"""Assistant de première installation (tout sur le site), puis Réglages → Installation pour tout modifier.
+"""Assistant de première installation (tout sur le site), puis Réglages → Configuration du site pour tout modifier.
 
     disque ─► compte admin ─► stockage (kDrive) ─► Claude ─► Cloudflare ─► Pronote ─► fini
       │            │                 │                │            │

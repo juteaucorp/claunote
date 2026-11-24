@@ -5,7 +5,7 @@
         └─► POST /connexion, /appareil, /invitation ──► siteverify (serveur → Cloudflare) ──► ok ? suite : refus
 
 - Éteint tant que les DEUX clés (TURNSTILE_SITE_KEY + TURNSTILE_SECRET_KEY) ne sont pas saisies
-  (Réglages → Installation → Accès par Internet, ou l'assistant). La clé secrète est chiffrée comme les autres jetons.
+  (Réglages → Configuration du site → Accès par Internet, ou l'assistant). La clé secrète est chiffrée comme les autres jetons.
 - Par le VPN (ou le réseau local) : jamais de captcha. Le widget n'est valable que sur le nom de domaine déclaré
   chez Cloudflare (celui du tunnel) : affiché sur l'adresse du VPN, il échouerait et bloquerait la connexion.
 - Face ID (clé d'accès) n'en a pas besoin : une clé d'accès ne se devine pas.

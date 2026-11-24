@@ -34,7 +34,7 @@ dès que Claunote répond de nouveau.
 `X-Claunote-App`, et le Worker ne remplace que les erreurs venues de Cloudflare ou du tunnel. Un « kDrive ne
 répond pas » (503 de Claunote) reste affiché tel quel.
 
-## Pendant une mise à jour (Réglages → Mise à jour)
+## Pendant une mise à jour (Réglages → Serveur → Mise à jour)
 
 Rien à activer : la construction se fait **site allumé**, et le site n'est coupé que pendant le redémarrage
 (quelques secondes à une minute). Pendant ce temps, la page de maintenance s'affiche toute seule puis la
@@ -112,7 +112,7 @@ Si tu vois encore « Error 1033 » : la route de l'étape 3 ne correspond pas ex
 
 ## Mettre à jour le Worker
 
-Le Worker ne se met **pas** à jour avec Réglages → Mise à jour (il vit chez Cloudflare). C'est rarement utile : la
+Le Worker ne se met **pas** à jour avec Réglages → Serveur → Mise à jour (il vit chez Cloudflare). C'est rarement utile : la
 page ne change presque jamais. Si `infra/maintenance/worker.js` a changé, refais simplement l'**étape 2**.
 
 ### Variante en ligne de commande (facultatif)

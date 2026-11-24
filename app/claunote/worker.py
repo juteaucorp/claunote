@@ -60,7 +60,7 @@ ARRET = threading.Event()  # SIGTERM reçu : finir le travail en cours puis quit
 KDRIVE_VERROU = threading.Lock()  # rangements des analyses parallèles : un dossier n'est pas créé deux fois
 PAUSE = threading.Event()  # analyses en pause (page Analyses du site) : révisions et rangements continuent
 STOP = threading.Event()   # « Arrêter maintenant » : les analyses en cours abandonnent (elles restent dans la file)
-EN_COURS: list[str] = []   # ce que font les fils d'analyse (local et Claude), publié sur la page Activité
+EN_COURS: list[str] = []   # ce que font les fils d'analyse (local et Claude), publié sur la page Analyses
 EN_COURS_VERROU = threading.Lock()
 
 
@@ -903,7 +903,7 @@ def a_traiter(kd: KDrive, items: list[dict] | None = None, sans_claude: bool = F
     """Fichiers à analyser : gardés par le tri, restés 'nouveau' (limite, panne), ou perdus hors de l'inbox.
 
     Les documents des profs passent en premier ; un fichier qui a déjà fait planter Claude, en dernier.
-    Un fichier suspendu sur la page Activité est sauté ; `moteur` : local ou claude, si choisi à la main.
+    Un fichier suspendu sur la page Analyses est sauté ; `moteur` : local ou claude, si choisi à la main.
     `sans_claude` : Claude est indisponible, rien n'attend la passe IA sur les noms de dossiers, et un fichier
     déjà illisible pour le modèle local attend Claude.
     """

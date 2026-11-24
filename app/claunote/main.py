@@ -783,7 +783,7 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
     return r
 
 
-# --- Installation : assistant pas à pas, puis Réglages → Installation (installation.py, reglages.py) -------
+# --- Installation : assistant pas à pas, puis Réglages → Configuration du site (installation.py, reglages.py) -------
 
 def _appliquer_reglages():
     """Le site prend les nouveaux réglages tout de suite ; le worker voit « reglages_version » et redémarre."""
@@ -2682,7 +2682,7 @@ def _local_libre() -> str | None:
 def _repondre_ia(msg_id: int, q: str, conv: dict, historique: list[dict]):
     """Lancé dans un fil à part : la page interroge /demander/message/<id> jusqu'à la réponse.
 
-    Selon le réglage (page Activité) : le modèle local d'abord, Claude seulement s'il doute ou demande de
+    Selon le réglage (page Analyses) : le modèle local d'abord, Claude seulement s'il doute ou demande de
     l'aide (et 1 fois sur 10 pour contrôler) ; ou Claude d'abord, le local en secours.
     """
     portee = _portee(conv["niveau"], conv["matiere"]).strip()

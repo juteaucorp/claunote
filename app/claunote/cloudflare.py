@@ -5,7 +5,7 @@
                                          │                                              ├─► page Réglages → Sécurité
                                          └─ 2 requêtes HTTP, rien d'autre              └─► alerte push si pic anormal
 
-- Éteint tant que le jeton API et l'identifiant de zone ne sont pas saisis (Réglages → Installation → Accès par
+- Éteint tant que le jeton API et l'identifiant de zone ne sont pas saisis (Réglages → Configuration du site → Accès par
   Internet). Le jeton est chiffré comme les autres secrets ; il ne peut rien modifier chez Cloudflare.
 - Identifiant de compte facultatif : seulement pour les chiffres du captcha Turnstile (données « compte »).
 - Pic : les événements bloqués des 15 dernières minutes comparés à la médiane des 24 dernières heures

@@ -15,7 +15,7 @@ Les tests de lecture locale (OCR) se lancent si Tesseract est installé (`apt in
 
 Sur GitHub, ces deux suites tournent à chaque PR (`.github/workflows/tests.yml`), et Dependabot propose chaque mois
 les mises à jour de dépendances (`.github/dependabot.yml`) : une PR verte peut être fusionnée, puis installée par
-Réglages → Mise à jour.
+Réglages → Serveur → Mise à jour.
 
 ## Organisation du code
 
