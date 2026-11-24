@@ -23,7 +23,7 @@ DROITS = {
     "deposer": ("Déposer", "Envoyer des scans et des fichiers"),
     "organiser": ("Organiser", "Classer, corriger, « À vérifier », supprimer ses documents"),
     "reviser": ("Réviser", "Fiches, quiz, campagnes, flashcards, questions sur ses cours"),
-    "agenda": ("Agenda Pronote", "Voir l'agenda et les notes Pronote de l'environnement"),
+    "agenda": ("Agenda Pronote", "Relier son propre Pronote : agenda, notes, emploi du temps, alertes"),
     "actualites": ("Actualités", "Son propre fil d'actualités (sources, sujets, alertes)"),
     "essentiel": ("L'essentiel du jour", "Le point du jour des actualités fait par Claude (forfait de l'admin, même sans autonomie)"),
     # Le forfait Claude : un choix à trois niveaux (FORFAIT), pas une case. Gardés ici pour les droits enregistrés.
@@ -41,7 +41,7 @@ FORFAIT = {
 }
 FORFAIT_DROIT = {"autonomie": "claude", "demande": "claude_demande", "aucun": None}
 DROITS_CASES = [d for d in DROITS if d not in ("claude", "claude_demande")]   # les autres : des cases à cocher
-DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "actualites", "essentiel", "claude_demande"]   # par défaut
+DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "agenda", "actualites", "essentiel", "claude_demande"]   # par défaut
 FORFAIT_INVITE = "demande"
 ROLES = {"admin": "Admin", "invite": "Invité"}
 DUREE_JETON = 15 * 60
@@ -61,10 +61,7 @@ PAGES = [
     ("/a-verifier", "organiser"), ("/organiser", "organiser"), ("/hors-cours", "bibliotheque"),
     ("/reviser", "reviser"), ("/revision/", "reviser"), ("/campagne", "reviser"), ("/demander", "reviser"),
     ("/formule", "reviser"), ("/cartes", "reviser"), ("/archives", "reviser"), ("/progression", "reviser"),
-    # Pronote est celui de l'environnement (un seul compte relié) : le relier, le couper ou le synchroniser
-    # change l'agenda de tout le monde, donc réservé à l'admin ; « agenda » ne donne que la lecture.
-    ("/agenda/connexion", "admin"), ("/agenda/connexion-qr", "admin"), ("/agenda/deconnexion", "admin"),
-    ("/agenda/synchroniser", "admin"),
+    # Chacun relie SON Pronote (un jeton par compte dans le service) : le droit « agenda » suffit
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
     ("/piece/", "reviser"), ("/partages", "bibliotheque"), ("/acces-cours", "bibliotheque"),

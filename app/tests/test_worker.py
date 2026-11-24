@@ -1222,3 +1222,16 @@ def test_referentiels_en_attente(worker, monkeypatch):
     with pytest.raises(worker.LimiteAtteinte):
         worker.referentiels_en_attente()
     assert maj == [("BTS1", "en_cours"), ("BTS1", "a_chercher")]
+
+
+def test_synchro_pronote_de_chaque_compte(monkeypatch):
+    from claunote import db, pronote, worker
+    vus, demandes = [], {"pronote_demande:3"}
+    monkeypatch.setattr(pronote, "comptes_relies", lambda: [1, 3, 4])
+    monkeypatch.setattr(db, "etat_consommer", lambda k: k in demandes and not demandes.discard(k))
+    monkeypatch.setattr(worker, "_synchro_compte", lambda i: vus.append(i) or i != 4)
+    prochaine = worker.time.monotonic() + 999
+    assert worker.synchro_pronote(prochaine) == prochaine and vus == [3]   # pas l'heure : seulement la demande
+    vus.clear()
+    suivante = worker.synchro_pronote(0)
+    assert vus == [1, 3, 4] and suivante - worker.time.monotonic() <= worker.REESSAI_PRONOTE + 1   # le 4 a raté

@@ -163,7 +163,7 @@ def suivre_cours(cours: list[dict] | None, du: str | None, au: str | None,
         return []
     maintenant = maintenant or dt.datetime.now(PARIS)
     try:
-        ancien = json.loads(db.etat_valeur("pronote_cours") or "null")
+        ancien = json.loads(db.etat_valeur(db.cle_du_compte("pronote_cours")) or "null")
     except ValueError:
         ancien = None
     nouveau = {"du": du, "au": au, "cours": cours}
@@ -176,7 +176,7 @@ def suivre_cours(cours: list[dict] | None, du: str | None, au: str | None,
     # Le passé ne sert plus : seulement à partir d'aujourd'hui
     aujourd_hui = maintenant.astimezone(PARIS).replace(hour=0, minute=0, second=0, microsecond=0)
     garde["cours"] = [c for c in garde["cours"] if (_date(c.get("debut")) or aujourd_hui) >= aujourd_hui]
-    db.etat_ecrire("pronote_cours", json.dumps(garde))
+    db.etat_ecrire(db.cle_du_compte("pronote_cours"), json.dumps(garde))
     if trouves and _actif():
         for jour in sorted({c["jour"] for c in trouves}):
             du_jour = [c for c in trouves if c["jour"] == jour]
@@ -219,11 +219,11 @@ def suivre_notes(notes: dict | None) -> list[dict]:
     if not notes:
         return []
     liste = cles_notes(notes.get("notes"))
-    premiere_fois = not db.etat_valeur("pronote_notes_suivies")
+    premiere_fois = not db.etat_valeur(db.cle_du_compte("pronote_notes_suivies"))
     actif = not premiere_fois and _actif()
     nouvelles = [(cle, n) for cle, n in liste if not db.notification_connue(cle)]
     if premiere_fois:
-        db.etat_ecrire("pronote_notes_suivies", "1")
+        db.etat_ecrire(db.cle_du_compte("pronote_notes_suivies"), "1")
     if not nouvelles:
         return []
     if not actif:   # premier passage, ou notifications Pronote coupées : on note sans annoncer

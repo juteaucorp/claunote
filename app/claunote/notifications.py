@@ -145,7 +145,12 @@ def envoyer_a_tous(titre: str, corps: str, url: str, tag: str = "", compte_id=IC
     (ou les admins pour le worker, qui ne travaille pour personne en particulier)."""
     if compte_id is ICI:
         compte_id = db.compte_actuel()
-    charge = {"titre": titre, "corps": corps, "url": url, "tag": tag, "badge": badge()}
+    try:
+        with db.pour_compte(compte_id or 1):   # sa pastille à lui : ses cartes et ses contrôles
+            pastille = badge()
+    except Exception:
+        pastille = 0
+    charge = {"titre": titre, "corps": corps, "url": url, "tag": tag, "badge": pastille}
     envoyes, erreurs = 0, []
     for abo in db.abonnements_de(compte_id):
         erreur = envoyer(abo, charge)
@@ -159,34 +164,29 @@ def envoyer_a_tous(titre: str, corps: str, url: str, tag: str = "", compte_id=IC
     return envoyes, erreurs
 
 
-def _pronote(compte_id) -> bool:
-    """Pronote (emploi du temps, contrôles) est celui de l'admin d'origine : il ne cale que ses notifications."""
-    return compte_id in (None, 1)
+def _occupe(maintenant: dt.datetime, compte_id, p: dict) -> bool:
+    """En cours ou au travail d'après SON emploi du temps Pronote (s'il a relié Pronote et gardé le réglage)."""
+    if not p.get("edt", True):
+        return False
+    occupe, _ = emploi_du_temps.occupation(maintenant, emploi_du_temps._charger(compte_id))
+    return bool(occupe)
 
 
 def vider_file(maintenant: dt.datetime):
-    """Chaque compte a ses heures de silence ; seul l'admin d'origine a son emploi du temps Pronote.
+    """Chaque compte a ses heures de silence et son emploi du temps (son Pronote à lui).
 
     Avant, le silence et les cours de l'admin retenaient aussi les notifications des invités."""
-    p = preferences(None)
-    admin_muet = en_silence(maintenant, p)
-    occupe = None
-    if not admin_muet and p.get("edt", True):
-        occupe, _ = emploi_du_temps.occupation(maintenant)
     par_compte: dict = {}
     for n in db.reserver_notifications():   # chaque compte reçoit les siennes (None : les admins)
         par_compte.setdefault(n.get("compte_id"), []).append(n)
     for compte_id, file in par_compte.items():
-        if _pronote(compte_id):
-            if admin_muet:
-                db.remettre_en_attente([n["id"] for n in file])
-                continue
-            if occupe:   # en cours ou au travail : seules les urgentes partent
-                db.remettre_en_attente([n["id"] for n in file if not urgente(n["cle"])])
-                file = [n for n in file if urgente(n["cle"])]
-        elif en_silence(maintenant, preferences(compte_id)):
+        p = preferences(None if compte_id in (None, 1) else compte_id)
+        if en_silence(maintenant, p):
             db.remettre_en_attente([n["id"] for n in file])   # ses heures de silence à lui : elles attendent
             continue
+        if _occupe(maintenant, compte_id, p):   # en cours ou au travail : seules les urgentes partent
+            db.remettre_en_attente([n["id"] for n in file if not urgente(n["cle"])])
+            file = [n for n in file if urgente(n["cle"])]
         if file:
             _vider(file, compte_id)
 
@@ -240,11 +240,11 @@ def avant_les_cours(aujourd_hui: dt.date) -> tuple[str, str, str] | None:
     """Parfois, la veille d'un cours : revoir les flashcards ou la fiche de cette matière.
 
     Une matière à la fois, au plus une fois par semaine chacune ; seulement si l'emploi du temps est connu."""
-    if not _pronote(db.compte_actuel()) or not preferences().get("edt", True):
+    if not preferences().get("edt", True):
         return None
     try:
         a = emploi_du_temps.avant_les_cours(aujourd_hui)
-        deja = json.loads(db.etat_valeur("avance_proposees") or "{}")
+        deja = json.loads(db.etat_valeur(db.cle_du_compte("avance_proposees")) or "{}")
     except Exception as e:
         log(f"révisions avant les cours impossibles : {e}")
         return None
@@ -255,7 +255,7 @@ def avant_les_cours(aujourd_hui: dt.date) -> tuple[str, str, str] | None:
         if deja.get(s["matiere"], "") > limite:
             continue
         deja = {m: j for m, j in deja.items() if j > limite} | {s["matiere"]: aujourd_hui.isoformat()}
-        db.etat_ecrire("avance_proposees", json.dumps(deja))
+        db.etat_ecrire(db.cle_du_compte("avance_proposees"), json.dumps(deja))
         ecart = (a["date"] - aujourd_hui).days
         quand = "Demain" if ecart == 1 else JOURS_LONGS[a["date"].weekday()].capitalize()
         bouts = []
@@ -323,7 +323,9 @@ def planifier(maintenant: dt.datetime):
     if p["rappel"] and maintenant.weekday() == DIMANCHE and maintenant.time() >= _heure(p["heure"]):
         proposer_archivage(maintenant)
     if p["rappel"] and maintenant.time() >= _heure(p["silence_fin"]):
-        for e in db.evenements_a_venir("evaluation", 1):
+        with db.pour_compte(1):   # ses contrôles à lui : chaque invité a les siens (planifier_invites)
+            du_jour = db.evenements_a_venir("evaluation", 1)
+        for e in du_jour:
             if e["le"].astimezone(PARIS).date() == jour and e["le"] > maintenant:
                 url = f"/revision/{e['revision_id']}" if e["revision_id"] else "/agenda"
                 heure = e["le"].astimezone(PARIS)
@@ -332,31 +334,41 @@ def planifier(maintenant: dt.datetime):
 
 
 def planifier_invites(maintenant: dt.datetime):
-    """Le rappel du jour de chaque invité abonné, à son heure : ses flashcards, ses campagnes, ses nouveaux cours.
+    """Le rappel du jour de chaque invité abonné, à son heure et calé sur SON emploi du temps : ses flashcards,
+    ses campagnes, ses contrôles Pronote s'il a relié le sien. Plus un rappel le matin d'un contrôle.
 
-    Avant, seul l'admin d'origine en recevait un. Pas de Pronote pour eux (c'est celui de l'admin) : ni contrôles,
-    ni calage sur l'emploi du temps. Les autres admins reçoivent déjà celui de l'admin d'origine."""
+    Avant, seul l'admin d'origine en recevait. Les autres admins reçoivent déjà ceux de l'admin d'origine."""
     jour = maintenant.date()
     for compte in db.comptes():
         i = compte["id"]
         if i == 1 or compte.get("role") == "admin" or not compte.get("actif"):
             continue
         p = preferences(i)
-        cle = f"rappel:{jour}@{i}"
-        if not p["rappel"] or db.notification_connue(cle) or not db.abonnements_de(i):
+        if not p["rappel"] or not db.abonnements_de(i):
             continue
         try:
-            with db.pour_compte(i):   # ses cartes et ses cours à lui, son heure sans l'emploi du temps de l'admin
-                if maintenant < moment_rappel(jour, p):
-                    continue
-                r = rappel_du_jour(jour)
+            with db.pour_compte(i):   # ses cartes, ses cours et son Pronote à lui
+                _planifier_compte(maintenant, jour, i, p)
         except Exception as e:
             log(f"rappel du compte {i} impossible : {e}")
-            continue
+
+
+def _planifier_compte(maintenant: dt.datetime, jour: dt.date, i: int, p: dict):
+    cle = f"rappel:{jour}@{i}"
+    if maintenant >= moment_rappel(jour, p) and not db.notification_connue(cle):
+        r = rappel_du_jour(jour)
         if r:
             db.notifier_compte(i, cle, *r)
         else:
             db.notifier_compte(i, cle, "Rien à proposer aujourd'hui", statut="ignore")
+    if maintenant.time() >= _heure(p["silence_fin"]):
+        for e in db.evenements_a_venir("evaluation", 1):
+            if e["le"].astimezone(PARIS).date() == jour and e["le"] > maintenant:
+                url = f"/revision/{e['revision_id']}" if e["revision_id"] else "/agenda"
+                heure = e["le"].astimezone(PARIS)
+                db.notifier_compte(i, f"jour:{e['matiere']}:{heure:%Y-%m-%dT%H:%M}@{i}",
+                                   f"{e['matiere']} aujourd'hui à {heure:%H:%M}",
+                                   "Un dernier coup d'œil à ta fiche ?" if e["revision_id"] else e["titre"], url)
 
 
 DIMANCHE = 6
@@ -365,7 +377,7 @@ DIMANCHE = 6
 def moment_rappel(jour: dt.date, p: dict | None = None) -> dt.datetime:
     """L'heure choisie ; calée sur l'emploi du temps, plus tôt si les cours finissent avant."""
     p = p or preferences()
-    if p.get("edt", True) and _pronote(db.compte_actuel()):
+    if p.get("edt", True):
         return emploi_du_temps.heure_rappel(jour, _heure(p["heure"]))[0]
     return dt.datetime.combine(jour, _heure(p["heure"]), PARIS)
 
@@ -412,22 +424,25 @@ def campagne_prete(campagne_id: int):
                     + (f" ({erreurs} en erreur, à relancer)" if erreurs else ""), f"/campagne/{campagne_id}")
 
 
-def apres_synchro_pronote(documents_deposes: int = 0):
-    """Nouveaux contrôles et documents des profs vus pendant la synchro Pronote."""
-    actif = preferences()["pronote"] and bool(db.abonnements())
-    # Clés d'avant les ids stables : au premier passage, les contrôles déjà connus sont notés sans être ré-annoncés
-    if not db.etat_valeur("notifications_cles_stables"):
+def apres_synchro_pronote(documents_deposes: int = 0, compte_id: int | None = None):
+    """Nouveaux contrôles et documents des profs vus pendant la synchro Pronote du compte (sous ses droits)."""
+    i = int(compte_id or db.compte_actuel() or 1)
+    suffixe = "" if i == 1 else f"@{i}"
+    actif = preferences(None if i == 1 else i)["pronote"] and bool(db.abonnements_de(None if i == 1 else i))
+    # Premier passage (et, pour l'admin d'origine, clés d'avant les ids stables) : les contrôles déjà connus sont
+    # notés sans être annoncés d'un coup
+    premier = db.cle_du_compte("notifications_cles_stables", i)
+    if not db.etat_valeur(premier):
         actif = False
-        db.etat_ecrire("notifications_cles_stables", "1")
+        db.etat_ecrire(premier, "1")
     for e in db.evenements_a_venir("evaluation", 60):
         le = e["le"].astimezone(PARIS)
-        # Sans appareil abonné, on note seulement les contrôles déjà connus pour ne pas tout annoncer d'un coup.
         # Clé tirée du contenu (matière + date), jamais d'un id Pronote : ceux-là changent à chaque connexion.
-        db.notifier(f"nouvelle:{e['matiere']}:{le:%Y-%m-%dT%H:%M}", f"Nouveau contrôle : {e['matiere']}",
+        db.notifier(f"nouvelle:{e['matiere']}:{le:%Y-%m-%dT%H:%M}{suffixe}", f"Nouveau contrôle : {e['matiere']}",
                     f"{JOURS[le.weekday()]} {le:%d/%m} · {e['titre']}", "/agenda",
                     statut="attente" if actif else "ignore")
     if actif and documents_deposes:
-        db.notifier(f"documents:{int(time.time())}", "Nouveaux documents des profs",
+        db.notifier(f"documents:{int(time.time())}{suffixe}", "Nouveaux documents des profs",
                     f"{documents_deposes} document{'s' if documents_deposes > 1 else ''} récupéré"
                     f"{'s' if documents_deposes > 1 else ''} sur Pronote, rangé{'s' if documents_deposes > 1 else ''} "
                     "dans tes cours d'ici quelques minutes.", "/agenda")

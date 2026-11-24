@@ -1,5 +1,9 @@
 """Pronote : client du service interne `pronote` (Pawnote) et petites règles métier.
 
+Chaque compte relie SON Pronote (le service garde un jeton par compte) : ses contrôles, ses notes, son emploi du
+temps et ses alertes sont rangés chez lui (row-level security), ses réglages d'état sous des clés à lui (cle()).
+L'admin d'origine (compte 1) garde les fichiers et les clés d'avant.
+
 Le service Node fait la connexion ; ici on range ce qu'il renvoie et on relie
 les matières Pronote (« CULTURE ECONOMIQUE, JURIDIQUE ET MANAGERIALE ») aux
 matières des cours classés (« CEJM »).
@@ -54,9 +58,30 @@ class ErreurPronote(Exception):
     pass
 
 
+def compte_courant() -> int:
+    """Compte de la requête ou du worker (sans compte : l'admin d'origine)."""
+    return db.compte_actuel() or 1
+
+
+def cle(nom: str, compte_id: int | None = None) -> str:
+    """Clé d'état Pronote d'un compte : celle d'avant pour l'admin d'origine, « nom:<id> » pour les autres."""
+    return db.cle_du_compte(nom, compte_id)
+
+
+def comptes_relies() -> list[int]:
+    """Comptes dont le worker suit le Pronote : l'admin d'origine, et chaque compte actif qui a le droit Agenda
+    (un compte qui n'a pas relié le sien est vite passé : le service répond « pas connecté »)."""
+    from claunote import comptes
+    autres = [k["id"] for k in db.comptes() if k["id"] != 1 and comptes.utilisable(k) and comptes.peut(k, "agenda")]
+    return [1, *autres]
+
+
 class Client:
-    def __init__(self, url: str = URL, transport=None):
-        self.http = httpx.Client(base_url=url, timeout=httpx.Timeout(120, connect=5), transport=transport)
+    def __init__(self, url: str = URL, transport=None, compte_id: int | None = None):
+        self.compte = int(compte_id or compte_courant())
+        params = {"compte": str(self.compte)} if self.compte != 1 else None
+        self.http = httpx.Client(base_url=url, timeout=httpx.Timeout(120, connect=5), transport=transport,
+                                 params=params)
 
     def _appel(self, methode: str, chemin: str, corps=None, timeout=None) -> dict:
         try:
@@ -235,17 +260,15 @@ def preparer_a_venir(aujourd_hui: dt.date | None = None) -> list[int]:
     return crees
 
 
-def synchroniser(client: Client | None = None) -> dict:
-    """Récupère Pronote et l'enregistre. Renvoie le résumé affiché sur le site.
+def synchroniser(client: Client | None = None, compte_id: int | None = None) -> dict:
+    """Récupère le Pronote d'un compte (celui de la requête ou du worker) et l'enregistre chez lui.
+    Renvoie le résumé affiché sur le site."""
+    i = int(compte_id or compte_courant())
+    with db.pour_compte(i):
+        return _synchroniser(client or Client(compte_id=i))
 
-    Pronote est celui du site, rangé chez l'admin d'origine (compte 1), comme le fait le worker : un second
-    admin qui clique « Synchroniser » ne bute plus sur les lignes du compte 1 (row-level security)."""
-    with db.pour_compte(1):
-        return _synchroniser(client)
 
-
-def _synchroniser(client: Client | None = None) -> dict:
-    client = client or Client()
+def _synchroniser(client: Client) -> dict:
     if not client.etat().get("connecte"):
         return {"connecte": False}
     d = client.synchro(JOURS_SYNCHRO)
@@ -256,8 +279,8 @@ def _synchroniser(client: Client | None = None) -> dict:
                            notes["notes"] if notes else None, notes["periode"] if notes else None)
     emploi_du_temps.enregistrer(d.get("emploi_du_temps"), d.get("du"), d.get("au"))  # pour caler les notifications
     _alertes(d)
-    db.etat_ecrire("pronote_synchro", dt.datetime.now(PARIS).isoformat(timespec="minutes"))
-    db.etat_ecrire("pronote_erreurs", " ; ".join(d.get("erreurs") or []) or None)
+    db.etat_ecrire(cle("pronote_synchro"), dt.datetime.now(PARIS).isoformat(timespec="minutes"))
+    db.etat_ecrire(cle("pronote_erreurs"), " ; ".join(d.get("erreurs") or []) or None)
     preparees = preparer_a_venir() if PREPARATION_AUTO else []
     return {"connecte": True, "evenements": len(evs), "preparees": preparees, "erreurs": d.get("erreurs") or []}
 
@@ -272,11 +295,12 @@ def _alertes(d: dict):
 JOURS_VERIFICATION = 8   # la semaine qui vient, plus le jour même
 
 
-def verifier(client: Client | None = None) -> dict:
+def verifier(client: Client | None = None, compte_id: int | None = None) -> dict:
     """Vérification rapide (toutes les 15 min en journée, et vers 7 h 10 pour les notes) : emploi du temps et
     notes seulement. Prévient d'un cours modifié dans la semaine ou d'une nouvelle note."""
-    with db.pour_compte(1):
-        client = client or Client()
+    i = int(compte_id or compte_courant())
+    with db.pour_compte(i):
+        client = client or Client(compte_id=i)
         if not client.etat().get("connecte"):
             return {"connecte": False}
         d = client.verification(JOURS_VERIFICATION)
@@ -298,12 +322,18 @@ def nom_sur(nom: str) -> str:
     return re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", "-", nom).strip(" .-")[:120] or "sans-nom"
 
 
-def importer_documents(kd, inbox_id: int, client: Client | None = None) -> dict | None:
+def importer_documents(kd, inbox_id: int, client: Client | None = None, compte_id: int | None = None) -> dict | None:
     """Documents des profs → inbox kDrive (<classe>/Pronote/<matière>/), analysés ensuite comme un scan.
 
-    Le dossier de classe (« BTS SIO 2 ») donne l'année d'étude au classement.
+    Le dossier de classe (« BTS SIO 2 ») donne l'année d'étude au classement. Chaque fichier est noté comme
+    déposé par le compte : il le range, et le cours est à lui.
     """
-    client = client or Client()
+    i = int(compte_id or compte_courant())
+    with db.pour_compte(i):
+        return _importer_documents(kd, inbox_id, client or Client(compte_id=i), i)
+
+
+def _importer_documents(kd, inbox_id: int, client: Client, compte_id: int) -> dict | None:
     etat = client.etat()
     if not etat.get("connecte"):
         return None
@@ -321,6 +351,8 @@ def importer_documents(kd, inbox_id: int, client: Client | None = None) -> dict 
                 envoi = kd.upload(dossiers[matiere], nom_sur(d["nom"]), base64.b64decode(d["contenu"]),
                                   conflict="rename")
                 db.enregistrer_document_pronote(d, "depose", kdrive_id=envoi.get("id"))
+                if compte_id != 1 and envoi.get("id"):
+                    db.noter_depot(envoi["id"], compte_id)
                 bilan["deposes"] += 1
             elif d.get("url"):
                 db.enregistrer_document_pronote(d, "lien")

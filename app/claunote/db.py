@@ -621,6 +621,18 @@ BEGIN
         END IF;
     END LOOP;
 END $$;
+-- Pronote : chaque compte relie le sien. Deux élèves de la même classe ont les mêmes contrôles (mêmes ids tirés du
+-- contenu) : la clé devient (compte, id). Ce qui existait reste à l'admin d'origine.
+DO $$
+DECLARE t TEXT[];
+BEGIN
+    FOREACH t SLICE 1 IN ARRAY ARRAY[['pronote_evenements', 'id'], ['pronote_notes', 'id'], ['pronote_documents', 'cle']] LOOP
+        IF (SELECT array_length(conkey, 1) FROM pg_constraint WHERE conname = t[1] || '_pkey') = 1 THEN
+            EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', t[1], t[1] || '_pkey');
+            EXECUTE format('ALTER TABLE %I ADD PRIMARY KEY (compte_id, %I)', t[1], t[2]);
+        END IF;
+    END LOOP;
+END $$;
 -- Matières « laissées telles quelles » : à chaque compte les siennes (un invité n'efface plus celles de l'admin)
 DO $$ BEGIN
     IF (SELECT array_length(conkey, 1) FROM pg_constraint WHERE conname = 'matieres_distinctes_pkey') = 3 THEN
@@ -1851,6 +1863,13 @@ def etat_consommer(cle: str) -> bool:
         return c.execute("DELETE FROM etat WHERE cle = %s RETURNING cle", (cle,)).fetchone() is not None
 
 
+def cle_du_compte(nom: str, compte_id: int | None = None) -> str:
+    """Clé d'état propre à un compte (Pronote, emploi du temps…) : celle d'avant pour l'admin d'origine (compte 1,
+    ou le worker sans compte), « nom:<id> » pour les autres."""
+    i = int(compte_id or compte_actuel() or 1)
+    return nom if i == 1 else f"{nom}:{i}"
+
+
 def etat_ecrire(cle: str, valeur: str | None):
     _etat["le"] = float("-inf")   # relue fraîche juste après une écriture de ce processus
     with connect() as c:
@@ -1886,7 +1905,7 @@ def enregistrer_pronote(evenements: list[dict], debut, sources: list[str], notes
             c.execute(
                 """INSERT INTO pronote_evenements (id, genre, matiere, titre, description, le, fait)
                    VALUES (%(id)s, %(genre)s, %(matiere)s, %(titre)s, %(description)s, %(le)s, %(fait)s)
-                   ON CONFLICT (id) DO UPDATE SET genre = EXCLUDED.genre, matiere = EXCLUDED.matiere,
+                   ON CONFLICT (compte_id, id) DO UPDATE SET genre = EXCLUDED.genre, matiere = EXCLUDED.matiere,
                      titre = EXCLUDED.titre, description = EXCLUDED.description, le = EXCLUDED.le,
                      fait = EXCLUDED.fait, vu_le = now()""", e)
         if notes is not None:
@@ -1896,7 +1915,7 @@ def enregistrer_pronote(evenements: list[dict], debut, sources: list[str], notes
                     """INSERT INTO pronote_notes (id, matiere, le, valeur, sur, moyenne_classe, coefficient,
                          commentaire, periode)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                       ON CONFLICT (id) DO UPDATE SET valeur = EXCLUDED.valeur, sur = EXCLUDED.sur,
+                       ON CONFLICT (compte_id, id) DO UPDATE SET valeur = EXCLUDED.valeur, sur = EXCLUDED.sur,
                          moyenne_classe = EXCLUDED.moyenne_classe, commentaire = EXCLUDED.commentaire,
                          periode = EXCLUDED.periode""",
                     (n["id"], n["matiere"], n["date"], Jsonb(n["valeur"]), Jsonb(n["sur"]),
@@ -1952,7 +1971,7 @@ def enregistrer_document_pronote(d: dict, statut: str, kdrive_id=None, erreur=No
             """INSERT INTO pronote_documents (cle, source, matiere, le, titre, categorie, nom, url, statut,
                  erreur, kdrive_id)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (cle) DO UPDATE SET statut = EXCLUDED.statut, erreur = EXCLUDED.erreur,
+               ON CONFLICT (compte_id, cle) DO UPDATE SET statut = EXCLUDED.statut, erreur = EXCLUDED.erreur,
                  kdrive_id = EXCLUDED.kdrive_id, url = EXCLUDED.url, tentatives = pronote_documents.tentatives + 1,
                  vu_le = now()""",
             (d["cle"], d["source"], d["matiere"], d.get("date"), d.get("titre") or "", d.get("categorie") or "",
