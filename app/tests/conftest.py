@@ -92,8 +92,7 @@ def faux_comptes(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def memoires_vides():
-    """Verdicts d'actualités gardés en mémoire du worker, comptes déjà initialisés : vides à chaque test."""
+    """Verdicts d'actualités gardés en mémoire du worker : vides à chaque test."""
     from claunote import actualites
     actualites._VERDICTS.clear()
-    actualites._INITIALISES.clear()
     yield

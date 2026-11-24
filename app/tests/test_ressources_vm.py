@@ -75,18 +75,6 @@ def test_memoire_des_verdicts_bornee(monkeypatch):
     assert len(ac._VERDICTS) <= 10 and ("e", "ex.fr/24") in ac._VERDICTS
 
 
-def test_initialisation_une_fois_par_compte(monkeypatch):
-    vus = []
-    monkeypatch.setattr(db, "comptes_actualites", lambda: [1, 2])
-    monkeypatch.setattr(db, "etat_consommer", lambda k: False)
-    monkeypatch.setattr(db, "etat_valeur", lambda k: str(time.time()))
-    monkeypatch.setattr(ac, "initialiser", lambda: vus.append(db.compte_actuel()))
-    monkeypatch.setattr(ac, "_tour_compte", lambda claude_ok: None)
-    ac.tour(lambda: True)
-    ac.tour(lambda: True)
-    assert vus == [2]
-
-
 def vieillir(chemin, jours):
     t = time.time() - jours * 86400
     for f in [chemin, *chemin.rglob("*")] if chemin.is_dir() else [chemin]:

@@ -1130,16 +1130,11 @@ def _tour_compte(claude_ok):
     quotidien()
 
 
-_INITIALISES: set[int] = set()
-
-
 def tour(claude_ok, maintenant: float | None = None):
     """Relevé de tous les fils (sans Claude), puis tri, alertes et point du jour de chacun, l'admin d'abord."""
     maintenant = maintenant or time.time()
     comptes_ids = db.comptes_actualites()
-    # Sélection de départ des comptes pas encore vus depuis le démarrage du worker (l'admin d'origine : au démarrage)
-    nouveaux = [c for c in comptes_ids if c != 1 and c not in _INITIALISES]
-    _INITIALISES.update(_chaque_compte(initialiser, nouveaux))
+    _chaque_compte(initialiser, [c for c in comptes_ids if c != 1])   # l'admin d'origine : au démarrage du worker
     demande = db.etat_consommer("actualites_relever")
     dernier = float(db.etat_valeur("actualites_releve") or 0)
     if demande or maintenant - dernier >= RELEVE:
