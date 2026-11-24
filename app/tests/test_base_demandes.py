@@ -126,3 +126,13 @@ def test_acces_a_tous_les_cours(base):
     assert db.decider_acces_cours(camille, None)                  # retiré
     with db.pour_compte(camille), db.partages():
         assert [p["titre"] for p in db.chercher_passages("trunk")] == ["vlan"]
+
+
+def test_acces_refuse_pas_redemande_tout_de_suite(base):
+    """Après un non, l'invité ne peut pas relancer l'admin en boucle (une notification à chaque fois) : 24 h."""
+    camille = db.creer_compte("camille", "h", "invite", ["bibliotheque"])
+    assert db.demander_acces_cours(camille) and db.decider_acces_cours(camille, "refuse")
+    assert not db.demander_acces_cours(camille)
+    with db.sans_compte(), db.connect() as c:
+        c.execute("UPDATE comptes SET acces_cours_le = now() - interval '25 hours' WHERE id = %s", (camille,))
+    assert db.demander_acces_cours(camille)

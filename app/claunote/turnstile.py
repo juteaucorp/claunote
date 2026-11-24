@@ -67,10 +67,11 @@ def verifier(request, jeton: str | None, action: str) -> str | None:
             return "Vérification anti-robot expirée : recharge la page et réessaie."
         return "Vérification anti-robot refusée : recharge la page et réessaie."
     # Le jeton doit venir de CE formulaire et de CE site (pas d'un jeton obtenu ailleurs puis rejoué ici)
-    if r.get("action") and r["action"] != action:
+    # Nos widgets ont tous une action : un jeton sans action (ou d'une autre page) n'a pas été obtenu ici
+    if (r.get("action") or "") != action:
         return "Vérification anti-robot faite pour une autre page : recharge la page et réessaie."
     hote = request.headers.get("host", "").rsplit(":", 1)[0].lower()
-    if r.get("hostname") and hote and r["hostname"].lower() != hote:
+    if (r.get("hostname") or "").lower() != hote:
         return "Vérification anti-robot faite sur une autre adresse : recharge la page et réessaie."
     return None
 

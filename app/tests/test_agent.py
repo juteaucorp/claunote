@@ -457,3 +457,31 @@ def test_lecture_ratee_jamais_enregistree_comme_cours(claude, tmp_path):
     with pytest.raises(agent.ErreurAgent, match="pas pu lire"):
         agent.analyser(tmp_path / "scan.pdf")
     assert appels == ["sonnet", "opus"]   # un essai avec le modèle au-dessus, puis erreur (pas de faux résumé)
+
+
+def test_claude_sans_les_secrets_de_la_vm():
+    """Le prompt contient du texte écrit par les comptes : Claude ne voit ni les secrets de .env ni les fichiers
+    de la VM (secrets, fichiers des autres comptes, /proc/1/environ), et n'a aucun outil qui écrit ou exécute."""
+    env = agent.env_claude({"PATH": "/bin", "HOME": "/root", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat-x",
+                            "ANTHROPIC_API_KEY": "facture", "POSTGRES_PASSWORD": "mdp", "DATABASE_URL": "postgresql://a:b@db/c",
+                            "KDRIVE_TOKEN": "kd", "VAPID_PRIVATE_KEY": "v", "CLOUDFLARE_API_TOKEN": "cf",
+                            "TURNSTILE_SECRET_KEY": "t", "HTTPS_PROXY": "http://proxy", "LC_ALL": "C.UTF-8"})
+    assert env == {"PATH": "/bin", "HOME": "/root", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat-x",
+                   "HTTPS_PROXY": "http://proxy", "LC_ALL": "C.UTF-8"}
+    reglages = json.loads(agent.REGLAGES_CLAUDE)["permissions"]["deny"]
+    for interdit in ("Bash", "Write", "Edit", "Read(//proc/**)", "Read(//secrets/**)", "Read(//fichiers/**)",
+                     "Grep(//fichiers/**)", "Glob(//proc/**)"):
+        assert interdit in reglages
+    assert not any(r.startswith(("Read(//tmp", "Read(//cache")) for r in reglages)   # dossiers de travail
+
+
+def test_appel_claude_avec_les_interdits(monkeypatch, tmp_path):
+    vus = []
+    monkeypatch.setattr(agent, "_lancer", lambda cmd, cwd, entree, timeout, tache: vus.append(cmd) or
+                        subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"result": "ok"}), stderr=""))
+    monkeypatch.setattr(agent, "journal", lambda **k: None)
+    with agent.forfait(True):
+        assert agent.appeler_claude("x", tmp_path, outils=["Read"]) == "ok"
+    cmd = vus[0]
+    assert cmd[cmd.index("--settings") + 1] == agent.REGLAGES_CLAUDE
+    assert "Bash" in cmd[cmd.index("--disallowedTools") + 1].split(",")
