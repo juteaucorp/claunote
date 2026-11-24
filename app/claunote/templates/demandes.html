@@ -3,7 +3,8 @@
 {% block titre %}Demandes IA{% endblock %}
 {% block vivant %}remplacer{% endblock %}
 {% block contenu %}
-<p class="fil"><a href="/reglages">Réglages</a> › Demandes IA</p>
+{% from "_onglets.html" import onglets %}
+{{ onglets('comptes', 'demandes') }}
 <h1>Demandes IA des invités</h1>
 <p class="doux">Les comptes dont le forfait Claude est <strong>« Sur demande »</strong> demandent ici une fiche, un quiz, une campagne
   ou une modification. <strong>Oui</strong> : Claude la prépare sur <strong>ton forfait</strong> et le résultat arrive sur

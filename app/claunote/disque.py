@@ -54,7 +54,7 @@ def etat(chemin: str = CHEMIN, stockage_local_go: float = 0.0) -> dict | None:
                                       "planter : libère de la place ou agrandis le disque de la VM.")
     elif libre < ATTENTION_GO or part < 0.10:
         niveau, phrase = "attention", (f"Peu de place sur le disque : {libre:.1f} Go libres ({part:.0%}). "
-                                       "Pense à agrandir le disque ou à nettoyer (Réglages → Mise à jour → Nettoyer).")
+                                       "Pense à agrandir le disque ou à nettoyer (Réglages → Serveur → Libérer de la place).")
     elif libre < besoin:
         niveau, phrase = "juste", (f"{libre:.1f} Go libres : une installation complète demande environ {besoin:.0f} Go. "
                                    "Ça peut marcher sans les modèles locaux, mais c'est juste.")

@@ -878,9 +878,18 @@ def test_plus_de_page_aujourd_hui_actualites_dans_les_onglets(client):
 def test_page_reglages_mene_a_tout(client):
     r = client.get("/reglages")
     assert r.status_code == 200
-    for url in ("/compte", "/notifications", "/tes-donnees", "/installer", "/comptes", "/securite", "/analyses", "/etat",
-                "/mise-a-jour", "/reglages/installation", "/comptes/tout-voir", "/deconnexion"):
+    for url in ("/compte", "/notifications", "/tes-donnees", "/installer", "/comptes", "/securite", "/etat",
+                "/reglages/installation", "/comptes/tout-voir", "/deconnexion"):
         assert f'"{url}"' in r.text, url
+    # Administration : 4 entrées claires (plus de doublons Activité / État / Mise à jour / Demandes IA)
+    admin = r.text.split("Administration</h2>")[1].split("</div>")[0]
+    assert admin.count('class="ligne-reglage"') == 4
+    for titre in ("Comptes", "Sécurité", "Serveur", "Configuration du site"):
+        assert f"<strong>{titre}</strong>" in admin, titre
+    assert "Activité" not in r.text and "Installation du site" not in r.text
+    # Serveur = onglets État · Analyses · Mise à jour ; Comptes = onglets Comptes · Demandes IA
+    onglets = client.get("/comptes").text.split('class="onglets-page"')[1].split("</nav>")[0]
+    assert '"/comptes"' in onglets and '"/demandes"' in onglets
     # Les pages de réglages ont un retour vers Réglages au lieu d'une rangée d'onglets
     page = client.get("/compte").text
     assert 'href="/reglages">‹ Réglages' in page and 'class="onglets-page"' not in page
@@ -1150,6 +1159,11 @@ def test_bandeau_et_page_etat(client, monkeypatch):
     page = client.get("/etat").text
     assert "Limite d'usage atteinte" in page and "12</strong> fichiers à analyser" in page
     assert "Épreuve blanche" in page and "Opus" in page and "Limite de ton forfait" not in page
+    # Onglets de Serveur (État · Analyses · Mise à jour), retour vers Réglages, et le disque ici (plus dans Comptes)
+    assert 'href="/reglages">‹ Réglages' in page
+    onglets = page.split('class="onglets-page"')[1].split("</nav>")[0]
+    assert all(u in onglets for u in ('"/etat"', '"/analyses"', '"/mise-a-jour"'))
+    assert 'id="disque"' in page and 'hx-post="/etat/nettoyer"' in page
 
     # Worker muet depuis 10 min : on le dit, avec la commande pour le relancer
     client.etat["service"] = json.dumps({"vu": (maintenant - dt.timedelta(minutes=10)).isoformat(),

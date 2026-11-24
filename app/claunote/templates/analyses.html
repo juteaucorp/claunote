@@ -4,7 +4,7 @@
 {% block vivant %}remplacer{% endblock %}
 {% block contenu %}
 {% from "_onglets.html" import onglets %}
-{{ onglets('activite', 'analyses') }}
+{{ onglets('serveur', 'analyses') }}
 <h1>Analyses</h1>
 {% if message %}<div class="carte accent">{{ message }}</div>{% endif %}
 
@@ -63,7 +63,7 @@
       <tr><th>Service</th><th>Processeur</th><th>Mémoire</th></tr>
       {% for c in lignes %}<tr><td>{{ c.nom }}</td><td>{{ c.cpu }}</td><td>{{ c.mem }}</td></tr>{% endfor %}
     </table>
-    <p class="doux petit">100 % = un cœur entier. Relevé à chaque vérification (Réglages → Mise à jour → Vérifier) et toutes les 6 h.</p>
+    <p class="doux petit">100 % = un cœur entier. Relevé à chaque vérification (Serveur → Mise à jour → Vérifier) et toutes les 6 h.</p>
   </details>
   {% endif %}
 </div>
