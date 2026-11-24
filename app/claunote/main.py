@@ -417,6 +417,7 @@ def quand(iso: str | None) -> str:
 
 
 templates.env.filters["quand"] = quand
+templates.env.globals["appareil_par_defaut"] = appareils.par_defaut
 templates.env.filters["paris"] = lambda d: d.astimezone(pronote.PARIS).strftime("%d/%m/%Y %H:%M") if d else ""
 templates.env.filters["jour_iso"] = dt.date.fromisoformat
 templates.env.filters["instant_iso"] = dt.datetime.fromisoformat
@@ -600,7 +601,7 @@ def _contexte_compte(request: Request, **plus) -> dict:
     return {"utilisateur": (moi() or {}).get("identifiant", ""), "cles": db.cles_acces(),
             "cles_impossible": cles.possible(host, _https(request)), "nom_sslip": cles.nom_sslip(host),
             "hote": cles.hote(host), "appareils": appareils.du_compte(moi()["id"]),
-            "code_expire": appareils.code_en_cours(moi()["id"]),
+            "code_expire": appareils.code_en_cours(moi()["id"]), "perso_max": appareils.PERSO_MAX,
             "par_tunnel": appareils.par_tunnel(request.headers), "droits_noms": {d: v[0] for d, v in comptes.DROITS.items()},
             "appareil_ici": appareils.reconnu(request.cookies.get(appareils.COOKIE)), **plus}
 
@@ -651,18 +652,28 @@ def _noter_appareil_ajoute(request: Request, a: dict | None, comment: str = "cod
 
 @app.post("/appareils/code", response_class=HTMLResponse)
 def creer_code_appareil(request: Request):
-    """Chacun ajoute lui-même un appareil à SON compte (déjà connecté, depuis un appareil approuvé ou le VPN)."""
+    """Chacun ajoute lui-même un appareil à SON compte (déjà connecté, depuis un appareil approuvé ou le VPN).
+    Un invité : un seul en plus de son appareil par défaut."""
+    admin = comptes.est_admin(moi())
+    pris = appareils.perso(moi()["id"])
+    if not admin and len(pris) >= appareils.PERSO_MAX:
+        return templates.TemplateResponse(request, "compte.html", _contexte_compte(
+            request, erreur_appareil=f"Ton emplacement libre est pris par « {pris[0]['nom']} » : retire-le d'abord."),
+            status_code=400)
     securite.noter("code_cree", request, f"code valable 15 min pour @{moi()['identifiant']}")
-    return templates.TemplateResponse(request, "compte.html",
-                                      _contexte_compte(request, code_appareil=appareils.nouveau_code(moi()["id"])))
+    return templates.TemplateResponse(request, "compte.html", _contexte_compte(
+        request, code_appareil=appareils.nouveau_code(moi()["id"], limite=not admin)))
 
 
 @app.post("/appareils/{ident}/retirer")
 def retirer_appareil(request: Request, ident: str, suite: str = Form("")):
     """Son propre appareil ; l'admin, ceux de tout le monde (page Comptes)."""
     a = next((a for a in appareils.liste() if a["id"] == ident), None)
-    if not a or (a["compte_id"] != moi()["id"] and not comptes.est_admin(moi())):
+    admin = comptes.est_admin(moi())
+    if not a or (a["compte_id"] != moi()["id"] and not admin):
         raise HTTPException(404, "appareil inconnu")
+    if not admin and appareils.par_defaut(a):
+        raise HTTPException(403, "appareil par défaut : seul l'admin peut le retirer")
     appareils.retirer(ident)
     k = comptes.trouver(a["compte_id"]) or {}
     securite.noter("appareil_retire", request, f"« {a['nom']} » de @{k.get('identifiant', '?')}")
@@ -1202,9 +1213,23 @@ def deconnecter_compte(request: Request, compte_id: int):
 def code_appareil_pour(request: Request, compte_id: int):
     """L'admin crée un code d'appareil pour quelqu'un (nouveau téléphone, appli iPhone installée après coup)."""
     cible = _cible(compte_id)
-    code = appareils.nouveau_code(compte_id)
+    code = appareils.nouveau_code(compte_id, par_admin=True)
     securite.noter("code_cree", request, f"code valable 15 min pour @{cible['identifiant']} (par l'admin)")
     return _page_comptes(request, code_appareil={"valeur": code, "pour": cible["identifiant"], "compte_id": compte_id})
+
+
+@app.post("/comptes/appareils/{ident}/deplacer")
+def deplacer_appareil(request: Request, ident: str, compte: int = Form(...)):
+    """L'admin donne un de ses appareils (ou celui de n'importe qui) à un autre compte, comme appareil par défaut."""
+    cible = _cible(compte)
+    avant = next((a for a in appareils.liste() if a["id"] == ident), None)
+    if not avant:
+        raise HTTPException(404, "appareil inconnu")
+    de = comptes.trouver(avant["compte_id"]) or {}
+    appareils.deplacer(ident, compte)
+    securite.noter("appareil_deplace", request, f"« {avant['nom']} » de @{de.get('identifiant', '?')} "
+                   f"vers @{cible['identifiant']}")
+    return _retour_comptes(f"« {avant['nom']} » est maintenant l'appareil par défaut de @{cible['identifiant']}.")
 
 
 @app.post("/comptes/{compte_id}/mot-de-passe", response_class=HTMLResponse)

@@ -52,6 +52,7 @@ TYPES = {
     "code_cree": ("info", "Code d'appareil créé"),
     "appareil_ajoute": ("alerte", "Nouvel appareil approuvé"),
     "appareil_retire": ("attention", "Appareil retiré"),
+    "appareil_deplace": ("attention", "Appareil donné à un autre compte"),
     "appareil_inconnu": ("info", "Appareil non approuvé"),
     "appareil_revoque": ("alerte", "Cookie d'appareil inconnu ou retiré"),
     "cle_ajoutee": ("alerte", "Clé Face ID ajoutée"),

@@ -227,3 +227,49 @@ def test_ancien_code_et_anciens_appareils_restent_a_l_admin(anonyme):
     assert appareils.liste()[0]["compte_id"] == 1
     valeur = appareils.utiliser_code("abcd-efgh", "Mac")
     assert appareils.reconnu(valeur)["compte_id"] == 1
+
+
+# --- Appareil par défaut (verrouillé) + un emplacement libre ; l'admin déplace ses appareils -------
+
+def test_admin_deplace_un_appareil_vers_un_compte(site, faux_comptes):
+    _creer(_inviter(site))
+    valeur = appareils.utiliser_code(_code(site), "iPad de la maison")
+    ident = valeur.split(".")[0]
+    assert appareils.reconnu(valeur)["compte_id"] == 1
+    r = site.post(f"/comptes/appareils/{ident}/deplacer", data={"compte": "2"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/comptes?")
+    a = appareils.reconnu(valeur)
+    assert a["compte_id"] == 2 and appareils.par_defaut(a)
+    assert site.post(f"/comptes/appareils/{ident}/deplacer", data={"compte": "99"}).status_code == 404
+    assert "Déplacer vers" in site.get("/comptes").text
+
+
+def test_invite_ne_retire_pas_son_appareil_par_defaut_et_n_a_qu_un_emplacement(site, faux_comptes):
+    invite = _invite_par_internet(site)
+    defaut = appareils.liste()[0]
+    assert appareils.par_defaut(defaut)
+    assert invite.post(f"/appareils/{defaut['id']}/retirer", headers=CF).status_code == 403
+    assert "géré par l'admin" in invite.get("/compte", headers=CF).text
+    # son emplacement libre
+    code = re.search(r"[A-Z0-9]{4}-[A-Z0-9]{4}", invite.post("/appareils/code", headers=CF).text).group(0)
+    second = appareils.utiliser_code(code, "PC")
+    assert second and not appareils.par_defaut(appareils.reconnu(second))
+    r = invite.post("/appareils/code", headers=CF)
+    assert r.status_code == 400 and "emplacement libre est pris" in r.text
+    # il le retire lui-même, puis peut en ajouter un autre
+    assert invite.post(f"/appareils/{second.split('.')[0]}/retirer", headers=CF).status_code == 200
+    assert invite.post("/appareils/code", headers=CF).status_code == 200
+    # l'admin, lui, n'a pas de limite et retire n'importe quel appareil
+    _code(site)
+    _code(site)
+    assert site.post(f"/appareils/{defaut['id']}/retirer", data={"suite": "comptes"},
+                     follow_redirects=False).status_code == 303
+
+
+def test_deux_codes_ne_donnent_pas_deux_emplacements(anonyme):
+    c1 = appareils.nouveau_code(2, limite=True)
+    assert appareils.utiliser_code(c1, "A")
+    c2 = appareils.nouveau_code(2, limite=True)   # créé avant le contrôle de la page : refusé à l'usage
+    assert appareils.utiliser_code(c2, "B") is None
+    c3 = appareils.nouveau_code(2, par_admin=True)  # l'admin, lui, peut toujours en donner un
+    assert appareils.par_defaut(appareils.reconnu(appareils.utiliser_code(c3, "C")))

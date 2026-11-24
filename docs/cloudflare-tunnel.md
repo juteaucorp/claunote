@@ -195,6 +195,9 @@ Chaque appareil est **relié à un compte** (les invités n'ont pas le VPN) :
 - **Toi** : même chose pour tes appareils (**Réglages → Compte → Mes appareils par Internet → Ajouter un appareil**).
 - **Réglages → Comptes** : sous chaque compte, ses **appareils par Internet** (nom, ajout, dernière visite),
   **Retirer**, et **Code pour un nouvel appareil** (téléphone changé, appli iPhone installée après coup).
+- **Appareil par défaut** (lien d'invitation, code donné par toi, ou appareil que tu as **déplacé** vers ce compte
+  avec **Déplacer vers…**) : l'invité **ne peut pas le retirer**. Il gère lui-même **un seul** appareil en plus
+  (son *emplacement libre*) : il le retire pour en mettre un autre. Toi (admin) : sans limite.
 - Chaque nouvel appareil t'envoie une **alerte** avec le compte concerné.
 - Compte désactivé, expiré ou supprimé : **ses appareils ne passent plus**.
 - L'appli ajoutée à l'écran d'accueil de l'iPhone est un **appareil à part** de Safari : il lui faut son code.

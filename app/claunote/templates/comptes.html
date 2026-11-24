@@ -87,14 +87,25 @@
     {% if ses_appareils %}
     <ul class="jetons">
       {% for a in ses_appareils %}
-      <li><span><strong>{{ a.nom }}</strong>{% if a.origine == 'invitation' %} <span class="doux">(lien d'invitation)</span>{% endif %}
-        <br><span class="doux">ajouté {{ a.cree|paris }}{% if a.vu %} · vu {{ a.vu|paris }}{% endif %}</span></span>
+      <li><span><strong>{{ a.nom }}</strong>
+        {% if k.role != 'admin' %}<span class="etiquette">{{ 'par défaut' if appareil_par_defaut(a) else 'emplacement libre' }}</span>{% endif %}
+        <br><span class="doux">{% if a.origine == 'invitation' %}lien d'invitation · {% endif %}ajouté {{ a.cree|paris }}{% if a.vu %} · vu {{ a.vu|paris }}{% endif %}</span></span>
+        <span class="actions-appareil">
+        {% if comptes|length > 1 %}
+        <form method="post" action="/comptes/appareils/{{ a.id|urlencode }}/deplacer">
+          <select name="compte" aria-label="Déplacer {{ a.nom }} vers" required>
+            <option value="" selected disabled>Déplacer vers…</option>
+            {% for autre in comptes if autre.id != k.id and autre.actif %}<option value="{{ autre.id }}">{{ autre.nom or autre.identifiant }} (@{{ autre.identifiant }})</option>{% endfor %}
+          </select><button>Déplacer</button></form>
+        {% endif %}
         <form method="post" action="/appareils/{{ a.id|urlencode }}/retirer" onsubmit="return confirm('Retirer {{ a.nom }} ? Il ne pourra plus ouvrir le site par Internet sans un nouveau code.')">
-          <input type="hidden" name="suite" value="comptes"><button class="lien-danger">Retirer</button></form></li>
+          <input type="hidden" name="suite" value="comptes"><button class="lien-danger">Retirer</button></form>
+        </span></li>
       {% endfor %}
     </ul>
     {% else %}<p class="doux">Aucun : hors VPN, ce compte ne peut pas ouvrir le site.</p>{% endif %}
-    <form method="post" action="/comptes/{{ k.id }}/appareil-code"><button title="Code de 15 min à taper sur le nouvel appareil">Code pour un nouvel appareil</button></form>
+    <form method="post" action="/comptes/{{ k.id }}/appareil-code"><button title="Code de 15 min à taper sur le nouvel appareil : ce sera un appareil par défaut, que la personne ne peut pas retirer">Code pour un nouvel appareil (par défaut)</button></form>
+    {% if k.role != 'admin' %}<p class="doux">La personne ne retire pas ses appareils par défaut ; elle gère elle-même <strong>un</strong> appareil en plus (emplacement libre).</p>{% endif %}
   </div>
   <form method="post" action="/comptes/{{ k.id }}/modifier">
     <p><label>Nom affiché<br><input name="nom" value="{{ k.nom or '' }}" maxlength="60"></label></p>
@@ -165,5 +176,8 @@
   .jetons form { margin: 0; }
   .appareils-compte { border-top: 1px solid var(--bord); margin-top: 12px; padding-top: 10px; }
   .appareils-compte .jetons { margin: 8px 0; }
+  .actions-appareil { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+  .actions-appareil form { display: flex; gap: 6px; align-items: center; }
+  .actions-appareil select { width: auto; max-width: 180px; }
 </style>
 {% endblock %}

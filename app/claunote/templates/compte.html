@@ -57,9 +57,11 @@
   <ul class="liste-cles">
     {% for a in appareils %}
     <li><span><strong>{{ a.nom }}</strong>{% if appareil_ici and appareil_ici.id == a.id %} <span class="doux">(cet appareil)</span>{% endif %}<br>
-      <span class="doux">ajouté le {{ a.cree.strftime('%d/%m/%Y') }}{% if a.vu %} · vu le {{ a.vu.strftime('%d/%m/%Y') }}{% endif %}</span></span>
+      <span class="doux">{% if not est_admin() %}{{ 'par défaut' if appareil_par_defaut(a) else 'emplacement libre' }} · {% endif %}ajouté le {{ a.cree.strftime('%d/%m/%Y') }}{% if a.vu %} · vu le {{ a.vu.strftime('%d/%m/%Y') }}{% endif %}</span></span>
+      {% if est_admin() or not appareil_par_defaut(a) %}
       <form method="post" action="/appareils/{{ a.id|urlencode }}/retirer" onsubmit="return confirm('Retirer {{ a.nom }} ? Il ne pourra plus ouvrir le site par Internet sans un nouveau code.')">
-        <button class="lien-danger">Retirer</button></form></li>
+        <button class="lien-danger">Retirer</button></form>
+      {% else %}<span class="doux" title="Seul l'admin peut le retirer">géré par l'admin</span>{% endif %}</li>
     {% endfor %}
   </ul>
   {% else %}
@@ -72,9 +74,15 @@
   {% elif code_expire %}
   <p class="doux">Un code créé tout à l'heure est encore valable quelques minutes.</p>
   {% endif %}
+  {% if erreur_appareil %}<p class="alerte">{{ erreur_appareil }}</p>{% endif %}
+  {% set libre = est_admin() or (appareils|rejectattr('origine', 'ne', 'code')|list|length) < perso_max %}
+  {% if not est_admin() %}<p class="doux">Tu as <strong>un emplacement libre</strong> pour un autre appareil, en plus de ton appareil par défaut.
+    {% if not libre %}Il est pris : retire cet appareil pour en ajouter un autre.{% endif %}</p>{% endif %}
+  {% if libre %}
   <form method="post" action="/appareils/code" class="actions" style="margin: 0">
     <button class="principal">Ajouter un appareil</button>
   </form>
+  {% endif %}
 </div>
 {% endif %}
 <style>
