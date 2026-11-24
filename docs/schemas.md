@@ -76,6 +76,9 @@ flowchart TD
   alertes, sur ses appareils et selon ses réglages de notification. Un compte sans forfait Claude reprend le
   résumé et l'alerte que l'IA a donnés au même article chez l'admin, rangés dans ses sujets par mots-clés
   (pas d'« Essentiel » pour lui : la notification du jour compte ses articles).
+- **Fil par défaut** : un compte qui n'a rien changé suit le fil choisi par l'admin (*Sources et sujets → Fil par
+  défaut pour tout le monde*, « Mettre mon fil par défaut »), sinon la sélection de départ, alertes urgentes
+  activées. Il change une source ou un sujet : son fil devient le sien ; « Revenir au fil par défaut » l'y remet.
 
 ## Qui fait le travail : local ou Claude
 

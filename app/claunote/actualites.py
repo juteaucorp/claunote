@@ -26,6 +26,9 @@
   et ses notifications, sur ses appareils, selon ses heures de silence (le worker fait le tour compte par compte,
   sous la séparation de la base). Un compte sans forfait Claude reprend ce que l'IA a dit du même article chez
   un autre compte (résumé, alerte) et le range dans ses sujets par mots-clés : ses alertes sonnent quand même.
+- Fil par défaut : tant qu'un compte n'a rien changé, son fil suit celui que l'admin a choisi pour tout le monde
+  (sinon la sélection de départ), alertes activées sur chaque sujet. Il change une source ou un sujet : son fil
+  devient le sien (« personnalisé ») ; un bouton le remet sur le fil par défaut.
 """
 import datetime as dt
 import hashlib
@@ -242,18 +245,138 @@ def resumes_condenses():
         db.articles_retrier()
 
 
+# --- Fil par défaut : celui que reçoit tout compte qui n'a rien changé -------------------------
+
+def _depart() -> dict:
+    return {"sujets": [{"nom": n, "description": d, "mots_cles": list(m), "notifier": True, "recherche": False}
+                       for n, d, m in SUJETS_DEFAUT],
+            "flux": [{"url": u, "titre": t, "site": urlsplit(u).hostname or "", "notifier": False} for u, t in FLUX_DEFAUT]}
+
+
+def profil_defaut() -> dict:
+    """{version, depart (sélection de départ ?), le, sujets: [...], flux: [...]} : le fil des comptes non personnalisés."""
+    try:
+        p = json.loads(db.etat_valeur("actualites_defaut") or "null")
+    except ValueError:
+        p = None
+    if not isinstance(p, dict) or p.get("depart") or not isinstance(p.get("sujets"), list):
+        return {**_depart(), "version": str((p or {}).get("version") or "depart"), "depart": True,
+                "le": (p or {}).get("le")}
+    return p
+
+
+def profil_du_fil() -> dict:
+    """Le fil du compte en cours, tel qu'on le copierait (les recherches Google sont une case du sujet)."""
+    sujets = db.sujets()
+    return {"sujets": [{"nom": s["nom"], "description": s["description"], "mots_cles": list(s["mots_cles"]),
+                        "notifier": bool(s["notifier"]), "recherche": bool(s["recherche_id"])} for s in sujets],
+            "flux": [{"url": f["url"], "titre": f["titre"], "site": f["site"], "notifier": bool(f["notifier"])}
+                     for f in db.flux_liste() if not f["sujet_id"]]}
+
+
+def definir_defaut(depuis_mon_fil: bool = True) -> dict:
+    """L'admin : son fil (ou la sélection de départ) devient celui de tous les comptes non personnalisés, au
+    prochain tour du worker. Les alertes y sont activées sur chaque sujet : un nouveau compte est prévenu du grave."""
+    version = f"{time.time():.3f}"
+    if depuis_mon_fil:
+        p = profil_du_fil()
+        p["sujets"] = [{**x, "notifier": True} for x in p["sujets"]]
+        p.update(version=version, depart=False, le=time.time())
+    else:
+        p = {"version": version, "depart": True, "le": time.time()}
+    db.etat_ecrire("actualites_defaut", json.dumps(p, ensure_ascii=False))
+    return profil_defaut()
+
+
+def personnalise() -> bool:
+    """Le compte en cours a-t-il changé son fil ? L'admin d'origine : toujours (son fil ne bouge jamais tout seul)."""
+    return _origine() or db.etat_valeur(cle("actualites_perso")) == "1"
+
+
+def marquer_personnalise():
+    """Une source ou un sujet changé par le compte : son fil n'est plus remplacé par le fil par défaut."""
+    if not _origine():
+        db.etat_ecrire(cle("actualites_perso"), "1")
+
+
+def _cle_fil(p: dict):
+    return (sorted((x["nom"], x["description"], tuple(x["mots_cles"]), bool(x.get("recherche"))) for x in p["sujets"]),
+            sorted(x["url"] for x in p["flux"]))
+
+
+def appliquer_defaut() -> bool:
+    """Met le fil du compte en cours sur le fil par défaut (sujets, flux, alertes). Ses articles des sources
+    gardées restent (lus, favoris) ; ceux des sources retirées partent avec elles. Vrai si quelque chose a changé."""
+    p = profil_defaut()
+    sujets = {s["nom"]: s for s in db.sujets()}
+    change = False
+    for nom, s in sujets.items():
+        if nom not in {x["nom"] for x in p["sujets"]}:
+            db.sujet_supprimer(s["id"])
+            change = True
+    for x in p["sujets"]:
+        s = sujets.get(x["nom"])
+        if s is None:
+            sujet_id = db.sujet_ajouter(x["nom"], x["description"], x["mots_cles"], x["notifier"])
+            change = True
+        else:
+            sujet_id = s["id"]
+            if (s["description"], list(s["mots_cles"]), bool(s["notifier"])) != (x["description"], x["mots_cles"], x["notifier"]):
+                db.sujet_maj(sujet_id, description=x["description"], mots_cles=x["mots_cles"], notifier=x["notifier"])
+                change = True
+        s = next((y for y in db.sujets() if y["id"] == sujet_id), None)
+        if s and x.get("recherche") and not s["recherche_id"]:
+            db.flux_ajouter(recherche_google(s), f"Google Actualités : {s['nom']}", "news.google.com", sujet_id=sujet_id)
+        elif s and not x.get("recherche") and s["recherche_id"]:
+            db.flux_supprimer(s["recherche_id"])
+    voulus = {x["url"]: x for x in p["flux"]}
+    for f in db.flux_liste():
+        if f["sujet_id"]:
+            continue
+        if f["url"] not in voulus:
+            db.flux_supprimer(f["id"])
+        elif bool(f["notifier"]) != voulus.pop(f["url"])["notifier"]:
+            db.flux_maj(f["id"], notifier=not f["notifier"])
+    for x in voulus.values():   # nouveaux : leur premier relevé ne sonne pas (articles déjà en ligne)
+        db.flux_ajouter(x["url"], x["titre"], x["site"], notifier=x["notifier"])
+    if change:
+        db.articles_retrier()
+    db.etat_ecrire(cle("actualites_defaut_vu"), p["version"])
+    return change
+
+
+def comptes_suivant_defaut() -> tuple[list[dict], list[dict]]:
+    """(comptes qui suivent le fil par défaut, comptes qui l'ont personnalisé), hors admin d'origine."""
+    suivent, perso = [], []
+    for compte_id in db.comptes_actualites():
+        if compte_id == 1:
+            continue
+        k = db.compte(compte_id)
+        (perso if db.etat_valeur(f"actualites_perso:{compte_id}") == "1" else suivent).append(
+            {"id": compte_id, "nom": k["nom"] or k["identifiant"]})
+    return suivent, perso
+
+
+def suivre_defaut():
+    """Le compte revient au fil par défaut (bouton de la page Sources) : tout de suite, puis à chaque changement."""
+    if not _origine():
+        db.etat_ecrire(cle("actualites_perso"), "")
+        appliquer_defaut()
+
+
 def initialiser():
-    """Au tout premier démarrage (de chaque compte) : une sélection de départ (modifiable sur la page Sources).
+    """Au démarrage de chaque compte puis à chaque tour : un compte qui n'a rien changé suit le fil par défaut.
     Les mises à jour de la sélection d'avant ne concernent que l'installation d'origine (admin)."""
     if not _origine():
-        if db.etat_valeur(cle("actualites_init")) or db.flux_liste() or db.sujets():
+        if personnalise():
             return
-        db.etat_ecrire(cle("actualites_init"), "1")
-        for nom, description, mots in SUJETS_DEFAUT:
-            db.sujet_ajouter(nom, description, mots)
-        for url, titre in FLUX_DEFAUT:
-            db.flux_ajouter(url, titre, urlsplit(url).hostname or "")
-        log(f"sélection de départ : {len(FLUX_DEFAUT)} flux, {len(SUJETS_DEFAUT)} sujets")
+        vu = db.etat_valeur(cle("actualites_defaut_vu"))
+        if not vu and (db.sujets() or db.flux_liste()) and _cle_fil(profil_du_fil()) != _cle_fil(_depart()):
+            marquer_personnalise()   # fil d'avant le fil par défaut, déjà changé par lui : on n'y touche pas
+            return
+        if vu != profil_defaut()["version"]:
+            appliquer_defaut()
+            log("fil mis sur le fil par défaut")
         return
     if db.etat_valeur("actualites_init"):
         passer_en_sisr()
@@ -604,6 +727,15 @@ def trier(claude_ok) -> int:
     alertes = db.alertes_recentes()
     consigne = prompt(sujets, alertes + [e for e in db.evenements_recents() if e not in alertes])
     faits = len(sans)
+    # Même article déjà trié avec exactement les mêmes sujets et la même formation (un autre compte qui suit la
+    # même veille) : son verdict est repris tel quel, Claude n'est pas rappelé pour rien
+    empreinte = hashlib.sha256(prompt(sujets).encode()).hexdigest()
+    repris = {a["id"]: v for a in a_ia if (v := _verdict_repris(a, empreinte, codes))}
+    if repris:
+        db.articles_trier(list(repris.values()))
+        faits += len(repris)
+        a_ia = [a for a in a_ia if a["id"] not in repris]
+    code_de = {i: c for c, i in codes.items()}
     for debut in range(0, len(a_ia), LOT):
         lot = a_ia[debut:debut + LOT]
         entree = "\n".join(json.dumps({"id": a["id"], "source": a["source"], "titre": a["titre"],
@@ -616,8 +748,32 @@ def trier(claude_ok) -> int:
             log(f"tri par l'IA impossible pour {len(lot)} articles ({e}) : mots-clés")
             resultats = {}
         db.articles_trier([resultats.get(a["id"]) or _sans_ia(a, sujets) for a in lot])
+        for a in lot:
+            if a["id"] in resultats:
+                _retenir(empreinte, a["cle"], {**resultats[a["id"]], "sujets": [code_de[i] for i in resultats[a["id"]]["sujets"]]})
         faits += len(lot)
     return faits
+
+
+# Verdicts récents de l'IA, par (empreinte de la consigne, article) : en mémoire du worker, 2 jours au plus
+_VERDICTS: dict[tuple[str, str], tuple[float, dict]] = {}
+VERDICTS_MAX, VERDICTS_DUREE = 5000, 2 * 86400
+
+
+def _retenir(empreinte: str, cle_article: str, verdict: dict, maintenant: float | None = None):
+    maintenant = maintenant or time.time()
+    if len(_VERDICTS) >= VERDICTS_MAX:
+        for k in [k for k, (le, _) in _VERDICTS.items() if maintenant - le > VERDICTS_DUREE] or list(_VERDICTS)[:VERDICTS_MAX // 5]:
+            del _VERDICTS[k]
+    _VERDICTS[(empreinte, cle_article)] = (maintenant, verdict)
+
+
+def _verdict_repris(a: dict, empreinte: str, codes: dict[str, int], maintenant: float | None = None) -> dict | None:
+    """Le verdict déjà donné pour cet article et cette consigne, avec les sujets de ce compte, ou None."""
+    le, v = _VERDICTS.get((empreinte, a["cle"]), (0.0, None))
+    if v is None or (maintenant or time.time()) - le > VERDICTS_DUREE:
+        return None
+    return {**v, "id": a["id"], "sujets": [codes[c] for c in v["sujets"] if c in codes]}
 
 
 # --- « L'essentiel » : le point du jour -------------------------------------------------
@@ -947,20 +1103,24 @@ def annoncer(maintenant: dt.datetime | None = None) -> int:
 
 # --- Boucle du worker -----------------------------------------------------------------
 
-def _chaque_compte(faire, comptes_ids: list[int]):
+def _chaque_compte(faire, comptes_ids: list[int]) -> list[int]:
     """`faire()` dans le fil de chaque compte (sa partie de la base, son droit au forfait Claude). La panne d'un
-    fil ne bloque pas les autres ; une limite ou une panne de Claude remonte au worker (pause pour tous)."""
+    fil ne bloque pas les autres ; une limite ou une panne de Claude remonte au worker (pause pour tous).
+    Renvoie les comptes pour lesquels tout s'est bien passé."""
     from claunote import comptes   # comptes → agent, db : pas d'import circulaire au chargement
+    reussis = []
     for compte_id in comptes_ids:
         try:
             with comptes.pour(compte_id):
                 faire()
+            reussis.append(compte_id)
         except (agent.LimiteAtteinte, agent.ClaudeIndisponible) as e:
             if isinstance(e, agent.SansForfait):
                 continue
             raise
         except Exception as e:
             log(f"compte {compte_id} : {e}")
+    return reussis
 
 
 def _tour_compte(claude_ok):

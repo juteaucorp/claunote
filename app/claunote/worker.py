@@ -33,7 +33,7 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (actualites, agent, cloudflare, coherence, comptes, db, decoupage, demandes_ia, disque, formations, importation, index, lecture, local, modeles,
+from claunote import (actualites, agent, cloudflare, coherence, comptes, db, decoupage, demandes_ia, disque, emploi_du_temps, formations, importation, index, lecture, local, modeles,
                       notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
                       stockage_local)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
@@ -1518,11 +1518,55 @@ def surveiller_disque():
     if time.monotonic() - _disque["vu"] < 3600:
         return
     _disque["vu"] = time.monotonic()
+    effaces = nettoyer_cache()
+    if effaces:
+        log(f"cache des scans : {effaces} reste(s) d'anciens traitements effacé(s)")
     e = disque.etat()
     if disque.a_signaler(e):
         log(e["phrase"])
         db.notifier(f"disque:{e['niveau']}:{dt.date.today()}", "💽 Disque de la VM presque plein"
                     if e["niveau"] == "critique" else "💽 Peu de place sur le disque", e["phrase"], "/etat")
+
+
+CACHE_TEMPORAIRE = 86400        # téléchargement ou fusion en cours : toujours effacé à la fin, sauf plantage
+CACHE_REPRISE = 30 * 86400      # morceaux transcrits, lecture d'un gros scan : gardés pour reprendre sans rappeler Claude
+
+
+def _plus_recent(chemin: Path) -> float:
+    """Dernière modification d'un dossier ou de l'un de ses fichiers."""
+    try:
+        recent = chemin.stat().st_mtime
+        for f in chemin.rglob("*"):
+            recent = max(recent, f.lstat().st_mtime)
+        return recent
+    except OSError:
+        return time.time()
+
+
+def nettoyer_cache(racine: Path = CACHE_DIR, maintenant: float | None = None) -> int:
+    """Restes du cache des scans après un plantage ou un document retiré de l'inbox : effacés. Les copies d'un
+    document en cours (moins d'un jour) et les morceaux déjà transcrits (moins de 30 jours) sont gardés.
+    Renvoie le nombre d'éléments effacés."""
+    maintenant = maintenant or time.time()
+    if not racine.is_dir():
+        return 0
+    candidats = []
+    for e in racine.iterdir():
+        if e.name == "morceaux" and e.is_dir():
+            candidats += [(m, CACHE_REPRISE) for m in e.iterdir()]
+        elif e.name.startswith("decoupage-"):
+            candidats.append((e, CACHE_REPRISE))
+        else:
+            candidats.append((e, CACHE_TEMPORAIRE))
+    effaces = 0
+    for chemin, age_max in candidats:
+        if maintenant - _plus_recent(chemin) > age_max:
+            if chemin.is_dir() and not chemin.is_symlink():
+                shutil.rmtree(chemin, ignore_errors=True)
+            else:
+                chemin.unlink(missing_ok=True)
+            effaces += 1
+    return effaces
 
 
 COPIE_KDRIVE = 3600        # « les deux » : copie de sauvegarde vers kDrive toutes les heures
@@ -1600,12 +1644,16 @@ def actualites_boucle():
 
 
 VERIF_PRONOTE = dt.timedelta(minutes=int(os.environ.get("PRONOTE_VERIF_MIN", "15") or 0))
+# Jour sans cours ni aujourd'hui ni demain (week-end, vacances, entreprise toute la journée) : une vérification
+# par heure suffit (les notes arrivent quand même dans l'heure ; un cours de demain modifié est vu à 15 min).
+VERIF_CALME = dt.timedelta(minutes=int(os.environ.get("PRONOTE_VERIF_CALME_MIN", "60") or 0))
 VERIF_JOURNEE = (dt.time(6), dt.time(22))   # la nuit, rien ne bouge sur Pronote (la synchro des 3 h suffit)
 VERIF_NOTES = dt.time(7, 12)                # les notes arrivent en général vers 7 h 10
 
 
-def verification_due(maintenant: dt.datetime, derniere: dt.datetime | None) -> bool:
-    """Vérification rapide de Pronote : toutes les 15 min de 6 h à 22 h, plus une juste après 7 h 10."""
+def verification_due(maintenant: dt.datetime, derniere: dt.datetime | None, calme: bool = False) -> bool:
+    """Vérification rapide de Pronote : toutes les 15 min de 6 h à 22 h (toutes les heures un jour calme),
+    plus une juste après 7 h 10."""
     if not VERIF_PRONOTE:
         return False
     if derniere is None:
@@ -1613,7 +1661,19 @@ def verification_due(maintenant: dt.datetime, derniere: dt.datetime | None) -> b
     notes = dt.datetime.combine(maintenant.date(), VERIF_NOTES, maintenant.tzinfo)
     if derniere < notes <= maintenant:
         return True
-    return VERIF_JOURNEE[0] <= maintenant.time() < VERIF_JOURNEE[1] and maintenant - derniere >= VERIF_PRONOTE
+    ecart = max(VERIF_PRONOTE, VERIF_CALME) if calme else VERIF_PRONOTE
+    return VERIF_JOURNEE[0] <= maintenant.time() < VERIF_JOURNEE[1] and maintenant - derniere >= ecart
+
+
+def jour_calme(maintenant: dt.datetime, donnees: dict | None = None) -> bool:
+    """Aucun cours au lycée aujourd'hui ni demain, d'après l'emploi du temps déjà relevé. Jour inconnu : pas calme
+    (on vérifie comme d'habitude)."""
+    d = emploi_du_temps._charger() if donnees is None else donnees
+    for j in (maintenant.date(), maintenant.date() + dt.timedelta(days=1)):
+        journee = emploi_du_temps.journee(j, d)
+        if journee is None or journee["cours"]:
+            return False
+    return True
 
 
 def verification_boucle():
@@ -1621,7 +1681,7 @@ def verification_boucle():
     derniere = dt.datetime.now(pronote.PARIS)   # la synchro complète du démarrage vient de tout relever
     while not ARRET.is_set():
         maintenant = dt.datetime.now(pronote.PARIS)
-        if verification_due(maintenant, derniere):
+        if verification_due(maintenant, derniere) and verification_due(maintenant, derniere, _calme(maintenant)):
             derniere = maintenant
             try:
                 r = pronote.verifier()
@@ -1631,6 +1691,14 @@ def verification_boucle():
             except Exception as e:
                 log(f"pronote : vérification rapide impossible : {e}")
         ARRET.wait(60)
+
+
+def _calme(maintenant: dt.datetime) -> bool:
+    try:
+        with db.pour_compte(1):   # l'emploi du temps relevé est celui de l'admin (Pronote est à lui)
+            return jour_calme(maintenant)
+    except Exception:
+        return False
 
 
 def cloudflare_boucle():

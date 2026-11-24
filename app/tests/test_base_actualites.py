@@ -101,7 +101,8 @@ def test_alerte_sonne_chez_chaque_compte_selon_son_fil(base, monkeypatch):
     monkeypatch.setattr(notifications, "en_silence", lambda m, p: False)
     actualites.tour(lambda: True)
 
-    assert appels == [1, autonome]   # l'IA pour l'admin et le compte en autonomie, jamais pour les autres
+    # l'IA pour l'admin ; le compte en autonomie suit le même fil : le même verdict est repris, sans rappeler Claude
+    assert appels == [1]
     n = _notifs()
     par = {x["compte_id"]: x for x in n}
     assert sorted(par, key=lambda c: c or 0) == [None, sans_forfait, autonome]
@@ -170,3 +171,58 @@ def test_installation_d_avant_les_fils_par_compte(base):
     with db.pour_compte(invite):
         assert db.sujets() == [] and db.articles("tout")[1] == 0
         assert db.sujet_ajouter("Cybersécurité", "", []) is not None
+
+
+# --- Fil par défaut : celui de tout compte qui n'a rien changé, choisi par l'admin -------------------------
+
+def _noms():
+    return sorted(s["nom"] for s in db.sujets()), sorted(f["url"] for f in db.flux_liste() if not f["sujet_id"])
+
+
+def test_fil_par_defaut_choisi_par_l_admin(base):
+    suit = db.creer_compte("camille", "h", "invite", ["actualites"])
+    change = db.creer_compte("dominique", "h", "invite", ["actualites"])
+    actualites.initialiser()
+    db.etat_ecrire("actualites_releve", str(9e12))
+    actualites.tour(lambda: False)
+    with db.pour_compte(change):   # il change un sujet : son fil devient le sien
+        actualites.marquer_personnalise()
+        db.sujet_ajouter("Jeux vidéo", "", ["jeu"])
+        assert actualites.personnalise()
+    with db.pour_compte(1):        # l'admin fait son fil, avec un sujet sans alerte, puis le met par défaut
+        db.sujet_supprimer(next(s["id"] for s in db.sujets() if s["nom"] == "Réseaux"))
+        sujet = db.sujet_ajouter("Cuisine", "Recettes", ["recette"], notifier=False)
+        db.flux_ajouter("https://cuisine.fr/feed", "Cuisine", "cuisine.fr", notifier=True)
+        db.flux_supprimer(next(f["id"] for f in db.flux_liste() if "korben" in f["url"]))
+        db.flux_ajouter(actualites.recherche_google(next(s for s in db.sujets() if s["id"] == sujet)),
+                        "Google Actualités : Cuisine", "news.google.com", sujet_id=sujet)
+        actualites.definir_defaut()
+        attendu = _noms()
+    assert actualites.comptes_suivant_defaut() == ([{"id": suit, "nom": "camille"}], [{"id": change, "nom": "dominique"}])
+    actualites.tour(lambda: False)
+    with db.pour_compte(suit):
+        assert _noms() == attendu
+        sujets = {s["nom"]: s for s in db.sujets()}
+        assert sujets["Cuisine"]["notifier"] and sujets["Cuisine"]["recherche_id"]   # alertes activées par défaut
+        assert next(f for f in db.flux_liste() if f["url"] == "https://cuisine.fr/feed")["notifier"]
+        assert not actualites.personnalise()
+    with db.pour_compte(change):   # personnalisé : jamais touché
+        assert "Jeux vidéo" in _noms()[0] and "Réseaux" in _noms()[0]
+        actualites.suivre_defaut()  # « Revenir au fil par défaut »
+        assert _noms() == attendu and not actualites.personnalise()
+    with db.pour_compte(1):
+        actualites.definir_defaut(depuis_mon_fil=False)   # retour à la sélection de départ
+    actualites.tour(lambda: False)
+    with db.pour_compte(suit):
+        assert _noms()[0] == sorted(n for n, _, _ in actualites.SUJETS_DEFAUT)
+        assert len(_noms()[1]) == len(actualites.FLUX_DEFAUT)
+    with db.pour_compte(1):        # le fil de l'admin ne bouge jamais tout seul
+        assert "Cuisine" in _noms()[0]
+
+
+def test_fil_deja_change_avant_le_fil_par_defaut_reste_le_sien(base):
+    invite = db.creer_compte("camille", "h", "invite", ["actualites"])
+    with db.pour_compte(invite):
+        db.sujet_ajouter("Jeux vidéo", "", ["jeu"])
+        actualites.initialiser()
+        assert actualites.personnalise() and _noms()[0] == ["Jeux vidéo"]
