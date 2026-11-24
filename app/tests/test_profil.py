@@ -129,3 +129,30 @@ def test_page_profil_revisions(client):
                                               "nouvelles_jour": "10"}, follow_redirects=True)
     assert 'value="20" selected' in r.text and 'value="explicative" checked' in r.text
     assert profil.lire(1)["nouvelles_jour"] == "10"
+
+
+def test_onglets_et_accueil(client):
+    from claunote import apparence
+    assert client.get("/", follow_redirects=False).headers["location"] == "/actualites"
+    r = client.get("/reglages/apparence")
+    assert "Onglets et page d&#39;accueil" in r.text or "Onglets et page d'accueil" in r.text
+    # Réviser en premier, Actualités retirée des onglets, Réviser comme page d'accueil
+    client.post("/reglages/navigation", data={"onglet_reviser": "1", "ordre_reviser": "1", "onglet_cours": "1",
+                                              "ordre_cours": "2", "onglet_agenda": "1", "ordre_agenda": "3",
+                                              "ordre_actualites": "4", "accueil": "reviser"})
+    ap = apparence.lire({"id": 1})
+    assert ap["onglets"] == ["reviser", "cours", "agenda"] and ap["caches"] == ["actualites"] and ap["accueil"] == "reviser"
+    assert client.get("/", follow_redirects=False).headers["location"] == "/reviser"
+    page = client.get("/bibliotheque").text
+    onglets = page[page.index('<nav class="onglets'):page.index('<details id="plus"')]
+    assert onglets.index('href="/reviser"') < onglets.index('href="/bibliotheque"') and 'href="/actualites"' not in onglets
+    plus = page[page.index('<div class="feuille verre">'):]
+    assert 'href="/actualites"' in plus   # toujours là, dans Plus
+    # Rien de coché : les onglets d'origine ; une valeur inconnue ne casse rien
+    client.post("/reglages/navigation", data={"accueil": "nimporte", "onglet_x": "1"})
+    ap = apparence.lire({"id": 1})
+    assert ap["onglets"] == apparence.ORDRE and ap["accueil"] == "" and ap["caches"] == []
+    # Le thème choisi ne remet pas les onglets à zéro
+    client.post("/reglages/navigation", data={"onglet_cours": "1", "accueil": "cours"})
+    client.post("/reglages/apparence", data={"mode": "sombre", "style": "claunote"})
+    assert apparence.lire({"id": 1})["onglets"] == ["cours"]

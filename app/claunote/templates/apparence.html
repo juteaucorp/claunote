@@ -35,6 +35,26 @@
   <button class="principal">Enregistrer</button>
 </form>
 <p class="doux">Rien que pour ton compte : chacun choisit le sien.</p>
+<h2>Onglets et page d'accueil</h2>
+<form method="post" action="/reglages/navigation" class="carte apparence navigation">
+  <table>
+    <thead><tr><th>Rubrique</th><th>En onglet</th><th>Position</th><th>Accueil</th></tr></thead>
+    <tbody>
+    {% set liste = (ap.onglets + ap.caches)|select('in', permises)|list %}
+    {% for cle in liste %}{% set r = rubriques[cle] %}{% set position = loop.index %}
+      <tr><td>{{ r[0] }}</td>
+        <td><input type="checkbox" name="onglet_{{ cle }}" value="1" {{ 'checked' if cle in ap.onglets }} aria-label="{{ r[0] }} en onglet"></td>
+        <td><select name="ordre_{{ cle }}" aria-label="Position de {{ r[0] }}">{% for n in range(1, liste|length + 1) %}<option value="{{ n }}" {{ 'selected' if n == position }}>{{ n }}</option>{% endfor %}</select></td>
+        <td><input type="radio" name="accueil" value="{{ cle }}" {{ 'checked' if ap.accueil == cle }} aria-label="{{ r[0] }} en page d'accueil"></td></tr>
+    {% endfor %}
+      <tr><td colspan="3" class="doux">Accueil automatique (Actualités, sinon la première permise)</td>
+        <td><input type="radio" name="accueil" value="" {{ 'checked' if not ap.accueil }} aria-label="Accueil automatique"></td></tr>
+    </tbody>
+  </table>
+  <p class="doux">Une rubrique retirée des onglets reste dans <strong>Plus</strong>.</p>
+  <button class="principal">Enregistrer</button>
+</form>
+
 
 <style>
   .retour { margin: 0 0 6px; }
@@ -51,5 +71,9 @@
   .apercu-sombre { background: #232220; }
   .apercu-auto { background: linear-gradient(135deg, #faf9f5 50%, #232220 50%); }
   .apparence > p.doux { margin-top: -6px; }
+  .navigation table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  .navigation th, .navigation td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--bord); }
+  .navigation th { font-size: .85rem; font-weight: 600; }
+  .navigation input { accent-color: var(--accent); }
 </style>
 {% endblock %}
