@@ -29,7 +29,7 @@ from starlette.datastructures import FormData
 
 from claunote import (actualites, agent, anki, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
-                      pronote, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
+                      pronote, profil, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local, turnstile)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
@@ -1542,6 +1542,29 @@ def enregistrer_apparence(mode: str = Form("auto"), style: str = Form("claunote"
     return RedirectResponse("/reglages/apparence?message=" + quote("Apparence enregistrée."), status_code=303)
 
 
+@app.get("/reglages/profil", response_class=HTMLResponse)
+def page_profil(request: Request, message: str = ""):
+    compte_id = (moi() or {}).get("id") or 1
+    p = profil.lire(compte_id)
+    return templates.TemplateResponse(request, "profil.html", {
+        "p": p, "message": message, "explications": profil.EXPLICATIONS, "detail": profil.DETAIL,
+        "alternance": profil.ALTERNANCE, "longueurs": {k: v[0] for k, v in profil.TEXTES.items()},
+        "formation_matieres": profil.formation(compte_id, {**p, "formation": ""}),
+        "parcours": profil.parcours(compte_id), "bloc": profil.bloc(compte_id)})
+
+
+@app.post("/reglages/profil")
+def enregistrer_profil(formation: str = Form(""), alternance: str = Form(""), entreprise: str = Form(""),
+                       objectif: str = Form(""), explications: str = Form("normal"), detail: str = Form("equilibre"),
+                       exemples: str = Form(""), difficultes: str = Form(""), libre: str = Form("")):
+    compte_id = (moi() or {}).get("id") or 1
+    profil.enregistrer(compte_id, {"formation": formation, "alternance": alternance, "entreprise": entreprise,
+                                   "objectif": objectif, "explications": explications, "detail": detail,
+                                   "exemples": exemples, "difficultes": difficultes, "libre": libre})
+    return RedirectResponse("/reglages/profil?message=" + quote("Profil enregistré : l'IA en tient compte dès maintenant."),
+                            status_code=303)
+
+
 def _resume_serveur() -> dict:
     """Une ligne pour l'entrée « Serveur » des Réglages : le plus urgent d'abord (panne, pause, disque, mise à jour)."""
     panne = _sans_erreur(bandeau_service)
@@ -1565,7 +1588,8 @@ def page_reglages(request: Request):
     """Point d'entrée unique : « Moi » pour tout le monde, « Administration » pour l'admin, avec l'état de chaque page."""
     moi_ = getattr(request.state, "compte", None) or {}
     admin = comptes.est_admin(moi_)
-    ctx = {"abonnes": len(_sans_erreur(db.abonnements, []) or []), "admin": admin}
+    ctx = {"abonnes": len(_sans_erreur(db.abonnements, []) or []), "admin": admin,
+           "profil_rempli": _sans_erreur(lambda: profil.rempli(profil.lire(moi_.get("id") or 1)), 0)}
     if admin:
         ctx.update({
             "nb_comptes": len(_sans_erreur(db.comptes, []) or []),
@@ -3238,8 +3262,10 @@ def certificat():
 
 @app.get("/notifications", response_class=HTMLResponse)
 def page_notifications(request: Request, message: str = ""):
+    # Pronote (contrôles, emploi du temps) est celui de l'admin d'origine : ses réglages ne concernent que lui
+    pronote_a_moi = notifications._pronote((moi() or {}).get("id"))
     return templates.TemplateResponse(request, "notifications.html", {
-        "p": notifications.preferences(), "appareils": db.abonnements(),
+        "p": notifications.preferences(), "appareils": db.abonnements(), "pronote_a_moi": pronote_a_moi,
         "edt": emploi_du_temps.resume(dt.datetime.now(pronote.PARIS),
                                       notifications._heure(notifications.preferences()["heure"])),
         "recentes": db.notifications_recentes(8), "cle": notifications.cle_publique(),

@@ -1178,6 +1178,19 @@ def formations_actuelles() -> list[str]:
     return list(dict.fromkeys((f["officiel"] or f["nom"]).strip() for _, f in tri if (f["officiel"] or f["nom"]).strip()))
 
 
+def formation_du_compte(compte_id: int) -> dict | None:
+    """Formation de l'année la plus avancée d'un compte (profil.py) : {niveau, nom} ou None."""
+    ordre = ["6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale", "BTS1", "BTS2"]
+    with connect() as c:
+        lignes = c.execute("SELECT niveau, nom, referentiel->>'formation' AS officiel FROM formations "
+                           "WHERE compte_id = %s", (compte_id,)).fetchall()
+    lignes = [f for f in lignes if (f["officiel"] or f["nom"] or "").strip()]
+    if not lignes:
+        return None
+    f = max(lignes, key=lambda f: ordre.index(f["niveau"]) if f["niveau"] in ordre else -1)
+    return {"niveau": f["niveau"], "nom": (f["nom"] or f["officiel"]).strip()}
+
+
 def definir_formation(niveau: str, nom: str):
     """Nouvelle formation (ou nouveau nom) : référentiel à (re)chercher par le worker. Nom vide : oubliée."""
     with connect() as c:
@@ -3358,12 +3371,13 @@ def decider_demande(quoi: str, item_id: int, oui: bool, erreur: str = ""):
             {"e": erreur, "id": item_id}).fetchone()
 
 
-def notifier_compte(compte_id: int | None, cle: str, titre: str, corps: str = "", url: str = "/") -> bool:
+def notifier_compte(compte_id: int | None, cle: str, titre: str, corps: str = "", url: str = "/",
+                    statut: str = "attente") -> bool:
     """Notification pour un compte précis (None : les admins), d'où qu'on soit (site ou worker)."""
     with sans_compte(), connect() as c:
-        return c.execute("INSERT INTO notifications (cle, titre, corps, url, compte_id) VALUES (%s, %s, %s, %s, %s) "
-                         "ON CONFLICT (cle) DO NOTHING RETURNING id",
-                         (cle, titre, corps, url, compte_id)).fetchone() is not None
+        return c.execute("INSERT INTO notifications (cle, titre, corps, url, compte_id, statut) "
+                         "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (cle) DO NOTHING RETURNING id",
+                         (cle, titre, corps, url, compte_id, statut)).fetchone() is not None
 
 
 def bibliotheque_partagee():

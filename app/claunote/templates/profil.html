@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block titre %}Mon profil{% endblock %}
+{% block contenu %}
+<p class="doux retour"><a href="/reglages">‹ Réglages</a></p>
+<h1>Mon profil</h1>
+<p class="doux">Ce que Claunote sait de toi. <strong>L'IA le lit à chaque fiche, quiz, flashcard, campagne et question</strong> pour s'adapter à toi. Rien n'est obligatoire.</p>
+{% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
+
+<form method="post" action="/reglages/profil" class="carte profil">
+  <h2>Tes études</h2>
+  <label>Ta formation actuelle
+    <input name="formation" value="{{ p.formation }}" maxlength="{{ longueurs.formation }}"
+           placeholder="{{ formation_matieres or 'ex. BTS SIO option SISR, Terminale générale, Licence info' }}">
+    <span class="doux">{% if formation_matieres %}Vide : celle de tes matières (<strong>{{ formation_matieres }}</strong>).{% else %}Sinon, choisis-la dans Ranger › Matières.{% endif %}</span>
+  </label>
+
+  <fieldset>
+    <legend>En alternance ?</legend>
+    <div class="choix court">
+      {% for cle, nom in alternance.items() %}
+      <label class="option"><input type="radio" name="alternance" value="{{ cle }}" {{ 'checked' if p.alternance == cle }}><span>{{ nom }}</span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  <label class="si-alternance">Ton poste ou ton entreprise <span class="doux">(facultatif)</span>
+    <input name="entreprise" value="{{ p.entreprise }}" maxlength="{{ longueurs.entreprise }}" placeholder="ex. technicien réseau dans une PME">
+  </label>
+
+  <label>Ton objectif
+    <input name="objectif" value="{{ p.objectif }}" maxlength="{{ longueurs.objectif }}" placeholder="ex. avoir mon BTS avec mention, puis une licence pro">
+  </label>
+
+  <h2>Ta façon d'apprendre</h2>
+  <fieldset>
+    <legend>Explications</legend>
+    <div class="choix">
+      {% for cle, (nom, aide) in explications.items() %}
+      <label class="option"><input type="radio" name="explications" value="{{ cle }}" {{ 'checked' if p.explications == cle }}><span><strong>{{ nom }}</strong><br><span class="doux">{{ aide }}</span></span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Niveau de détail</legend>
+    <div class="choix">
+      {% for cle, (nom, aide) in detail.items() %}
+      <label class="option"><input type="radio" name="detail" value="{{ cle }}" {{ 'checked' if p.detail == cle }}><span><strong>{{ nom }}</strong><br><span class="doux">{{ aide }}</span></span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  <label>Des exemples qui te parlent
+    <input name="exemples" value="{{ p.exemples }}" maxlength="{{ longueurs.exemples }}" placeholder="ex. le réseau de mon entreprise, les jeux vidéo, le foot">
+  </label>
+  <label>Ce qui te pose problème
+    <input name="difficultes" value="{{ p.difficultes }}" maxlength="{{ longueurs.difficultes }}" placeholder="ex. les maths, retenir les commandes, rédiger">
+  </label>
+  <label>Autre chose que Claunote doit savoir
+    <textarea name="libre" rows="4" maxlength="{{ longueurs.libre }}" placeholder="ex. je suis dyslexique, je révise surtout dans le train, je préfère les tableaux">{{ p.libre }}</textarea>
+  </label>
+
+  <button class="principal">Enregistrer</button>
+</form>
+
+<details class="carte ce-que-lit">
+  <summary>Ce que l'IA lit</summary>
+  <p class="doux">Elle te voit comme un élève <strong>{{ parcours }}</strong>.</p>
+  {% if bloc %}<pre>{{ bloc }}</pre>{% else %}<p class="doux">Rien d'autre pour l'instant.</p>{% endif %}
+</details>
+<p class="doux">Rien que pour ton compte : les autres ne le voient pas. Le texte reste une information sur toi : il ne change pas les règles de l'IA (sources, format des fiches).</p>
+
+<style>
+  .retour { margin: 0 0 6px; }
+  .profil, .ce-que-lit { max-width: 680px; }
+  .profil h2 { font-size: 1.05rem; margin: 6px 0 10px; }
+  .profil > label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; font-weight: 600; }
+  .profil > label .doux { font-weight: 400; font-size: .88rem; }
+  .profil input[type=text], .profil input:not([type]), .profil textarea { width: 100%; font: inherit; font-weight: 400; }
+  .profil fieldset { border: 0; padding: 0; margin: 0 0 14px; }
+  .profil legend { font-weight: 600; margin-bottom: 8px; }
+  .profil .choix { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+  .profil .option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--bord); border-radius: 12px; cursor: pointer; font-weight: 400; }
+  .profil .option:has(input:checked) { border-color: var(--accent); background: var(--accent-pale); }
+  .profil .option input { margin: 3px 0 0; accent-color: var(--accent); }
+  .profil:not(:has(input[name=alternance][value=oui]:checked)) .si-alternance { display: none; }
+  .ce-que-lit pre { white-space: pre-wrap; font: inherit; font-size: .88rem; margin: 8px 0 0; color: var(--doux, inherit); }
+  .profil .choix.court { grid-template-columns: repeat(3, 1fr); }
+</style>
+{% endblock %}

@@ -84,17 +84,37 @@ def test_verification_rapide_garde_les_semaines_suivantes(monkeypatch):
 
 
 def test_file_attend_la_fin_du_cours(monkeypatch):
-    """En cours, seules les urgentes partent ; le reste attend la pause."""
+    """En cours, seules les urgentes de l'admin partent ; le reste attend la pause. Les invités ne suivent pas
+    l'emploi du temps de l'admin (c'est son Pronote, pas le leur)."""
     etat = {"pronote_edt": json.dumps(DONNEES)}
     monkeypatch.setattr(db, "etat_valeur", lambda k: etat.get(k))
-    pris = []
-    monkeypatch.setattr(db, "reserver_notifications", lambda seulement=None: pris.append(seulement) or [])
+    file = [{"id": 1, "cle": "revision:4", "compte_id": None}, {"id": 2, "cle": "edt:x", "compte_id": None},
+            {"id": 3, "cle": "revision:5", "compte_id": 2}]
+    monkeypatch.setattr(db, "reserver_notifications", lambda seulement=None: [dict(n) for n in file])
+    remis, partis = [], []
+    monkeypatch.setattr(db, "remettre_en_attente", remis.extend)
+    monkeypatch.setattr(nt, "_vider", lambda f, compte_id: partis.extend((compte_id, n["id"]) for n in f))
     nt.vider_file(h(LUNDI, 9))
+    assert remis == [1] and partis == [(None, 2), (2, 3)]
+    remis.clear(), partis.clear()
     nt.vider_file(h(LUNDI, 12, 30))
-    assert pris == [nt.URGENTES, None]
+    assert remis == [] and partis == [(None, 1), (None, 2), (2, 3)]
     etat["notifications"] = json.dumps({"edt": False})   # réglage coupé : comme avant
+    partis.clear()
     nt.vider_file(h(LUNDI, 9))
-    assert pris[-1] is None
+    assert len(partis) == 3
+
+
+def test_silence_de_l_admin_ne_retient_plus_les_invites(monkeypatch):
+    etat = {"notifications": json.dumps({"silence_debut": "08:00", "silence_fin": "12:00"})}
+    monkeypatch.setattr(db, "etat_valeur", lambda k: etat.get(k))
+    monkeypatch.setattr(db, "reserver_notifications", lambda seulement=None: [
+        {"id": 1, "cle": "a", "compte_id": None}, {"id": 2, "cle": "b", "compte_id": 2}])
+    remis, partis = [], []
+    monkeypatch.setattr(db, "remettre_en_attente", remis.extend)
+    monkeypatch.setattr(nt, "_vider", lambda f, compte_id: partis.extend(n["id"] for n in f))
+    nt.vider_file(h(LUNDI, 9))
+    assert remis == [1] and partis == [2]
 
 
 def test_rappel_a_la_sortie_des_cours(monkeypatch):

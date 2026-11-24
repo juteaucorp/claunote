@@ -52,6 +52,8 @@ def base(monkeypatch):
     monkeypatch.setattr(db, "notification_connue", lambda cle: cle in b.file)
     monkeypatch.setattr(db, "reserver_notifications", b.reserver)
     monkeypatch.setattr(db, "maj_notification", b.maj)
+    monkeypatch.setattr(db, "remettre_en_attente", lambda ids: [b.maj(i, "attente") for i in ids])
+    monkeypatch.setattr(db, "comptes", lambda: [{"id": 1, "role": "admin", "actif": True}])
     monkeypatch.setattr(db, "abonnements", lambda: list(b.abos))
     monkeypatch.setattr(db, "retirer_abonnement", lambda e: b.abos.remove(next(a for a in b.abos if a["endpoint"] == e)))
     monkeypatch.setattr(db, "evenements_a_venir", lambda genre=None, jours=60: [

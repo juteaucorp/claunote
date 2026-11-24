@@ -159,19 +159,36 @@ def envoyer_a_tous(titre: str, corps: str, url: str, tag: str = "", compte_id=IC
     return envoyes, erreurs
 
 
+def _pronote(compte_id) -> bool:
+    """Pronote (emploi du temps, contrôles) est celui de l'admin d'origine : il ne cale que ses notifications."""
+    return compte_id in (None, 1)
+
+
 def vider_file(maintenant: dt.datetime):
+    """Chaque compte a ses heures de silence ; seul l'admin d'origine a son emploi du temps Pronote.
+
+    Avant, le silence et les cours de l'admin retenaient aussi les notifications des invités."""
     p = preferences(None)
-    if en_silence(maintenant, p):
-        return
-    occupe, _ = emploi_du_temps.occupation(maintenant) if p.get("edt", True) else (None, None)
+    admin_muet = en_silence(maintenant, p)
+    occupe = None
+    if not admin_muet and p.get("edt", True):
+        occupe, _ = emploi_du_temps.occupation(maintenant)
     par_compte: dict = {}
-    for n in db.reserver_notifications(URGENTES if occupe else None):   # chaque compte reçoit les siennes (None : les admins)
+    for n in db.reserver_notifications():   # chaque compte reçoit les siennes (None : les admins)
         par_compte.setdefault(n.get("compte_id"), []).append(n)
     for compte_id, file in par_compte.items():
-        if compte_id not in (None, 1) and en_silence(maintenant, preferences(compte_id)):
+        if _pronote(compte_id):
+            if admin_muet:
+                db.remettre_en_attente([n["id"] for n in file])
+                continue
+            if occupe:   # en cours ou au travail : seules les urgentes partent
+                db.remettre_en_attente([n["id"] for n in file if not urgente(n["cle"])])
+                file = [n for n in file if urgente(n["cle"])]
+        elif en_silence(maintenant, preferences(compte_id)):
             db.remettre_en_attente([n["id"] for n in file])   # ses heures de silence à lui : elles attendent
             continue
-        _vider(file, compte_id)
+        if file:
+            _vider(file, compte_id)
 
 
 def urgente(cle: str) -> bool:
@@ -223,7 +240,7 @@ def avant_les_cours(aujourd_hui: dt.date) -> tuple[str, str, str] | None:
     """Parfois, la veille d'un cours : revoir les flashcards ou la fiche de cette matière.
 
     Une matière à la fois, au plus une fois par semaine chacune ; seulement si l'emploi du temps est connu."""
-    if not preferences().get("edt", True):
+    if not _pronote(db.compte_actuel()) or not preferences().get("edt", True):
         return None
     try:
         a = emploi_du_temps.avant_les_cours(aujourd_hui)
@@ -302,6 +319,7 @@ def planifier(maintenant: dt.datetime):
             db.notifier(f"rappel:{jour}", *r)
         else:
             db.notifier(f"rappel:{jour}", "Rien à proposer aujourd'hui", statut="ignore")
+    planifier_invites(maintenant)
     if p["rappel"] and maintenant.weekday() == DIMANCHE and maintenant.time() >= _heure(p["heure"]):
         proposer_archivage(maintenant)
     if p["rappel"] and maintenant.time() >= _heure(p["silence_fin"]):
@@ -313,13 +331,41 @@ def planifier(maintenant: dt.datetime):
                             "Un dernier coup d'œil à ta fiche ?" if e["revision_id"] else e["titre"], url)
 
 
+def planifier_invites(maintenant: dt.datetime):
+    """Le rappel du jour de chaque invité abonné, à son heure : ses flashcards, ses campagnes, ses nouveaux cours.
+
+    Avant, seul l'admin d'origine en recevait un. Pas de Pronote pour eux (c'est celui de l'admin) : ni contrôles,
+    ni calage sur l'emploi du temps. Les autres admins reçoivent déjà celui de l'admin d'origine."""
+    jour = maintenant.date()
+    for compte in db.comptes():
+        i = compte["id"]
+        if i == 1 or compte.get("role") == "admin" or not compte.get("actif"):
+            continue
+        p = preferences(i)
+        cle = f"rappel:{jour}@{i}"
+        if not p["rappel"] or db.notification_connue(cle) or not db.abonnements_de(i):
+            continue
+        try:
+            with db.pour_compte(i):   # ses cartes et ses cours à lui, son heure sans l'emploi du temps de l'admin
+                if maintenant < moment_rappel(jour, p):
+                    continue
+                r = rappel_du_jour(jour)
+        except Exception as e:
+            log(f"rappel du compte {i} impossible : {e}")
+            continue
+        if r:
+            db.notifier_compte(i, cle, *r)
+        else:
+            db.notifier_compte(i, cle, "Rien à proposer aujourd'hui", statut="ignore")
+
+
 DIMANCHE = 6
 
 
 def moment_rappel(jour: dt.date, p: dict | None = None) -> dt.datetime:
     """L'heure choisie ; calée sur l'emploi du temps, plus tôt si les cours finissent avant."""
     p = p or preferences()
-    if p.get("edt", True):
+    if p.get("edt", True) and _pronote(db.compte_actuel()):
         return emploi_du_temps.heure_rappel(jour, _heure(p["heure"]))[0]
     return dt.datetime.combine(jour, _heure(p["heure"]), PARIS)
 
