@@ -60,7 +60,14 @@ def test_calculer():
 
 def test_page_progression(client, monkeypatch):
     monkeypatch.setattr(db, "progression_donnees", donnees)
-    monkeypatch.setattr(progression.dt, "datetime", dt.datetime)
+    from claunote import main
+
+    class Fige(dt.datetime):   # la page calcule « aujourd'hui » : figé au jour des données (sinon le test expire)
+        @classmethod
+        def now(cls, tz=None):
+            return MAINTENANT.astimezone(tz)
+
+    monkeypatch.setattr(main.dt, "datetime", Fige)
     r = client.get("/progression")
     assert r.status_code == 200
     assert "2 jours" in r.text and "71 % de bonnes réponses" in r.text and "Réseaux" in r.text
