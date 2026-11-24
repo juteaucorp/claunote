@@ -1,6 +1,6 @@
 """Apparence de chaque compte : thème (auto, clair, sombre) et style (Claunote, ou Vigie une fois l'easter egg trouvé).
 
-Le style Vigie (débloqué par 10 appuis rapides sur l'onglet Actualités ; hommage à https://vigie.dix-neuf.ovh, l'outil de veille d'un ami d'Anto) ne change que les couleurs
+Le style Vigie (débloqué par 10 appuis rapides sur l'onglet Actualités ; hommage à https://vigie.dix-neuf.ovh, l'outil de veille d'un ami) ne change que les couleurs
 d'accent, les titres et le logo (toujours le papillon), et il est toujours en sombre (fond sombre de Claunote).
 """
 import json
