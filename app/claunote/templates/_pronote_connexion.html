@@ -1,0 +1,29 @@
+{# Relier ou reconnecter Pronote : QR code (marche via EduConnect et les ENT) ou identifiants Pronote #}
+  <form method="post" action="/agenda/connexion-qr" class="carte" id="form-qr">
+    <h2 style="margin-top:0">Avec le QR code (recommandé : marche avec EduConnect et l'ENT)</h2>
+    <p class="doux">Connecte-toi à Pronote comme d'habitude (EduConnect, ENT…) dans ton navigateur, puis :</p>
+    <ol class="doux">
+      <li>Sur Pronote (ordinateur), clique sur l'icône <strong>QR code</strong> en haut (« Connexion à l'application mobile »).</li>
+      <li>Choisis un <strong>code à 4 chiffres</strong> et valide : le QR code s'affiche (valable 10 minutes).</li>
+      <li>Fais une <strong>capture d'écran</strong> du QR code et colle-la ici (Ctrl+V) ou choisis l'image. Sur téléphone, prends-le en photo.</li>
+    </ol>
+    <p><label>Image du QR code<br><input type="file" accept="image/*" id="image-qr"></label></p>
+    <p id="statut-qr" class="doux">Aucun QR code lu pour l'instant.</p>
+    <details><summary>Ou colle le contenu du QR code</summary>
+      <p><textarea name="qr" id="qr" rows="3" style="width:100%" placeholder='{"avecPageConnexion":false,"jeton":"…","login":"…","url":"https://…/pronote/mobile.eleve.html"}'></textarea></p>
+    </details>
+    <p><label>Code à 4 chiffres choisi sur Pronote<br>
+      <input name="pin" inputmode="numeric" pattern="\d{4}" maxlength="4" required size="6"></label></p>
+    <button class="principal">Connecter Pronote</button>
+  </form>
+
+  <details class="carte">
+    <summary>Sans ENT : identifiant et mot de passe Pronote</summary>
+    <form method="post" action="/agenda/connexion">
+      <p><label>Adresse Pronote<br><input name="url" size="50" required placeholder="https://0123456a.index-education.net/pronote/"></label></p>
+      <p><label>Identifiant<br><input name="identifiant" required autocomplete="username"></label></p>
+      <p><label>Mot de passe<br><input name="mot_de_passe" type="password" required autocomplete="current-password"></label></p>
+      <button>Connecter</button>
+      <p class="doux">Le mot de passe sert une seule fois : seul le jeton de reconnexion de Pronote est gardé sur la VM.</p>
+    </form>
+  </details>

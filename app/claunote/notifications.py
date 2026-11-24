@@ -448,6 +448,14 @@ def apres_synchro_pronote(documents_deposes: int = 0, compte_id: int | None = No
                     "dans tes cours d'ici quelques minutes.", "/agenda")
 
 
+def pronote_deconnecte(compte_id: int):
+    """La connexion Pronote du compte a sauté : on le prévient une fois par jour, avec le lien pour se reconnecter."""
+    jour = dt.datetime.now(PARIS).date()
+    db.notifier_compte(None if compte_id == 1 else compte_id, f"pronote-expire:{jour}@{compte_id}",
+                       "Pronote s'est déconnecté", "Touche pour te reconnecter avec le QR code : une minute suffit.",
+                       "/agenda#reconnexion")
+
+
 def import_a_confirmer(lot: str, inutiles: int):
     """Un dossier importé attend ton feu vert : fichiers à supprimer ou scans à découper."""
     if db.abonnements():

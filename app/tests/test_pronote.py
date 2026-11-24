@@ -156,8 +156,10 @@ def test_synchroniser_section_en_erreur(fausse_base, monkeypatch):
 
 def test_synchroniser_pas_connecte(fausse_base):
     c = faux_service({("GET", "/etat"): (200, {"connecte": False})})
-    assert pronote.synchroniser(c) == {"connecte": False}
+    assert pronote.synchroniser(c) == {"connecte": False, "expire": False}
     assert fausse_base["enregistre"] is None
+    c = faux_service({("GET", "/etat"): (200, {"connecte": False, "expire": True})})
+    assert pronote.synchroniser(c)["expire"] is True   # le worker prévient : « reconnecte-toi »
 
 
 def ev(id_, matiere, titre, jour):

@@ -1235,3 +1235,11 @@ def test_synchro_pronote_de_chaque_compte(monkeypatch):
     vus.clear()
     suivante = worker.synchro_pronote(0)
     assert vus == [1, 3, 4] and suivante - worker.time.monotonic() <= worker.REESSAI_PRONOTE + 1   # le 4 a raté
+
+
+def test_synchro_previent_si_pronote_deconnecte(monkeypatch):
+    from claunote import notifications, pronote, worker
+    vus = []
+    monkeypatch.setattr(pronote, "synchroniser", lambda compte_id=None: {"connecte": False, "expire": True})
+    monkeypatch.setattr(notifications, "pronote_deconnecte", vus.append)
+    assert worker._synchro_compte(5) and vus == [5]
