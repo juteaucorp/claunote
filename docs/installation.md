@@ -31,7 +31,7 @@
 lance `docker compose up -d --build`, ouvre le site et connecte-toi (`admin` / `claunote`) : un **assistant pas à
 pas** s'ouvre (espace disque → ton compte admin → kDrive, avec « Tester » et « Créer les dossiers pour moi » →
 jeton Claude, avec « Tester » → Cloudflare → Pronote). Les jetons sont **chiffrés** dans la base avec une clé gardée
-à part (volume Docker `secrets`) et **jamais réaffichés**. Tout se modifie ensuite dans *Réglages → Installation* ;
+à part (volume Docker `secrets`) et **jamais réaffichés**. Tout se modifie ensuite dans *Réglages → Configuration du site* ;
 un réglage fait sur le site passe avant celui du `.env`.
 
 **Où sont les fichiers** (au choix dans l'assistant) :
@@ -139,7 +139,7 @@ Schéma des invitations et des droits : [schémas → plusieurs comptes](schemas
 
 ## Mettre à jour
 
-**Depuis le site** : *Plus → Réglages → Mise à jour → Tout mettre à jour*. Un badge prévient quand une
+**Depuis le site** : *Plus → Réglages → Serveur → Mise à jour → Tout mettre à jour*. Un badge prévient quand une
 nouvelle version est sur GitHub (vérifié toutes les 6 h). Le service `maj` fait le `git pull`, reconstruit
 **seulement ce qui a changé** et redémarre les services ; si la construction échoue, l'ancienne version continue
 de tourner.
@@ -208,5 +208,5 @@ et les réglages du quotidien se font aussi sur le site (*Activité*, *Réglages
 | Le site ne s'ouvre pas | `BIND_ADDR` = bonne IP VPN ? `docker compose ps` puis `docker compose logs -f web` |
 | « GitHub refuse l'accès » dans *Mise à jour* | `GITHUB_TOKEN` absent, expiré, ou créé pour le mauvais propriétaire |
 | Mot de passe du site oublié | `docker compose exec web python -m claunote.auth reinitialiser` puis `docker compose restart web` |
-| Une construction échoue (`docker compose build`) | `docker compose build web 2>&1 \| tail -40`, `df -h /` (disque plein ?), `free -h` ; construire une image à la fois (voir *Mettre à jour*) ; *Réglages → Mise à jour → Libérer de la place* |
+| Une construction échoue (`docker compose build`) | `docker compose build web 2>&1 \| tail -40`, `df -h /` (disque plein ?), `free -h` ; construire une image à la fois (voir *Mettre à jour*) ; *Réglages → Serveur → État → Libérer de la place* |
 | Erreur Cloudflare 1033 / 502 | Voir le dépannage de [docs/cloudflare-tunnel.md](cloudflare-tunnel.md) |

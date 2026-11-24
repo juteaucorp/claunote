@@ -224,7 +224,7 @@ d'appareil** et l'**invitation**, **par Internet seulement** : par le VPN, rien 
 1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Turnstile** → **Ajouter un widget**.
 2. Nom : `Claunote`. **Nom d'hôte** : **exactement celui du tunnel**, par exemple **`claunote.ton-domaine.fr`**
    (pas l'adresse du VPN, pas une IP). Mode : **Géré**. « Pré-autorisation » : **non**.
-3. Copie la **clé du site** et la **clé secrète** dans **Réglages → Installation → Accès par Internet**, puis
+3. Copie la **clé du site** et la **clé secrète** dans **Réglages → Configuration du site → Accès par Internet**, puis
    **Tester la clé secrète** et **Enregistrer**. La clé secrète est chiffrée comme les autres jetons.
 4. Pour l'éteindre : vide la clé du site.
 
@@ -251,7 +251,7 @@ dépassent **5 fois l'habitude (au moins 60)**, une seule fois par vague. Deux p
 4. **Continuer vers le résumé** → **Créer le jeton** → copie-le (il n'est affiché **qu'une fois**).
 5. Ton domaine → **Vue d'ensemble** → colonne de droite, section **API** : copie l'**ID de zone** (et l'**ID de
    compte** pour Turnstile).
-6. **Réglages → Installation → Accès par Internet** → colle le jeton et les identifiants → **Tester la supervision**
+6. **Réglages → Configuration du site → Accès par Internet** → colle le jeton et les identifiants → **Tester la supervision**
    → **Enregistrer**. Le jeton est chiffré comme les autres.
 
 > Offre gratuite : certains jeux de données de l'API sont fermés (« does not have access to the path »). Ce n'est

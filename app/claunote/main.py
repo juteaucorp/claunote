@@ -783,7 +783,7 @@ def changer_mot_de_passe(request: Request, actuel: str = Form(...), nouveau: str
     return r
 
 
-# --- Installation : assistant pas à pas, puis Réglages → Installation (installation.py, reglages.py) -------
+# --- Installation : assistant pas à pas, puis Réglages → Configuration du site (installation.py, reglages.py) -------
 
 def _appliquer_reglages():
     """Le site prend les nouveaux réglages tout de suite ; le worker voit « reglages_version » et redémarre."""
@@ -1517,6 +1517,24 @@ def enregistrer_apparence(mode: str = Form("auto"), style: str = Form("claunote"
     return RedirectResponse("/reglages/apparence?message=" + quote("Apparence enregistrée."), status_code=303)
 
 
+def _resume_serveur() -> dict:
+    """Une ligne pour l'entrée « Serveur » des Réglages : le plus urgent d'abord (panne, pause, disque, mise à jour)."""
+    panne = _sans_erreur(bandeau_service)
+    pause = _sans_erreur(lambda: db.etat_valeur("analyses_pause") == "oui", False)
+    dq = _sans_erreur(disque.etat)
+    maj_n = _sans_erreur(maj.disponibles, 0) or 0
+    if panne:
+        return {"phrase": panne[0], "badge": "!", "alerte": True}
+    if dq and dq["niveau"] in ("attention", "critique"):
+        return {"phrase": f"Peu de place : {dq['libre_go']:.1f} Go libres", "badge": "!", "alerte": True}
+    if pause:
+        return {"phrase": "Analyses en pause", "badge": "pause", "alerte": True}
+    if maj_n:
+        return {"phrase": f"{maj_n} nouveauté{'s' if maj_n > 1 else ''} à installer", "badge": maj_n, "alerte": False}
+    libre = f" · {dq['libre_go']:.0f} Go libres" if dq else ""
+    return {"phrase": f"Tout tourne{libre}", "badge": 0, "alerte": False}
+
+
 @app.get("/reglages", response_class=HTMLResponse)
 def page_reglages(request: Request):
     """Point d'entrée unique : « Moi » pour tout le monde, « Administration » pour l'admin, avec l'état de chaque page."""
@@ -1527,9 +1545,7 @@ def page_reglages(request: Request):
         ctx.update({
             "nb_comptes": len(_sans_erreur(db.comptes, []) or []),
             "alertes": _sans_erreur(securite.nb_nouvelles_alertes, 0),
-            "maj_n": _sans_erreur(maj.disponibles, 0),
-            "pause": _sans_erreur(lambda: db.etat_valeur("analyses_pause") == "oui", False),
-            "disque": _sans_erreur(disque.etat),
+            "serveur": _resume_serveur(),
             "inst_a_faire": _sans_erreur(installation.a_faire, False),
             "nb_demandes": demandes_ia.nb_en_attente(),
         })
@@ -2666,7 +2682,7 @@ def _local_libre() -> str | None:
 def _repondre_ia(msg_id: int, q: str, conv: dict, historique: list[dict]):
     """Lancé dans un fil à part : la page interroge /demander/message/<id> jusqu'à la réponse.
 
-    Selon le réglage (page Activité) : le modèle local d'abord, Claude seulement s'il doute ou demande de
+    Selon le réglage (page Analyses) : le modèle local d'abord, Claude seulement s'il doute ou demande de
     l'aide (et 1 fois sur 10 pour contrôler) ; ou Claude d'abord, le local en secours.
     """
     portee = _portee(conv["niveau"], conv["matiere"]).strip()
@@ -3637,7 +3653,21 @@ def page_etat(request: Request):
         "s": s, "heure": _heure_fr, "file": db.file_attente(), "taches": modeles.tableau(), "noms": modeles.NOMS,
         "indispo": indispo, "bilan": db.bilan_ia(24), "appels": db.appels_ia(25), "libelles": modeles.LIBELLES,
         "maximum": modeles.maximum(), "sonde_demandee": db.etat_valeur("claude_sonde") is not None,
-        "sonde": {**(s.get("sonde") or {}), "le": _instant((s.get("sonde") or {}).get("le"))}})
+        "sonde": {**(s.get("sonde") or {}), "le": _instant((s.get("sonde") or {}).get("le"))},
+        "disque": _sans_erreur(disque.etat)})
+
+
+@app.post("/etat/nettoyer", response_class=HTMLResponse)
+def nettoyer_disque(request: Request):
+    """« Libérer de la place » sous la jauge du disque : même action que le service maj (images Docker, cache)."""
+    if not maj.present():
+        return HTMLResponse("Le service maj ne tourne pas sur la VM : voir l'onglet Mise à jour.")
+    try:
+        maj.demander("nettoyer")
+        securite.noter("mise_a_jour", request, "nettoyer")
+    except RuntimeError as e:
+        return HTMLResponse(html.escape(str(e)))
+    return HTMLResponse("Nettoyage lancé : le suivi est dans l'onglet <a href=\"/mise-a-jour\">Mise à jour</a>.")
 
 
 @app.get("/health")

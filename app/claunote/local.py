@@ -18,7 +18,7 @@ la main). D'où les appels à l'aide, quand Claude est disponible :
     lecture locale ──► OCR pauvre (manuscrit) ───────────► Claude lit le scan lui-même (BesoinClaude)
                    └─► classement local ──► confiance < 70 % ──► Claude vérifie et corrige (texte seul, Haiku)
                                         └─► sûr ──► gardé ; 1 fois sur 10 Claude contrôle quand même,
-                                                    pour mesurer la fiabilité du local (page Activité)
+                                                    pour mesurer la fiabilité du local (page Analyses)
 Sans Claude, un document douteux est relu par Claude à son retour (« Relire avec Claude »).
 """
 import json
@@ -58,7 +58,7 @@ MODE_DEFAUT = "local"
 
 
 def reglages() -> dict:
-    """Réglages de la page Activité : qui analyse (MODES), relecture par Claude, pause des analyses."""
+    """Réglages de la page Analyses : qui analyse (MODES), relecture par Claude, pause des analyses."""
     mode = db.etat_valeur("analyse_locale") or os.environ.get("ANALYSE_LOCALE") or MODE_DEFAUT
     mode = mode if mode in MODES else MODE_DEFAUT
     eteints = ressources.locaux_eteints()

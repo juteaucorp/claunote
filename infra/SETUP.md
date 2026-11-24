@@ -176,7 +176,7 @@ Page **Déposer** : glisse des fichiers ou un dossier complet (ou boutons « Cho
 est facultatif : il range le dépôt dans un dossier à ce nom. Les fichiers partent dans
 `Etudes/inbox` et un scan est lancé tout de suite.
 
-Mise à jour du code : *Plus → Réglages → Mise à jour* sur le site (section 15), ou à la main
+Mise à jour du code : *Plus → Réglages → Serveur → Mise à jour* sur le site (section 15), ou à la main
 `git pull && docker compose up -d --build`.
 
 ### Documents personnels oubliés (RIB, carte d'identité…)
@@ -582,7 +582,7 @@ la touche `/` place le curseur dans la recherche.
 
 ## 15. Mise à jour depuis le site
 
-*Plus → Réglages → Mise à jour* : version installée, nouveautés disponibles sur GitHub (vérifiées toutes
+*Plus → Réglages → Serveur → Mise à jour* : version installée, nouveautés disponibles sur GitHub (vérifiées toutes
 les 6 h, badge sur le menu Réglages) et trois actions **réservées à l'admin** (le compte connecté) :
 
 - **Tout mettre à jour** : `git pull`, construction des nouvelles images (le site reste en ligne pendant ce

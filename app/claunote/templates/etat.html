@@ -4,8 +4,8 @@
 {% block vivant %}remplacer{% endblock %}
 {% block contenu %}
 {% from "_onglets.html" import onglets %}
-{{ onglets('activite', 'etat') }}
-<h1>État du service</h1>
+{% if est_admin() %}{{ onglets('serveur', 'etat') }}{% endif %}
+<h1>{{ 'État du serveur' if est_admin() else 'État du service' }}</h1>
 {% set c, k = s.claude, s.kdrive %}
 
 <div class="grille services">
@@ -54,6 +54,22 @@
   </div>
 </div>
 
+{% if est_admin() %}
+<h2 id="disque">Disque de la VM</h2>
+<div class="carte {{ 'ko' if disque and disque.niveau in ('attention', 'critique') }}">
+  {% if disque %}
+  <p class="{{ 'alerte' if disque.niveau in ('attention', 'critique') }}"><strong>{{ disque.phrase }}</strong></p>
+  <div class="jauge-disque" role="img" aria-label="{{ '%.0f'|format(disque.libre_go) }} Go libres sur {{ '%.0f'|format(disque.total_go) }} Go">
+    <span style="width: {{ (100 - disque.part_libre * 100)|round|int }}%"></span></div>
+  <p class="doux">{{ '%.1f'|format(disque.libre_go) }} Go libres sur {{ '%.1f'|format(disque.total_go) }} Go. Chaque compte y ajoute ses scans et transcriptions.</p>
+  {% else %}<p class="doux">Espace disque inconnu (mesure impossible dans ce conteneur).</p>{% endif %}
+  <form hx-post="/etat/nettoyer" hx-target="#retour-nettoyage" hx-swap="innerHTML" class="actions" style="margin: 0">
+    <button title="Supprime les anciennes images Docker et le cache de construction de plus de 30 jours">Libérer de la place</button>
+    <span id="retour-nettoyage" class="doux"></span>
+  </form>
+</div>
+{% endif %}
+
 <h2>En attente</h2>
 <div class="carte">
   {% if file.scans or file.revisions or file.campagnes or file.reclassements %}
@@ -68,8 +84,8 @@
   {% else %}<p>Rien en attente.</p>{% endif %}
 </div>
 
-<h2>Quel modèle pour quoi</h2>
-<div class="carte">
+<details class="carte modeles">
+  <summary><strong>Quel modèle pour quoi</strong> <span class="doux">· {{ taches|length }} tâches</span></summary>
   <p class="doux">Chaque tâche a son modèle. Si l'agent doute (confiance sous 70 %) ou rend une réponse inutilisable,
     le modèle au-dessus prend le relais avant de te demander de vérifier.</p>
   <table class="notes">
@@ -82,7 +98,7 @@
   </table>
   {% for m, v in indispo.items() %}<p class="alerte">{{ noms[m] }} indisponible ({{ v.raison }}){% if v.jusqu_a %} jusqu'à {{ heure(v.jusqu_a) }}{% endif %} : le modèle du dessous le remplace.</p>{% endfor %}
   {% if maximum != 'opus' %}<p class="doux">Modèle maximal réglé sur {{ noms[maximum] }} (<code>CLAUDE_MODELE_MAX</code>).</p>{% endif %}
-</div>
+</details>
 
 <h2>Dernières 24 heures</h2>
 <div class="carte">
@@ -112,5 +128,9 @@
   ul.file { margin: 0; padding-left: 20px; }
   ul.file li { margin: 4px 0; }
   .carte table.notes { margin-top: 8px; }
+  details.modeles { margin-top: 18px; }
+  details.modeles summary { cursor: pointer; }
+  .jauge-disque { height: 10px; border-radius: 999px; background: var(--fond-doux); overflow: hidden; margin: 8px 0; }
+  .jauge-disque span { display: block; height: 100%; background: var(--accent); }
 </style>
 {% endblock %}

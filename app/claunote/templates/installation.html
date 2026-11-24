@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block titre %}{% if etape %}Installation · {{ noms[etape] }}{% else %}Installation{% endif %}{% endblock %}
+{% block titre %}{% if etape %}Installation · {{ noms[etape] }}{% else %}Configuration du site{% endif %}{% endblock %}
 {% block contenu %}
 {% if not etape %}{% from "_onglets.html" import onglets %}{{ onglets('reglages', 'installation') }}{% endif %}
 
@@ -42,7 +42,10 @@
   {% endfor %}
 </ol>
 {% else %}
-<h1>Installation</h1>
+<h1>Configuration du site</h1>
+<nav class="sommaire" aria-label="Sections">
+  <a href="#compte">Contact</a><a href="#stockage">Fichiers</a><a href="#claude">Claude</a><a href="#cloudflare">Accès par Internet</a><a href="#pronote">Pronote</a>
+</nav>
 <p class="doux">Tout ce qui a été choisi à l'installation, modifiable ici. Les <strong>secrets</strong> (jetons) sont
   <strong>chiffrés</strong> avec une clé gardée hors de la base, et <strong>jamais réaffichés</strong> : pour en changer
   un, colle le nouveau. Un réglage fait ici <strong>passe avant</strong> celui du fichier .env.
@@ -50,7 +53,8 @@
 {% endif %}
 
 {# ---- 1. Disque ---- #}
-{% if etape == 'disque' or not etape %}
+{# Hors assistant, le disque est suivi dans Réglages → Serveur (page État) #}
+{% if etape == 'disque' %}
 <section class="carte" id="disque">
   <h2>Espace disque de la VM</h2>
   {% if disque %}
@@ -214,7 +218,7 @@
     <li>{{ '✅' if r.CLAUDE_CODE_OAUTH_TOKEN.present else '➖' }} Claude {{ '' if r.CLAUDE_CODE_OAUTH_TOKEN.present else ': sans (modèles locaux seulement)' }}</li>
     <li>{{ '✅' if tunnel_actif else '➖' }} Accès par Internet {{ '' if tunnel_actif else ': non (réseau local ou VPN)' }}</li>
   </ul>
-  <p class="doux">Tout se modifie ensuite dans <strong>Réglages → Installation</strong>. Pour inviter quelqu'un :
+  <p class="doux">Tout se modifie ensuite dans <strong>Réglages → Configuration du site</strong>. Pour inviter quelqu'un :
     <a href="/comptes">Comptes</a> (jeton de 15 min).</p>
   <form method="post" action="/installation/fin"><div class="actions"><button class="principal" name="action" value="terminer">Terminer</button></div></form>
 </section>
@@ -224,7 +228,7 @@
 <div class="actions bas">
   {% if precedente %}<a class="bouton" href="/installation/{{ precedente }}">← Retour</a>{% endif %}
   {% if a_faire %}<form method="post" action="/installation/{{ etape }}"><button name="action" value="quitter" class="lien-danger"
-    title="Ne plus afficher l'assistant ; tout reste réglable dans Réglages → Installation">Je règlerai plus tard</button></form>{% endif %}
+    title="Ne plus afficher l'assistant ; tout reste réglable dans Réglages → Configuration du site">Je règlerai plus tard</button></form>{% endif %}
 </div>
 {% endif %}
 
@@ -252,5 +256,8 @@
   .bilan { list-style: none; padding: 0; display: grid; gap: 6px; }
   .actions.bas { max-width: 680px; justify-content: space-between; }
   .actions.bas form { margin: 0; }
+  .sommaire { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+  .sommaire a { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--bord); background: var(--carte); color: var(--texte);
+    text-decoration: none; font-size: .9rem; font-weight: 500; }
 </style>
 {% endblock %}

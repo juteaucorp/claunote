@@ -24,23 +24,28 @@
 </div>
 
 {% if admin %}
+{# Administration : 4 entrées, une par question que l'admin se pose (qui ? protégé ? ça tourne ? réglé comment ?).
+   Chaque entrée ouvre une page à onglets (Comptes · Demandes IA ; État · Analyses · Mise à jour). #}
 <h2 class="titre-groupe">Administration</h2>
 <div class="carte liste-reglages">
-  {{ ligne('/comptes', 'partager', 'Comptes et invitations', nb_comptes ~ ' compte' ~ ('s' if nb_comptes > 1 else '') ~ ', droits, jetons') }}
-  {{ ligne('/demandes', 'bulle', 'Demandes IA des invités', (nb_demandes ~ ' demande' ~ ('s' if nb_demandes > 1 else '') ~ ' à valider') if nb_demandes else 'Aucune en attente', nb_demandes, alerte=nb_demandes) }}
-  {{ ligne('/securite', 'verifier', 'Sécurité', (alertes ~ ' alerte' ~ ('s' if alertes > 1 else '') ~ ' à lire') if alertes else 'Rien de nouveau', alertes, alerte=alertes) }}
-  {{ ligne('/analyses', 'etat', 'Activité', 'Analyses en pause' if pause else 'Analyses en cours, modèles, pause', 'pause' if pause else 0, alerte=pause) }}
-  {{ ligne('/etat', 'check', 'État du service et disque', disque.phrase if disque else 'Claude, Pronote, kDrive, disque',
-           alerte=disque and disque.niveau in ('attention', 'critique')) }}
-  {{ ligne('/mise-a-jour', 'relancer', 'Mise à jour', (maj_n ~ ' nouveauté' ~ ('s' if maj_n > 1 else '')) if maj_n else 'À jour', maj_n) }}
-  {{ ligne('/reglages/installation', 'nouveau', 'Installation du site', 'À terminer' if inst_a_faire else 'Claude, stockage, Pronote, Cloudflare', alerte=inst_a_faire) }}
-  <form method="post" action="/comptes/tout-voir" class="ligne-reglage">
-    <input type="hidden" name="actif" value="{{ '' if moi().tout_voir else '1' }}"><input type="hidden" name="suite" value="/reglages">
-    <span class="pastille-icone">{{ icone('cours', 20) }}</span>
-    <span class="texte"><strong>Tout voir</strong><small>{% if moi().tout_voir %}Actif : tu vois les données de tous les comptes{% else %}Voir et utiliser les données de tous les comptes{% endif %}</small></span>
-    <button class="{{ 'principal' if moi().tout_voir }} petit">{{ 'Désactiver' if moi().tout_voir else 'Activer' }}</button>
-  </form>
+  {{ ligne('/comptes', 'partager', 'Comptes',
+           nb_comptes ~ ' compte' ~ ('s' if nb_comptes > 1 else '') ~ (' · ' ~ nb_demandes ~ ' demande' ~ ('s' if nb_demandes > 1 else '') ~ ' IA à valider' if nb_demandes else ', invitations, droits'),
+           nb_demandes, alerte=nb_demandes) }}
+  {{ ligne('/securite', 'verifier', 'Sécurité',
+           (alertes ~ ' alerte' ~ ('s' if alertes > 1 else '') ~ ' à lire') if alertes else 'Rien de nouveau', alertes, alerte=alertes) }}
+  {{ ligne('/etat', 'etat', 'Serveur', serveur.phrase, serveur.badge, alerte=serveur.alerte) }}
+  {{ ligne('/reglages/installation', 'nouveau', 'Configuration du site',
+           'À terminer' if inst_a_faire else 'Claude, stockage, accès par Internet, Pronote', alerte=inst_a_faire) }}
 </div>
+
+<form method="post" action="/comptes/tout-voir" class="carte liste-reglages tout-voir {{ 'actif' if moi().tout_voir }}">
+  <input type="hidden" name="actif" value="{{ '' if moi().tout_voir else '1' }}"><input type="hidden" name="suite" value="/reglages">
+  <div class="ligne-reglage">
+    <span class="pastille-icone">{{ icone('cours', 20) }}</span>
+    <span class="texte"><strong>Tout voir</strong><small>{% if moi().tout_voir %}<strong>Actif</strong> : tu vois et utilises les données de tous les comptes{% else %}Voir et utiliser les cours, fiches et cartes de tous les comptes{% endif %}</small></span>
+    <button class="{{ 'principal' if moi().tout_voir }} petit">{{ 'Désactiver' if moi().tout_voir else 'Activer' }}</button>
+  </div>
+</form>
 {% endif %}
 
 <form method="post" action="/deconnexion" class="deconnexion"><button>{{ icone('sortie', 18) }}Déconnexion</button></form>
@@ -59,6 +64,8 @@
   .ligne-reglage .badge { margin: 0; }
   .ligne-reglage .chevron { color: var(--doux); display: inline-flex; }
   .ligne-reglage button { min-height: 36px; }
+  .tout-voir { margin-top: 12px; }
+  .tout-voir.actif { border-color: var(--accent); }
   .deconnexion { margin-top: 22px; }
   .deconnexion button { display: inline-flex; align-items: center; gap: 6px; }
 </style>

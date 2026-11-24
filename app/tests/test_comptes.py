@@ -248,6 +248,8 @@ def test_pages_juridiques_publiques(anonyme):
 
 
 def test_disque(monkeypatch):
+    for cle in ("le", "valeur"):   # rien de faux ne reste en cache pour les tests suivants
+        monkeypatch.setitem(disque._cache, cle, disque._cache.get(cle))
     def faux(go_libres, total=40):
         monkeypatch.setattr(disque, "mesurer", lambda chemin="/": {"total": total * disque.GO, "utilise": 0,
                                                                    "libre": go_libres * disque.GO})

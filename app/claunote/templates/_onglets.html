@@ -6,13 +6,17 @@
 {% elif groupe == 'ranger' %}
   {% set liste = [('verifier', '/a-verifier', 'À vérifier', nb_a_verifier()), ('organiser', '/organiser', 'Tous les documents', 0),
                   ('matieres', '/organiser/matieres', 'Matières', nb_matieres_en_double()), ('hors', '/hors-cours', 'Hors cours', 0)] %}
-{% elif groupe == 'activite' %}
-  {% set liste = [('analyses', '/analyses', 'Analyses', 0), ('etat', '/etat', 'État du service', 0)] %}
+{% elif groupe == 'comptes' %}
+  {% set liste = [('comptes', '/comptes', 'Comptes', 0), ('demandes', '/demandes', 'Demandes IA', nb_demandes_ia())] %}
+{% elif groupe == 'serveur' %}
+  {% set liste = [('etat', '/etat', 'État', 0), ('analyses', '/analyses', 'Analyses', 'pause' if analyses_en_pause() else 0),
+                  ('mise_a_jour', '/mise-a-jour', 'Mise à jour', nb_mises_a_jour())] %}
 {% else %}
   {% set liste = [] %}
 {% endif %}
-{# Réglages et Activité : un lien de retour vers la page Réglages (qui mène à tout) au lieu d'une rangée d'onglets #}
-{% if groupe in ('reglages', 'activite') %}
+{# Réglages : un lien de retour vers la page Réglages (qui mène à tout) ; les pages de l'Administration
+   regroupées (Comptes, Serveur) ont en plus leurs onglets #}
+{% if groupe in ('reglages', 'comptes', 'serveur') %}
 <a class="retour-reglages" href="/reglages">‹ Réglages</a>
 {% endif %}
 {% if liste %}

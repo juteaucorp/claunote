@@ -49,7 +49,7 @@
   {% if not cf_actif %}
   <p class="doux">Éteint. Avec un jeton Cloudflare <strong>en lecture seule</strong>, tu vois ici ce que Cloudflare bloque
     (géoblocage, limite de débit sur la connexion, robots), avec une alerte sur un pic d'attaques.
-    À régler dans <a href="/reglages/installation#cloudflare">Réglages → Installation → Accès par Internet</a>.</p>
+    À régler dans <a href="/reglages/installation#cloudflare">Réglages → Configuration du site → Accès par Internet</a>.</p>
   {% else %}
   {% set r = cf.resume %}
   {% if cf.erreur %}<p class="alerte">{{ cf.erreur }}</p>{% endif %}

@@ -225,7 +225,7 @@ CREATE TABLE IF NOT EXISTS matieres_distinctes (
     le      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (niveau, a, b)
 );
--- Contrôles du modèle local par Claude : mesure de sa fiabilité (page Activité)
+-- Contrôles du modèle local par Claude : mesure de sa fiabilité (page Analyses)
 CREATE TABLE IF NOT EXISTS controles (
     id      SERIAL PRIMARY KEY,
     le      TIMESTAMPTZ NOT NULL DEFAULT now(),

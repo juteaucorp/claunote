@@ -42,7 +42,7 @@ fin() {  # fin <ok|erreur> <message>
   echo "== $2"
   [ "$1" = ok ] || exit 1
 }
-# Tunnel Cloudflare allumé depuis le site (Réglages → Installation) : le profil « tunnel » est actif pour
+# Tunnel Cloudflare allumé depuis le site (Réglages → Configuration du site) : le profil « tunnel » est actif pour
 # toutes les commandes docker compose (comme COMPOSE_PROFILES=tunnel dans .env), donc aussi aux mises à jour.
 if [ -f /maj/tunnel_actif ]; then
   profils=$(sed -n 's/^COMPOSE_PROFILES=//p' "$DEPOT/.env" 2>/dev/null | tail -1 | tr -d "\"' \r")

@@ -134,7 +134,7 @@ REGLAGES_CLAUDE = json.dumps({"permissions": {
 
 
 def rafraichir_env():
-    """Jeton du forfait changé sur le site (Réglages → Installation) : les prochains appels l'utilisent."""
+    """Jeton du forfait changé sur le site (Réglages → Configuration du site) : les prochains appels l'utilisent."""
     global ENV_FORFAIT
     ENV_FORFAIT = env_claude()
 
