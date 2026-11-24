@@ -48,10 +48,11 @@ CONDITIONS_VERSION = "2026-11-17"    # à changer quand les conditions changent 
 IDENTIFIANT = re.compile(r"^[a-z0-9][a-z0-9._-]{1,31}$")
 MDP_MIN = 10
 
-# Ce que demande chaque page. Pas dans la liste : tout compte connecté (Compte, Notifications, État…).
+# Ce que demande chaque page. Pas dans la liste : tout compte connecté (Compte, Notifications, État,
+# ses propres appareils par Internet : /appareils/…).
 # « admin » : réservé aux admins. Premier préfixe qui correspond (du plus précis au plus large).
 PAGES = [
-    ("/comptes", "admin"), ("/demandes", "admin"), ("/securite", "admin"), ("/mise-a-jour", "admin"), ("/appareils/", "admin"),
+    ("/comptes", "admin"), ("/demandes", "admin"), ("/securite", "admin"), ("/mise-a-jour", "admin"),
     ("/analyses", "admin"), ("/inbox", "admin"), ("/scan", "admin"),
     ("/claude/reessayer", "admin"), ("/etat/nettoyer", "admin"), ("/installation", "admin"), ("/reglages/installation", "admin"), ("/organiser/matieres", "organiser"), ("/actualites/sources", "actualites"),
     ("/deposer", "deposer"),
@@ -254,12 +255,15 @@ def normaliser_jeton(jeton: str) -> str:
     return "-".join(brut[i:i + 5] for i in range(0, len(brut), 5))
 
 
-def inviter(admin_id: int, role: str = "invite", droits: list[str] | None = None, note: str = "") -> tuple[str, dt.datetime]:
+def inviter(admin_id: int, role: str = "invite", droits: list[str] | None = None, note: str = "",
+            appareil: str = "") -> tuple[str, dt.datetime]:
+    """Jeton de création de compte ; `appareil` : nom de l'appareil que le lien approuve pour Internet."""
     role = role if role in ROLES else "invite"
     droits = [d for d in (droits if droits is not None else DROITS_INVITE) if d in DROITS]
     jeton = nouveau_jeton()
     fin = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=DUREE_JETON)
-    db.creer_invitation(empreinte(jeton), "compte", fin, role, droits, note.strip()[:120] or None, admin_id)
+    db.creer_invitation(empreinte(jeton), "compte", fin, role, droits, note.strip()[:120] or None, admin_id,
+                        appareil=appareil.strip()[:60] or None)
     return jeton, fin
 
 

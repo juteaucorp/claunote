@@ -82,6 +82,10 @@ def test_jeton_refuse_ou_d_une_autre_page(site, cles, cloudflare):
     assert "autre page" in site.post("/appareil", headers=CF, data=donnees).text
     reponse.update(action="appareil", hostname="pirate.example")
     assert "autre adresse" in site.post("/appareil", headers=CF, data=donnees).text
+    reponse.update(action="", hostname="testserver")   # jeton sans action : pas un de nos widgets
+    assert "autre page" in site.post("/appareil", headers=CF, data=donnees).text
+    reponse.update(action="appareil", hostname="")
+    assert "autre adresse" in site.post("/appareil", headers=CF, data=donnees).text
 
 
 def test_cloudflare_injoignable_refuse(site, cles, monkeypatch):

@@ -178,10 +178,26 @@ la page de connexion ou le site, arrête-toi et relis l'étape 4.
 > installée depuis l'adresse du réseau local ou du VPN est une **autre appli** pour l'iPhone, avec ses propres
 > notifications et son propre Face ID.
 
-### Étape 8. Les appareils suivants
+### Étape 8. Les appareils suivants, et ceux des autres comptes
 
-Depuis n'importe quel appareil déjà approuvé (même par Internet) : **Réglages → Compte → Appareils par Internet →
-Ajouter un appareil**, puis tape le code sur le nouvel appareil.
+Chaque appareil est **relié à un compte** (les invités n'ont pas le VPN) :
+
+```
+ Toi (admin)  Réglages → Comptes → Inviter (nom de son appareil : « iPhone de Camille »)
+      │
+      ▼  lien d'invitation (15 min, une fois)
+ Camille, par Internet ──► crée son compte ──► CET appareil est approuvé, relié à @camille
+      │
+      ▼  plus tard : Réglages → Compte → Mes appareils par Internet → Ajouter un appareil
+ code de 8 caractères (15 min, une fois) ──► tapé sur le nouvel appareil ──► relié à @camille
+```
+
+- **Toi** : même chose pour tes appareils (**Réglages → Compte → Mes appareils par Internet → Ajouter un appareil**).
+- **Réglages → Comptes** : sous chaque compte, ses **appareils par Internet** (nom, ajout, dernière visite),
+  **Retirer**, et **Code pour un nouvel appareil** (téléphone changé, appli iPhone installée après coup).
+- Chaque nouvel appareil t'envoie une **alerte** avec le compte concerné.
+- Compte désactivé, expiré ou supprimé : **ses appareils ne passent plus**.
+- L'appli ajoutée à l'écran d'accueil de l'iPhone est un **appareil à part** de Safari : il lui faut son code.
 
 ### Étape 9. Durcir Cloudflare *(dashboard Cloudflare, 10 minutes)*
 
@@ -191,7 +207,7 @@ Ces réglages arrêtent les attaques **avant** qu'elles n'arrivent chez toi :
 | # | Où | Réglage |
 |---|---|---|
 | 1 | **Sécurité → Bots** | **Bot Fight Mode : activé** (robots connus bloqués ; si l'appli iPhone se met à afficher des erreurs, désactive-le) |
-| 2 | **Sécurité → Règles WAF → Règles de limitation de débit** | `(http.host eq "claunote.ton-domaine.fr" and http.request.method eq "POST" and http.request.uri.path in {"/connexion" "/appareil" "/cles/connexion"})` → **5 requêtes / 10 s par IP** → **Bloquer** (offre gratuite : 1 règle, période et durée de 10 s ; le site bloque ensuite plus longtemps lui-même) |
+| 2 | **Sécurité → Règles WAF → Règles de limitation de débit** | `(http.host eq "claunote.ton-domaine.fr" and http.request.method eq "POST" and http.request.uri.path in {"/connexion" "/appareil" "/cles/connexion" "/invitation"})` → **5 requêtes / 10 s par IP** → **Bloquer** (offre gratuite : 1 règle, période et durée de 10 s ; le site bloque ensuite plus longtemps lui-même) |
 | 3 | **Sécurité → Règles WAF → Règles gérées** | **Cloudflare Free Managed Ruleset : activé** |
 | 4 | **Sécurité → Paramètres** | **Niveau de sécurité : Moyen** (ou Élevé), **Browser Integrity Check : activé** |
 | 5 | **SSL/TLS → Certificats Edge** | **Toujours utiliser HTTPS**, **TLS minimum 1.2**, **TLS 1.3 activé** |
@@ -260,7 +276,8 @@ Sans elle, une mise à jour ou un tunnel coupé affiche **« Error 1033 — Clou
 
 | Je veux… | Je fais… |
 |---|---|
-| Voir mes appareils | **Réglages → Compte → Appareils par Internet** (nom, date d'ajout, dernière visite) |
+| Voir mes appareils | **Réglages → Compte → Mes appareils par Internet** (nom, date d'ajout, dernière visite) |
+| Voir les appareils de chacun | **Réglages → Comptes** : sous chaque compte, ses appareils, **Retirer**, **Code pour un nouvel appareil** |
 | Couper un appareil perdu ou volé | **Retirer** sur cette page (effet immédiat), puis change le mot de passe sur la page Compte |
 | Voir qui a essayé d'entrer | **Réglages → Sécurité** : journal, alertes, adresses bannies |
 | Tout couper d'un coup (téléphone volé…) | **Réglages → Sécurité → Déconnecter partout** (+ case « retirer les appareils ») |

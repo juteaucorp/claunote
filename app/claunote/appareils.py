@@ -3,12 +3,22 @@
 Par le VPN ou le réseau local, rien ne change. Une requête arrivée par Cloudflare (en-tête
 `cf-connecting-ip` ou `cf-ray`, que Cloudflare ajoute toujours et qu'un visiteur ne peut pas retirer)
 n'atteint le site que si l'appareil porte le cookie d'un appareil approuvé. Sinon : page « code
-d'appareil ». Le code (8 caractères, 15 min, une seule fois) se crée sur Réglages → Compte depuis un
-appareil déjà approuvé ou par le VPN, ou sur la VM : `docker compose exec web python -m claunote.appareils`.
+d'appareil ».
+
+Chaque appareil appartient à un compte (les invités n'ont pas le VPN) :
+
+    invitation de l'admin (nom de l'appareil) ──► le lien ouvre la création du compte par Internet,
+                                                 et approuve l'appareil qui l'utilise (une seule fois)
+    Réglages → Compte → « Ajouter un appareil » ──► code de 8 caractères, 15 min, une fois : à taper
+                                                 sur le nouvel appareil, qui rejoint CE compte
+    Comptes (admin) ──► appareils de chacun, « Retirer », code d'appareil pour quelqu'un
+
+Un code par compte à la fois (un nouveau remplace le précédent). Sur la VM aussi :
+`docker compose exec web python -m claunote.appareils [identifiant]`.
 
 Le cookie (400 jours) contient un identifiant et un secret aléatoire ; la base n'en garde qu'une empreinte.
-Retirer un appareil sur la page Compte le coupe aussitôt. La connexion au site (mot de passe ou Face ID)
-reste demandée en plus.
+Retirer un appareil le coupe aussitôt ; un compte désactivé, expiré ou supprimé coupe aussi ses appareils.
+La connexion au site (mot de passe ou Face ID) reste demandée en plus.
 
 `CLAUNOTE_TUNNEL_APPAREILS=0` coupe ce contrôle (si Cloudflare Access fait déjà le tri, par exemple).
 """
@@ -27,10 +37,11 @@ from claunote import db
 COOKIE = "claunote_appareil"
 DUREE = 400 * 24 * 3600          # maximum accepté par les navigateurs
 CODE_DUREE = 15 * 60
-CODE_ESSAIS_MAX = 20             # au-delà, le code en cours est annulé (en plus du blocage par adresse)
+CODE_ESSAIS_MAX = 20             # au-delà, les codes en cours sont annulés (en plus du blocage par adresse)
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # sans 0/O, 1/I/L
 VU_TOUTES = 600                  # « vu le » mis à jour au plus toutes les 10 min
 CLE, CLE_CODE = "appareils", "appareil_code"
+ADMIN_ORIGINE = 1                # appareils d'avant les comptes : ceux de l'admin d'origine
 _cloudflared = {"le": float("-inf"), "ips": set()}
 # Lire, modifier, réécrire la liste d'un coup : sans ça, une requête d'un appareil (mise à jour de « vu le »)
 # pouvait réécrire l'ancienne liste juste après « Retirer » et faire revenir l'appareil retiré.
@@ -90,6 +101,7 @@ def liste(frais: bool = False) -> list[dict]:
     except ValueError:
         return []
     for a in appareils:
+        a["compte_id"] = a.get("compte_id") or ADMIN_ORIGINE
         for champ in ("cree", "vu"):
             a[champ] = dt.datetime.fromisoformat(a[champ]) if a.get(champ) else None
     return appareils
@@ -107,45 +119,97 @@ def _normaliser(code: str) -> str:
     return "".join(c for c in code.upper() if c in ALPHABET)
 
 
-def nouveau_code(maintenant: float | None = None) -> str:
-    """Crée le code d'ajout (remplace le précédent) ; renvoyé une seule fois, la base n'en garde que l'empreinte."""
-    code = "".join(secrets.choice(ALPHABET) for _ in range(8))
-    db.etat_ecrire(CLE_CODE, json.dumps({"empreinte": _empreinte(code), "expire": (maintenant or time.time()) + CODE_DUREE,
-                                         "echecs": 0}))
-    return f"{code[:4]}-{code[4:]}"
-
-
-def code_en_cours(maintenant: float | None = None) -> float | None:
-    """Expiration (timestamp) du code d'ajout encore valable, s'il y en a un."""
-    try:
-        c = json.loads(db.etat_valeur(CLE_CODE) or "null")
-    except ValueError:
-        return None
-    return c["expire"] if c and c["expire"] > (maintenant or time.time()) else None
-
-
-def utiliser_code(code: str, nom: str, maintenant: float | None = None) -> str | None:
-    """Code bon : crée l'appareil et renvoie la valeur du cookie ; sinon None."""
-    with _verrou:   # deux essais en même temps : le compteur d'échecs et l'usage unique tiennent
-        return _utiliser_code(code, nom, maintenant)
-
-
-def _utiliser_code(code: str, nom: str, maintenant: float | None) -> str | None:
+def _codes(maintenant: float | None = None) -> dict:
+    """{"codes": [{empreinte, expire, compte_id}], "echecs": n}, sans les codes expirés.
+    Ancien format (un seul code, celui de l'admin) relu tel quel."""
     try:
         c = json.loads(db.etat_frais(CLE_CODE) or "null")
     except ValueError:
         c = None
-    if not c or c["expire"] <= (maintenant or time.time()):
-        return None
-    if not hmac.compare_digest(_empreinte(_normaliser(code)), c["empreinte"]):
-        c["echecs"] = c.get("echecs", 0) + 1
-        db.etat_ecrire(CLE_CODE, None if c["echecs"] >= CODE_ESSAIS_MAX else json.dumps(c))
-        return None
-    db.etat_ecrire(CLE_CODE, None)   # une seule fois
+    if not c:
+        return {"codes": [], "echecs": 0}
+    if "codes" not in c:
+        c = {"codes": [{"empreinte": c["empreinte"], "expire": c["expire"], "compte_id": ADMIN_ORIGINE}],
+             "echecs": c.get("echecs", 0)}
+    c["codes"] = [k for k in c["codes"] if k["expire"] > (maintenant or time.time())]
+    return c
+
+
+def _ecrire_codes(c: dict):
+    db.etat_ecrire(CLE_CODE, json.dumps(c) if c["codes"] else None)
+
+
+def nouveau_code(compte_id: int = ADMIN_ORIGINE, maintenant: float | None = None) -> str:
+    """Code d'ajout d'un appareil pour ce compte (remplace son code précédent) ; renvoyé une seule fois,
+    la base n'en garde que l'empreinte."""
+    code = "".join(secrets.choice(ALPHABET) for _ in range(8))
+    with _verrou:
+        c = _codes(maintenant)
+        c["codes"] = [k for k in c["codes"] if k["compte_id"] != compte_id] + [
+            {"empreinte": _empreinte(code), "expire": (maintenant or time.time()) + CODE_DUREE, "compte_id": compte_id}]
+        _ecrire_codes(c)
+    return f"{code[:4]}-{code[4:]}"
+
+
+def code_en_cours(compte_id: int = ADMIN_ORIGINE, maintenant: float | None = None) -> float | None:
+    """Expiration (timestamp) du code d'ajout encore valable de ce compte, s'il y en a un."""
+    return next((k["expire"] for k in _codes(maintenant)["codes"] if k["compte_id"] == compte_id), None)
+
+
+def utiliser_code(code: str, nom: str, maintenant: float | None = None) -> str | None:
+    """Code bon : crée l'appareil (au compte du code) et renvoie la valeur du cookie ; sinon None."""
+    with _verrou:   # deux essais en même temps : le compteur d'échecs et l'usage unique tiennent
+        c = _codes(maintenant)
+        bon = next((k for k in c["codes"] if hmac.compare_digest(_empreinte(_normaliser(code)), k["empreinte"])), None)
+        if not bon:
+            if c["codes"]:
+                c["echecs"] = c.get("echecs", 0) + 1
+                if c["echecs"] >= CODE_ESSAIS_MAX:
+                    c = {"codes": [], "echecs": 0}   # trop d'essais : tous les codes en cours tombent
+                _ecrire_codes(c)
+            return None
+        c["codes"].remove(bon)   # une seule fois
+        _ecrire_codes(c)
+        return _creer(nom, bon["compte_id"])
+
+
+def _creer(nom: str, compte_id: int, origine: str = "code") -> str:
     ident, secret = secrets.token_hex(6), secrets.token_urlsafe(32)
     _enregistrer(liste(frais=True) + [{"id": ident, "nom": (nom or "Appareil").strip()[:60] or "Appareil",
-                             "empreinte": _empreinte(secret), "cree": _maintenant(), "vu": _maintenant()}])
+                                       "compte_id": compte_id, "origine": origine,
+                                       "empreinte": _empreinte(secret), "cree": _maintenant(), "vu": _maintenant()}])
     return f"{ident}.{secret}"
+
+
+def approuver_par_invitation(nom: str, compte_id: int) -> str:
+    """Le lien d'invitation (une fois, 15 min) vaut approbation de l'appareil qui crée le compte."""
+    with _verrou:
+        return _creer(nom, compte_id, "invitation")
+
+
+def du_compte(compte_id: int) -> list[dict]:
+    return [a for a in liste() if a["compte_id"] == compte_id]
+
+
+def par_compte() -> dict[int, list[dict]]:
+    """Appareils de chaque compte (page Comptes de l'admin), les plus récents d'abord."""
+    groupes: dict[int, list[dict]] = {}
+    for a in sorted(liste(), key=lambda a: a.get("vu") or a.get("cree") or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
+                    reverse=True):
+        groupes.setdefault(a["compte_id"], []).append(a)
+    return groupes
+
+
+def retirer_du_compte(compte_id: int) -> int:
+    """Compte supprimé : ses appareils ne passent plus. Renvoie combien sont retirés."""
+    with _verrou:
+        tous = liste(frais=True)
+        restent = [a for a in tous if a["compte_id"] != compte_id]
+        _enregistrer(restent)
+        c = _codes()
+        c["codes"] = [k for k in c["codes"] if k["compte_id"] != compte_id]
+        _ecrire_codes(c)
+    return len(tous) - len(restent)
 
 
 # --- Reconnaissance -----------------------------------------------------------
@@ -180,7 +244,11 @@ def retirer(ident: str):
 
 
 if __name__ == "__main__":
-    # Premier appareil, sans VPN sous la main : code créé depuis la VM
+    # Premier appareil, sans VPN sous la main : code créé depuis la VM (pour l'admin, ou le compte nommé)
+    import sys
     db.init()
-    print(f"Code d'ajout d'appareil : {nouveau_code()} (valable 15 min, une seule fois).\n"
-          "Ouvre l'adresse Cloudflare du site sur l'appareil et tape ce code.")
+    compte = db.compte_par_identifiant(sys.argv[1]) if len(sys.argv) > 1 else db.compte(ADMIN_ORIGINE)
+    if not compte:
+        sys.exit(f"Compte « {sys.argv[1]} » inconnu.")
+    print(f"Code d'ajout d'appareil pour @{compte['identifiant']} : {nouveau_code(compte['id'])} "
+          "(valable 15 min, une seule fois).\nOuvre l'adresse Cloudflare du site sur l'appareil et tape ce code.")

@@ -47,10 +47,11 @@
   </script>
   {% endif %}
 </div>
-{% if est_admin() %}
+{% if est_admin() or appareils or par_tunnel %}
 <div class="carte" id="appareils" style="max-width: 560px">
-  <strong>Appareils par Internet</strong>
-  <p class="doux">Hors VPN (adresse Cloudflare), le site ne s'ouvre que sur ces appareils.
+  <strong>Mes appareils par Internet</strong>
+  <p class="doux">Hors VPN (adresse Internet du site), ton compte ne s'ouvre que sur ces appareils.
+    L'appli ajoutée à l'écran d'accueil de l'iPhone compte comme un <strong>appareil à part</strong> : crée-lui un code.
     {% if par_tunnel %}{% if appareil_ici %}Tu es connecté par Internet depuis <strong>{{ appareil_ici.nom }}</strong>.{% endif %}{% endif %}</p>
   {% if appareils %}
   <ul class="liste-cles">
@@ -66,7 +67,8 @@
   {% endif %}
   {% if code_appareil %}
   <p class="carte accent">Code à taper sur le nouvel appareil : <strong style="font-size: 1.4em; letter-spacing: 2px">{{ code_appareil }}</strong><br>
-    <span class="doux">Valable 15 minutes, une seule fois. Dans l'appli iPhone, tape-le <em>dans l'appli</em> (pas dans Safari).</span></p>
+    <span class="doux">Valable 15 minutes, une seule fois, pour <strong>ton</strong> compte. Dans l'appli iPhone, tape-le <em>dans l'appli</em> (pas dans Safari).
+    Ne le donne à personne : l'admin voit les appareils de chaque compte.</span></p>
   {% elif code_expire %}
   <p class="doux">Un code créé tout à l'heure est encore valable quelques minutes.</p>
   {% endif %}
