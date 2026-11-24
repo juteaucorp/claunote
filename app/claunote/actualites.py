@@ -22,6 +22,10 @@
   seule fois par événement (étiquette commune aux articles qui en parlent) ; ou chaque nouveauté d'un flux
   « tout m'intéresse » ; puis la file commune (notifications.py) : silence, même texte < 20 h, plus de 3 = résumé.
 - Sans Claude (limite, panne, réglage) : repérage par mots-clés (rien ne sonne), refait par l'IA à son retour.
+- À chaque compte son fil : ses sources, ses sujets, ses articles lus ou favoris, son « Essentiel », ses réglages
+  et ses notifications, sur ses appareils, selon ses heures de silence (le worker fait le tour compte par compte,
+  sous la séparation de la base). Un compte sans forfait Claude reprend ce que l'IA a dit du même article chez
+  un autre compte (résumé, alerte) et le range dans ses sujets par mots-clés : ses alertes sonnent quand même.
 """
 import datetime as dt
 import hashlib
@@ -150,18 +154,46 @@ def formation_texte() -> str:
 
 
 def log(msg: str):
-    print(f"actualités : {msg}", flush=True)
+    c = db.compte_actuel()
+    print(f"actualités{f' (compte {c})' if c not in (None, 1) else ''} : {msg}", flush=True)
+
+
+def _origine() -> bool:
+    """Le fil de l'admin d'origine (ou le travail interne) : ses clés d'avant les comptes restent les mêmes."""
+    return db.compte_actuel() in (None, 1)
+
+
+def cle(nom: str) -> str:
+    """Clé d'état propre au compte en cours (réglages, point du jour, heures de lecture…)."""
+    return nom if _origine() else f"{nom}:{int(db.compte_actuel())}"
+
+
+def destinataire() -> int | None:
+    """À qui vont les notifications du fil en cours : ce compte, ou les admins (None) pour l'admin d'origine,
+    comme les autres notifications du worker (ses appareils d'avant les comptes compris)."""
+    return None if _origine() else db.compte_actuel()
+
+
+def _cle_notif(base: str) -> str:
+    return base if _origine() else f"{base}@{int(db.compte_actuel())}"[:400]
+
+
+def notifier(base: str, titre: str, corps: str, url: str) -> bool:
+    """Dans la file du compte du fil, avec une clé à lui : la même alerte sonne chez chacun, une fois."""
+    cle_n = _cle_notif(base)
+    with db.pour_compte(destinataire()):
+        return db.notifier(cle_n, titre, corps, url)
 
 
 def reglages() -> dict:
     try:
-        return {**DEFAUT, **json.loads(db.etat_valeur("actualites") or "{}")}
+        return {**DEFAUT, **json.loads(db.etat_valeur(cle("actualites")) or "{}")}
     except ValueError:
         return dict(DEFAUT)
 
 
 def enregistrer_reglages(r: dict):
-    db.etat_ecrire("actualites", json.dumps({k: r[k] for k in DEFAUT if k in r}))
+    db.etat_ecrire(cle("actualites"), json.dumps({k: r[k] for k in DEFAUT if k in r}))
 
 
 def descriptions_neutres():
@@ -211,7 +243,18 @@ def resumes_condenses():
 
 
 def initialiser():
-    """Au tout premier démarrage : une sélection de départ (modifiable sur la page Sources)."""
+    """Au tout premier démarrage (de chaque compte) : une sélection de départ (modifiable sur la page Sources).
+    Les mises à jour de la sélection d'avant ne concernent que l'installation d'origine (admin)."""
+    if not _origine():
+        if db.etat_valeur(cle("actualites_init")) or db.flux_liste() or db.sujets():
+            return
+        db.etat_ecrire(cle("actualites_init"), "1")
+        for nom, description, mots in SUJETS_DEFAUT:
+            db.sujet_ajouter(nom, description, mots)
+        for url, titre in FLUX_DEFAUT:
+            db.flux_ajouter(url, titre, urlsplit(url).hostname or "")
+        log(f"sélection de départ : {len(FLUX_DEFAUT)} flux, {len(SUJETS_DEFAUT)} sujets")
+        return
     if db.etat_valeur("actualites_init"):
         passer_en_sisr()
         descriptions_neutres()
@@ -221,8 +264,8 @@ def initialiser():
     db.etat_ecrire("actualites_sisr", "1")
     db.etat_ecrire("actualites_neutre", "1")
     db.etat_ecrire("actualites_resumes", "1")
-    for cle in FLUX_AJOUTES:
-        db.etat_ecrire(cle, "1")
+    for k in FLUX_AJOUTES:
+        db.etat_ecrire(k, "1")
     db.etat_ecrire("actualites_init", "1")
     for nom, description, mots in SUJETS_DEFAUT:
         db.sujet_ajouter(nom, description, mots)
@@ -509,9 +552,26 @@ def lire_reponse(texte: str, ids: set[int], codes: dict[str, int]) -> dict[int, 
     return resultats
 
 
-def _sans_ia(a: dict, sujets: list[dict]) -> dict:
-    return {"id": a["id"], "tri": "mots_cles", "sujets": par_mots_cles(sujets, a), "score": None, "pourquoi": None,
-            "alerte": False, "evenement": None, "notion": None}
+def _sans_ia(a: dict, sujets: list[dict], verdict: dict | None = None) -> dict:
+    """Rangé par mots-clés. `verdict` : ce que l'IA a dit du même article chez un autre compte (compte sans
+    forfait) : son résumé et son alerte, si l'article tombe dans un de ses sujets."""
+    r = {"id": a["id"], "tri": "mots_cles", "sujets": par_mots_cles(sujets, a), "score": None, "pourquoi": None,
+         "alerte": False, "evenement": None, "notion": None}
+    if verdict:
+        r.update(pourquoi=verdict["pourquoi"], evenement=verdict["evenement"], notion=verdict["notion"],
+                 alerte=bool(verdict["alerte"]) and bool(r["sujets"]))
+    return r
+
+
+def _trier_sans_forfait(a_ia: list[dict], sujets: list[dict], vieux_attente: float) -> int:
+    """Compte sans forfait Claude : l'IA n'est pas appelée pour lui. Le verdict du même article chez un autre
+    compte (l'admin le trie à chaque tour, avant lui) est repris ; sans verdict, l'article attend un peu, puis
+    les mots-clés seuls."""
+    verdicts = db.verdicts_ia([a["cle"] for a in a_ia], db.compte_actuel())
+    faits = [_sans_ia(a, sujets, verdicts.get(a["cle"])) for a in a_ia
+             if a["cle"] in verdicts or a["cree_le"].timestamp() < vieux_attente]
+    db.articles_trier(faits)
+    return len(faits)
 
 
 def trier(claude_ok) -> int:
@@ -533,6 +593,8 @@ def trier(claude_ok) -> int:
         db.articles_trier(sans)
     if not a_ia:
         return len(sans)
+    if not agent.forfait_autorise():
+        return len(sans) + _trier_sans_forfait(a_ia, sujets, vieux_attente)
     if not claude_ok():
         # Claude en pause : on attend un peu, puis les mots-clés prennent le relais
         trop_vieux = [_sans_ia(a, sujets) for a in a_ia if a["cree_le"].timestamp() < vieux_attente]
@@ -563,7 +625,7 @@ def trier(claude_ok) -> int:
 def point() -> dict | None:
     """Le dernier point du jour : {le, ids, points: [{texte, ids}], modele} (points vide : rien à montrer)."""
     try:
-        p = json.loads(db.etat_valeur("actualites_point") or "null")
+        p = json.loads(db.etat_valeur(cle("actualites_point")) or "null")
     except ValueError:
         return None
     return p if isinstance(p, dict) else None
@@ -593,8 +655,8 @@ def faire_point(claude_ok, maintenant: float | None = None) -> bool:
     """Refait « L'essentiel » quand de nouveaux articles importants sont arrivés (au plus toutes les 3 h,
     tout de suite pour une alerte). Sans Claude, l'ancien point reste affiché : rien n'est inventé."""
     maintenant = maintenant or time.time()
-    if not reglages()["ia"] or local.reglages()["mode"] == "toujours":
-        return False
+    if not reglages()["ia"] or local.reglages()["mode"] == "toujours" or not agent.forfait_autorise():
+        return False   # sans forfait : pas de point, la notification du jour compte les articles pour toi
     candidats = db.articles_pour_point(POINT_FENETRE, POINT_SEUIL, POINT_MAX)
     if len(candidats) < 2:
         return False
@@ -618,9 +680,9 @@ def faire_point(claude_ok, maintenant: float | None = None) -> bool:
     except agent.ErreurAgent as e:
         log(f"point du jour impossible ({e}) : l'ancien reste affiché")
         # pas de nouvel essai à chaque tour : on attend la prochaine fenêtre de 3 h
-        db.etat_ecrire("actualites_point", json.dumps({**ancien, "le": maintenant}, ensure_ascii=False))
+        db.etat_ecrire(cle("actualites_point"), json.dumps({**ancien, "le": maintenant}, ensure_ascii=False))
         return False
-    db.etat_ecrire("actualites_point", json.dumps({**lu, "le": maintenant, "ids": ids, "modele": modele},
+    db.etat_ecrire(cle("actualites_point"), json.dumps({**lu, "le": maintenant, "ids": ids, "modele": modele},
                                                   ensure_ascii=False))
     log(f"point du jour refait ({len(lu['points'])} points, {modele})")
     return True
@@ -752,7 +814,7 @@ def _paris(maintenant: dt.datetime | None = None) -> dt.datetime:
 
 def _habitudes() -> dict[str, list[int]]:
     try:
-        h = json.loads(db.etat_valeur("actualites_lectures") or "{}")
+        h = json.loads(db.etat_valeur(cle("actualites_lectures")) or "{}")
     except ValueError:
         return {}
     return h if isinstance(h, dict) else {}
@@ -767,7 +829,7 @@ def noter_lecture(maintenant: dt.datetime | None = None):
         return
     h[jour] = sorted({*h.get(jour, []), m.hour})
     limite = (m.date() - dt.timedelta(days=QUOTIDIEN_JOURS)).isoformat()
-    db.etat_ecrire("actualites_lectures", json.dumps({j: v for j, v in h.items() if j > limite}))
+    db.etat_ecrire(cle("actualites_lectures"), json.dumps({j: v for j, v in h.items() if j > limite}))
 
 
 def heure_quotidienne() -> tuple[dt.time | None, str]:
@@ -799,10 +861,10 @@ def quotidien(maintenant: dt.datetime | None = None) -> bool:
     m = _paris(maintenant)
     if heure is None or m.time() < heure or not notifications.preferences().get("actualites", True):
         return False
-    cle = f"actu-jour:{m.date().isoformat()}"
-    if db.etat_valeur("actualites_quotidien") == cle:
+    jour = f"actu-jour:{m.date().isoformat()}"
+    if db.etat_valeur(cle("actualites_quotidien")) == jour:
         return False
-    db.etat_ecrire("actualites_quotidien", cle)
+    db.etat_ecrire(cle("actualites_quotidien"), jour)
     if m - m.replace(hour=heure.hour, minute=heure.minute, second=0, microsecond=0) > dt.timedelta(hours=3):
         return False   # worker arrêté pendant l'heure prévue : pas de notification « du matin » le soir
     p = point() or {}
@@ -816,7 +878,7 @@ def quotidien(maintenant: dt.datetime | None = None) -> bool:
             return False
         titre = f"📰 {n} article{'s' if n > 1 else ''} pour toi"
         corps = "Les nouveautés de tes sujets suivis t'attendent."
-    return db.notifier(cle, titre[:120], corps[:300], "/actualites")
+    return notifier(jour, titre[:120], corps[:300], "/actualites")
 
 
 # --- Notifications ------------------------------------------------------------------
@@ -848,8 +910,8 @@ def annoncer(maintenant: dt.datetime | None = None) -> int:
     if not articles:
         return 0
     maintenant = maintenant or dt.datetime.now(dt.timezone.utc)
-    pref = notifications.preferences().get("actualites", True)
-    appareils = bool(db.abonnements())
+    pref = notifications.preferences().get("actualites", True)   # les réglages du compte du fil
+    appareils = bool(db.abonnements_de(destinataire()))
     actif = pref and appareils
     sujets = {s["id"]: s for s in db.sujets()}
     notifiants = {i for i, s in sujets.items() if s["notifier"]}
@@ -868,16 +930,16 @@ def annoncer(maintenant: dt.datetime | None = None) -> int:
                     log(f"alerte non notifiée ({pourquoi_pas}) : {a['titre'][:80]}")
                 continue
             cles, cves = _cles_alerte(a)
-            if vus & set(cles) or db.alerte_deja_envoyee(cles, cves):
+            if vus & set(cles) or db.alerte_deja_envoyee([_cle_notif(k) for k in cles], cves, compte_id=destinataire()):
                 vus.update(cles)
                 continue
             vus.update(cles)
-            if db.notifier(cles[0], f"🚨 {a['titre']}"[:120], f"{resume} ({a['source']})"[:300], url):
+            if notifier(cles[0], f"🚨 {a['titre']}"[:120], f"{resume} ({a['source']})"[:300], url):
                 n += 1
                 log(f"alerte notifiée : {a['titre'][:80]}")
         elif neuf and actif and recent and a["flux_notifier"] and (
                 a["tri"] != "ia" or (a["score"] or 0) >= 0.3 or not a["sujets"]):
-            n += db.notifier(f"actu:{a['cle']}"[:400], a["titre"][:120],
+            n += notifier(f"actu:{a['cle']}"[:380], a["titre"][:120],
                              (f"{a['source']} : {resume}" if resume else a["source"])[:300], url)
     db.articles_annonces([a["id"] for a in articles if not a.get("annonce")])
     return n
@@ -885,14 +947,37 @@ def annoncer(maintenant: dt.datetime | None = None) -> int:
 
 # --- Boucle du worker -----------------------------------------------------------------
 
-def tour(claude_ok, maintenant: float | None = None):
-    maintenant = maintenant or time.time()
-    demande = db.etat_consommer("actualites_relever")
-    dernier = float(db.etat_valeur("actualites_releve") or 0)
-    if demande or maintenant - dernier >= RELEVE:
-        db.etat_ecrire("actualites_releve", str(maintenant))
-        relever()
+def _chaque_compte(faire, comptes_ids: list[int]):
+    """`faire()` dans le fil de chaque compte (sa partie de la base, son droit au forfait Claude). La panne d'un
+    fil ne bloque pas les autres ; une limite ou une panne de Claude remonte au worker (pause pour tous)."""
+    from claunote import comptes   # comptes → agent, db : pas d'import circulaire au chargement
+    for compte_id in comptes_ids:
+        try:
+            with comptes.pour(compte_id):
+                faire()
+        except (agent.LimiteAtteinte, agent.ClaudeIndisponible) as e:
+            if isinstance(e, agent.SansForfait):
+                continue
+            raise
+        except Exception as e:
+            log(f"compte {compte_id} : {e}")
+
+
+def _tour_compte(claude_ok):
     trier(claude_ok)
     annoncer()
     faire_point(claude_ok)
     quotidien()
+
+
+def tour(claude_ok, maintenant: float | None = None):
+    """Relevé de tous les fils (sans Claude), puis tri, alertes et point du jour de chacun, l'admin d'abord."""
+    maintenant = maintenant or time.time()
+    comptes_ids = db.comptes_actualites()
+    _chaque_compte(initialiser, [c for c in comptes_ids if c != 1])   # l'admin d'origine : au démarrage du worker
+    demande = db.etat_consommer("actualites_relever")
+    dernier = float(db.etat_valeur("actualites_releve") or 0)
+    if demande or maintenant - dernier >= RELEVE:
+        db.etat_ecrire("actualites_releve", str(maintenant))
+        _chaque_compte(relever, comptes_ids)
+    _chaque_compte(lambda: _tour_compte(claude_ok), comptes_ids)

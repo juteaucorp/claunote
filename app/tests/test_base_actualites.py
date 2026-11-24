@@ -1,5 +1,9 @@
-"""Alertes d'actualités sur une vraie base PostgreSQL (lancé seulement si CLAUNOTE_TEST_DB est défini)."""
-from claunote import db
+"""Actualités sur une vraie base PostgreSQL (lancé seulement si CLAUNOTE_TEST_DB est défini) : alertes, et un fil
+par compte (sources, sujets, articles, réglages, notifications)."""
+import datetime as dt
+import json
+
+from claunote import actualites, agent, comptes, db, notifications
 from tests.test_base_comptes import URL, base, pytestmark  # noqa: F401  (même base jetable)
 
 
@@ -24,3 +28,145 @@ def test_alerte_deja_decidee_reste_candidate_jusqu_a_sa_notification(base):
     assert db.alerte_deja_envoyee(["actu-alerte:cve-2026-76466"], ["CVE-2026-76466"])
     assert not db.alerte_deja_envoyee(["actu-alerte:cve-2026-99999"], ["CVE-2026-99999"])
     assert db.alerte_deja_envoyee(["actu-alerte:cisco-expressway"], [])
+
+
+# --- À chaque compte son fil d'actualités, ses alertes sur ses appareils ----------------------------------
+
+FAILLE = "Faille critique FortiOS CVE-2026-11111 exploitée"
+
+
+def _fil(compte_id, sujet="Cybersécurité", mots=("faille", "CVE"), notifier=True, url="https://ex.fr/feed"):
+    """Un flux et un sujet pour ce compte, et le même article (même lien) chez chacun."""
+    with db.pour_compte(compte_id):
+        db.sujet_ajouter(sujet, "Failles", list(mots), notifier)
+        flux_id = db.flux_ajouter(url, "Ex", "ex.fr")
+        db.articles_ajouter(flux_id, [{"cle": "ex.fr/fortios", "lien": "https://ex.fr/fortios", "titre": FAILLE,
+                                       "extrait": "", "publie_le": dt.datetime.now(dt.timezone.utc)}], annonce=False)
+        db.enregistrer_abonnement(f"https://push.example/{compte_id}", "p", "a", f"tel-{compte_id}")
+
+
+def _notifs():
+    with db.sans_compte(), db.connect() as c:
+        return [dict(r) for r in c.execute("SELECT cle, titre, compte_id FROM notifications ORDER BY id").fetchall()]
+
+
+def test_chaque_compte_a_son_propre_fil(base):
+    invite = db.creer_compte("camille", "h", "invite", ["actualites"])
+    _fil(1)
+    _fil(invite, sujet="Réseaux", mots=("VLAN",), url="https://autre.fr/feed")
+    with db.pour_compte(invite):
+        assert [s["nom"] for s in db.sujets()] == ["Réseaux"]
+        assert [f["url"] for f in db.flux_liste()] == ["https://autre.fr/feed"]
+        art = db.articles("tout")[0][0]
+        db.article_maj(art["id"], lu=True, favori=True)
+        # Ses changements ne touchent pas le fil de l'admin, même avec le bon identifiant
+        with db.pour_compte(1):
+            admin_flux = db.flux_liste()[0]["id"]
+        db.flux_supprimer(admin_flux)
+        db.sujet_ajouter("Cybersécurité", "", [])   # même nom que chez l'admin : permis
+        db.flux_ajouter("https://ex.fr/feed")        # même adresse que chez l'admin : permis
+    with db.pour_compte(1):
+        assert [s["nom"] for s in db.sujets()] == ["Cybersécurité"]
+        assert [f["url"] for f in db.flux_liste()] == ["https://ex.fr/feed"]
+        a = db.articles("tout")[0][0]
+        assert not a["lu"] and not a["favori"]
+    assert not comptes.tout_voir({"role": "admin", "tout_voir": True}, "/actualites")   # « Tout voir » : pas de mélange
+
+
+def test_alerte_sonne_chez_chaque_compte_selon_son_fil(base, monkeypatch):
+    sans_forfait = db.creer_compte("camille", "h", "invite", ["actualites"])
+    autonome = db.creer_compte("dominique", "h", "invite", ["actualites", "claude"])
+    sans_notif = db.creer_compte("eli", "h", "invite", ["actualites"])
+    coupe = db.creer_compte("farah", "h", "invite", ["actualites"])
+    hors_sujet = db.creer_compte("gael", "h", "invite", ["actualites"])
+    db.creer_compte("hugo", "h", "invite", ["bibliotheque"])   # sans le droit Actualités : pas de fil
+    _fil(1)
+    _fil(sans_forfait)
+    _fil(autonome)
+    _fil(sans_notif, notifier=False)
+    _fil(coupe)
+    _fil(hors_sujet, sujet="Cuisine", mots=("recette",))
+    notifications.enregistrer_preferences({**notifications.DEFAUT, "actualites": False}, coupe)
+    db.etat_ecrire("actualites_releve", str(9e12))   # pas de relevé réseau dans le test
+    appels = []
+
+    def demander(tache, prompt, cwd, entree=None, timeout=0, lire=None, **k):
+        if tache != "actualites":
+            raise agent.ErreurAgent("pas de point du jour ici")
+        appels.append(db.compte_actuel())
+        ids = [json.loads(l)["id"] for l in entree.splitlines()]
+        return lire(json.dumps([{"id": i, "sujets": ["S1"], "score": 0.95, "resume": "Patcher FortiOS",
+                                 "alerte": True, "evenement": "fortios"} for i in ids])), "haiku"
+    monkeypatch.setattr(agent, "demander", demander)
+    monkeypatch.setattr(notifications, "en_silence", lambda m, p: False)
+    actualites.tour(lambda: True)
+
+    assert appels == [1, autonome]   # l'IA pour l'admin et le compte en autonomie, jamais pour les autres
+    n = _notifs()
+    par = {x["compte_id"]: x for x in n}
+    assert sorted(par, key=lambda c: c or 0) == [None, sans_forfait, autonome]
+    assert par[None]["cle"] == "actu-alerte:cve-2026-11111"                     # l'admin : comme avant
+    assert par[sans_forfait]["cle"] == f"actu-alerte:cve-2026-11111@{sans_forfait}"
+    assert all(x["titre"] == f"🚨 {FAILLE}" for x in n)
+    # Sans forfait : le verdict de l'IA chez l'admin est repris, rangé dans son sujet par mots-clés
+    with db.pour_compte(sans_forfait):
+        a = db.articles("tout")[0][0]
+        assert a["tri"] == "mots_cles" and a["alerte"] and a["pourquoi"] == "Patcher FortiOS" and a["sujets"]
+    with db.pour_compte(hors_sujet):
+        assert not db.articles("tout")[0][0]["alerte"]   # pas dans ses sujets : pas d'alerte pour lui
+
+    # Un tour de plus : rien ne sonne deux fois ; chaque compte reçoit les siennes sur ses appareils
+    actualites.tour(lambda: True)
+    assert len(_notifs()) == 3
+    envois = []
+    monkeypatch.setattr(notifications, "envoyer", lambda abo, charge: envois.append(abo["appareil"]))
+    monkeypatch.setattr(notifications, "badge", lambda: 0)
+    notifications.vider_file(dt.datetime(2026, 11, 24, 12, tzinfo=notifications.PARIS))
+    assert sorted(envois) == sorted(["tel-1", f"tel-{sans_forfait}", f"tel-{autonome}"])
+
+
+def test_reglages_et_point_du_jour_propres_au_compte(base):
+    invite = db.creer_compte("camille", "h", "invite", ["actualites"])
+    with db.pour_compte(invite):
+        actualites.enregistrer_reglages({"ia": True, "quotidien": "non"})
+        actualites.noter_lecture(dt.datetime(2026, 11, 24, 9, tzinfo=dt.timezone.utc))
+        assert actualites.heure_quotidienne()[0] is None
+    with db.pour_compte(1):
+        assert actualites.reglages()["quotidien"] == "auto"
+        assert db.etat_valeur("actualites_lectures") is None
+    assert db.etat_valeur(f"actualites:{invite}") and db.etat_valeur(f"actualites_lectures:{invite}")
+
+
+def test_nouveau_compte_recoit_la_selection_de_depart(base):
+    invite = db.creer_compte("camille", "h", "invite", ["actualites"])
+    actualites.initialiser()   # l'admin, au démarrage du worker
+    db.etat_ecrire("actualites_releve", str(9e12))
+    actualites.tour(lambda: False)
+    with db.pour_compte(invite):
+        assert len(db.flux_liste()) == len(actualites.FLUX_DEFAUT)
+        assert [s["nom"] for s in db.sujets()] == sorted(n for n, _, _ in actualites.SUJETS_DEFAUT)
+        db.sujet_supprimer(db.sujets()[0]["id"])
+    actualites.tour(lambda: False)   # ses changements restent : la sélection n'est donnée qu'une fois
+    with db.pour_compte(invite):
+        assert len(db.sujets()) == len(actualites.SUJETS_DEFAUT) - 1
+    with db.pour_compte(1):
+        assert len(db.sujets()) == len(actualites.SUJETS_DEFAUT)
+
+
+def test_installation_d_avant_les_fils_par_compte(base):
+    """Base d'avant : un seul fil commun (sans compte_id, noms et adresses uniques) → tout va à l'admin d'origine."""
+    with db.connect() as c:
+        for t, col in (("articles", "cle"), ("flux", "url"), ("sujets", "nom")):
+            c.execute(f"DROP TRIGGER proprietaire ON {t}")
+            c.execute(f"ALTER TABLE {t} DROP COLUMN compte_id CASCADE")
+            c.execute(f"ALTER TABLE {t} ADD CONSTRAINT {t}_{col}_key UNIQUE ({col})")
+        c.execute("INSERT INTO sujets (nom) VALUES ('Cybersécurité')")
+        f = c.execute("INSERT INTO flux (url) VALUES ('https://ex.fr/feed') RETURNING id").fetchone()["id"]
+        c.execute("INSERT INTO articles (flux_id, cle, titre) VALUES (%s, 'ex.fr/1', 'Vieux')", (f,))
+    db.init()
+    invite = db.creer_compte("camille", "h", "invite", ["actualites"])
+    with db.pour_compte(1):
+        assert len(db.sujets()) == 1 and len(db.flux_liste()) == 1 and db.articles("tout")[1] == 1
+    with db.pour_compte(invite):
+        assert db.sujets() == [] and db.articles("tout")[1] == 0
+        assert db.sujet_ajouter("Cybersécurité", "", []) is not None

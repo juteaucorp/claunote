@@ -577,13 +577,14 @@ DECLARE
     liens JSONB := '{"passages": ["documents", "document_id"], "cartes": ["revisions", "revision_id"],
                      "revues_cartes": ["cartes", "carte_id"], "messages": ["conversations", "conversation_id"],
                      "pieces_jointes": ["revisions", "revision_id", "campagnes", "campagne_id"],
-                     "revisions": ["campagnes", "campagne_id"]}';
+                     "revisions": ["campagnes", "campagne_id"], "flux": ["sujets", "sujet_id"],
+                     "articles": ["flux", "flux_id"]}';
 BEGIN
     FOREACH t IN ARRAY ARRAY['documents', 'passages', 'revisions', 'campagnes', 'cartes', 'revues_cartes',
                              'conversations', 'messages', 'pieces_jointes', 'pronote_evenements', 'pronote_notes',
                              'pronote_documents', 'cles_acces', 'sensibles', 'decoupages', 'formations',
                              'matieres_regles', 'matieres_publiques', 'matieres_distinctes',
-                             'import_fichiers', 'import_lots'] LOOP
+                             'import_fichiers', 'import_lots', 'sujets', 'flux', 'articles'] LOOP
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
                        AND table_name = t AND column_name = 'compte_id') THEN
             EXECUTE format('ALTER TABLE %I ADD COLUMN compte_id INT REFERENCES comptes(id) ON DELETE CASCADE', t);
@@ -602,6 +603,20 @@ BEGIN
                        AND policyname = 'par_compte') THEN
             EXECUTE format('CREATE POLICY par_compte ON %I USING (compte_id = claunote_compte() OR claunote_tout()) '
                            'WITH CHECK (compte_id = claunote_compte() OR claunote_tout())', t);
+        END IF;
+    END LOOP;
+END $$;
+-- Actualités : à chaque compte son fil (sources, sujets, articles lus ou favoris). Ce qui existait avant reste à
+-- l'admin d'origine ; le même nom de sujet, la même adresse de flux ou le même article peuvent exister chez deux comptes.
+DO $$
+DECLARE t TEXT[];
+BEGIN
+    FOREACH t SLICE 1 IN ARRAY ARRAY[['sujets', 'nom'], ['flux', 'url'], ['articles', 'cle']] LOOP
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = t[1] || '_' || t[2] || '_key') THEN
+            EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', t[1], t[1] || '_' || t[2] || '_key');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = t[1] || '_compte_' || t[2] || '_key') THEN
+            EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I UNIQUE (compte_id, %I)', t[1], t[1] || '_compte_' || t[2] || '_key', t[2]);
         END IF;
     END LOOP;
 END $$;
@@ -1146,8 +1161,8 @@ def formations() -> list[dict]:
 
 
 def formations_actuelles() -> list[str]:
-    """Pour les actualités (communes à tous les comptes) : la formation de l'année la plus avancée de chaque
-    compte, l'intitulé officiel s'il est connu ; les admins d'abord."""
+    """Pour les actualités : la formation de l'année la plus avancée de chaque compte visible (le sien, pour le
+    fil d'un compte ; tous pour le travail interne), l'intitulé officiel s'il est connu ; les admins d'abord."""
     ordre = ["6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale", "BTS1", "BTS2"]
     with connect() as c:
         lignes = c.execute("""SELECT f.compte_id, f.niveau, f.nom, f.referentiel->>'formation' AS officiel,
@@ -2657,7 +2672,7 @@ def sujets():
 def sujet_ajouter(nom: str, description: str, mots_cles: list[str], notifier: bool = True) -> int | None:
     with connect() as c:
         r = c.execute("INSERT INTO sujets (nom, description, mots_cles, notifier) VALUES (%s, %s, %s, %s) "
-                      "ON CONFLICT (nom) DO NOTHING RETURNING id", (nom, description, mots_cles, notifier)).fetchone()
+                      "ON CONFLICT (compte_id, nom) DO NOTHING RETURNING id", (nom, description, mots_cles, notifier)).fetchone()
         return r["id"] if r else None
 
 
@@ -2689,7 +2704,7 @@ def flux_ajouter(url: str, titre: str = "", site: str = "", sujet_id: int | None
     with connect() as c:
         return c.execute(
             """INSERT INTO flux (url, titre, site, sujet_id, notifier) VALUES (%s, %s, %s, %s, %s)
-               ON CONFLICT (url) DO UPDATE SET titre = coalesce(nullif(EXCLUDED.titre, ''), flux.titre)
+               ON CONFLICT (compte_id, url) DO UPDATE SET titre = coalesce(nullif(EXCLUDED.titre, ''), flux.titre)
                RETURNING id""", (url, titre, site, sujet_id, notifier)).fetchone()["id"]
 
 
@@ -2721,7 +2736,7 @@ def articles_ajouter(flux_id: int, items: list[dict], annonce: bool) -> int:
                 """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, sujets, tri, annonce, image)
                    VALUES (%(flux)s, %(cle)s, %(lien)s, %(titre)s, %(extrait)s, %(publie_le)s, %(sujets)s,
                            %(tri)s, %(annonce)s, %(image)s)
-                   ON CONFLICT (cle) DO NOTHING RETURNING id""",
+                   ON CONFLICT (compte_id, cle) DO NOTHING RETURNING id""",
                 {"flux": flux_id, "annonce": annonce, "tri": "attente", "sujets": [], "image": "", **i}).fetchone()
             n += r is not None
     return n
@@ -2756,15 +2771,38 @@ def articles_a_annoncer(jours_alertes: int = 2):
                ORDER BY a.publie_le""", (jours_alertes,)).fetchall()
 
 
-def alerte_deja_envoyee(cles: list[str], cves: list[str], jours: int = 7) -> bool:
-    """Une de ces clés a déjà servi, ou une alerte des derniers jours citait déjà une de ces CVE."""
+def alerte_deja_envoyee(cles: list[str], cves: list[str], jours: int = 7, compte_id: int | None = None) -> bool:
+    """Une de ces clés a déjà servi, ou une alerte des derniers jours pour ce compte (None : les admins)
+    citait déjà une de ces CVE. Chaque compte a la sienne : l'alerte d'un autre ne l'empêche pas de sonner."""
     with connect() as c:
         return c.execute(
             """SELECT 1 FROM notifications WHERE cle = ANY(%(cles)s)
                   OR (cle LIKE 'actu-alerte:%%' AND cree_le > now() - make_interval(days => %(jours)s)
+                      AND compte_id IS NOT DISTINCT FROM %(compte)s::int
                       AND EXISTS (SELECT 1 FROM unnest(%(cves)s::text[]) v
                                   WHERE notifications.titre || ' ' || notifications.corps ILIKE '%%' || v || '%%'))
-               LIMIT 1""", {"cles": cles, "cves": cves, "jours": jours}).fetchone() is not None
+               LIMIT 1""", {"cles": cles, "cves": cves, "jours": jours, "compte": compte_id}).fetchone() is not None
+
+
+def comptes_actualites() -> list[int]:
+    """Comptes qui ont un fil d'actualités à relever : actifs, pas expirés, admin ou avec le droit « actualites »
+    (l'admin d'origine d'abord : ses verdicts de l'IA servent aux comptes sans forfait)."""
+    with sans_compte(), connect() as c:
+        return [r["id"] for r in c.execute(
+            """SELECT id FROM comptes WHERE actif AND (expire_le IS NULL OR expire_le > now())
+                 AND (role = 'admin' OR 'actualites' = ANY(droits)) ORDER BY id <> 1, id""").fetchall()]
+
+
+def verdicts_ia(cles: list[str], compte_id: int) -> dict[str, dict]:
+    """Ce que l'IA a dit des mêmes articles chez un autre compte (résumé, alerte, événement, notion) : un compte
+    sans forfait Claude en profite. Rien de personnel : ni ses sujets, ni son score, ni lu ou favori."""
+    if not cles:
+        return {}
+    with sans_compte(), connect() as c:
+        return {r["cle"]: r for r in c.execute(
+            """SELECT DISTINCT ON (cle) cle, pourquoi, alerte, evenement, notion FROM articles
+               WHERE cle = ANY(%s) AND tri = 'ia' AND compte_id <> %s ORDER BY cle, compte_id <> 1, id""",
+            (list(cles), compte_id)).fetchall()}
 
 
 def alertes_recentes(jours: int = 7) -> list[str]:
