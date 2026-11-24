@@ -316,7 +316,9 @@ export function creerCompte({ pawnote, fichier, fetch = globalThis.fetch, journa
       const refresh = await pawnote.loginToken(session, { ...etat.refresh, deviceUUID: etat.deviceUUID });
       await ecrire(memoriser(refresh, etat.deviceUUID, session));
     } catch (e) {
-      if (e?.name === "BadCredentialsError") await ecrire({ ...etat, expire: true });
+      // Jeton refusé (ou Pronote qui exige désormais la double authentification) : il faut se reconnecter,
+      // le site le montre et propose le QR code
+      if (["BadCredentialsError", "SecurityError"].includes(e?.name)) await ecrire({ ...etat, expire: true });
       throw traduire(e, fetcher);
     }
     return session;

@@ -269,8 +269,9 @@ def synchroniser(client: Client | None = None, compte_id: int | None = None) -> 
 
 
 def _synchroniser(client: Client) -> dict:
-    if not client.etat().get("connecte"):
-        return {"connecte": False}
+    etat = client.etat()
+    if not etat.get("connecte"):
+        return {"connecte": False, "expire": bool(etat.get("expire"))}
     d = client.synchro(JOURS_SYNCHRO)
     sources = [p for p, cle in (("cours:", "controles"), ("devoir:", "devoirs")) if d.get(cle) is not None]
     notes = d.get("notes")

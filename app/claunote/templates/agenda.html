@@ -18,35 +18,11 @@
   <div class="carte">Le service <code>pronote</code> ne tourne pas. Sur la VM : <code>docker compose up -d --build</code>.</div>
   {% else %}
   <p class="doux">Relie <strong>ton</strong> compte Pronote : Claunote récupère tes évaluations, devoirs, notes et ton emploi du temps
-    toutes les 3 heures, te prévient d'un cours modifié et prépare tes révisions. Rien que pour toi : les autres comptes ne voient pas ton Pronote. {% if etat.expire %}<span class="alerte">La connexion a expiré : refais-la.</span>{% endif %}</p>
+    toutes les 3 heures, te prévient d'un cours modifié et prépare tes révisions. Rien que pour toi : les autres comptes ne voient pas ton Pronote.</p>
+  {% if etat.expire %}<div class="carte accent" id="reconnexion"><strong>Pronote s'est déconnecté.</strong> Ça arrive (mot de passe changé, jeton périmé côté Pronote) :
+    reconnecte-toi ci-dessous, en une minute, avec le QR code. Ton agenda et tes notes restent là en attendant.</div>{% endif %}
 
-  <form method="post" action="/agenda/connexion-qr" class="carte" id="form-qr">
-    <h2 style="margin-top:0">Avec le QR code (recommandé, marche aussi via l'ENT)</h2>
-    <ol class="doux">
-      <li>Sur Pronote (ordinateur), clique sur l'icône <strong>QR code</strong> en haut (« Connexion à l'application mobile »).</li>
-      <li>Choisis un <strong>code à 4 chiffres</strong> et valide : le QR code s'affiche (valable 10 minutes).</li>
-      <li>Fais une <strong>capture d'écran</strong> du QR code et colle-la ici (Ctrl+V) ou choisis l'image. Sur téléphone, prends-le en photo.</li>
-    </ol>
-    <p><label>Image du QR code<br><input type="file" accept="image/*" id="image-qr"></label></p>
-    <p id="statut-qr" class="doux">Aucun QR code lu pour l'instant.</p>
-    <details><summary>Ou colle le contenu du QR code</summary>
-      <p><textarea name="qr" id="qr" rows="3" style="width:100%" placeholder='{"avecPageConnexion":false,"jeton":"…","login":"…","url":"https://…/pronote/mobile.eleve.html"}'></textarea></p>
-    </details>
-    <p><label>Code à 4 chiffres choisi sur Pronote<br>
-      <input name="pin" inputmode="numeric" pattern="\d{4}" maxlength="4" required size="6"></label></p>
-    <button class="principal">Connecter Pronote</button>
-  </form>
-
-  <details class="carte">
-    <summary>Sans ENT : identifiant et mot de passe Pronote</summary>
-    <form method="post" action="/agenda/connexion">
-      <p><label>Adresse Pronote<br><input name="url" size="50" required placeholder="https://0123456a.index-education.net/pronote/"></label></p>
-      <p><label>Identifiant<br><input name="identifiant" required autocomplete="username"></label></p>
-      <p><label>Mot de passe<br><input name="mot_de_passe" type="password" required autocomplete="current-password"></label></p>
-      <button>Connecter</button>
-      <p class="doux">Le mot de passe sert une seule fois : seul le jeton de reconnexion de Pronote est gardé sur la VM.</p>
-    </form>
-  </details>
+  {% include "_pronote_connexion.html" %}
   {% endif %}
 
 {% else %}
@@ -59,6 +35,11 @@
       <form method="post" action="/agenda/synchroniser"><button class="principal">Synchroniser</button></form>
       <form method="post" action="/agenda/deconnexion" onsubmit="return confirm('Déconnecter Pronote ?')"><button>Déconnecter</button></form>
     </div>
+    <details id="reconnexion" {{ 'open' if erreurs_synchro }}>
+      <summary>Se reconnecter à Pronote</summary>
+      <p class="doux">Si la synchronisation échoue, refais la connexion ici : rien n'est perdu.</p>
+      {% include "_pronote_connexion.html" %}
+    </details>
   </div>
 
   <h2 id="emploi-du-temps">Emploi du temps</h2>
@@ -211,7 +192,7 @@
   }
 </script>
 
-{% if not etat.connecte and not etat.injoignable %}
+{% if not etat.injoignable %}
 <script>
   // Lecture du QR code dans le navigateur : l'image ne quitte pas ton ordinateur.
   const champ = document.getElementById("qr"), statut = document.getElementById("statut-qr");

@@ -1772,3 +1772,27 @@ def test_archives(client, monkeypatch):
     client.post("/archives/restaurer", data={"cle": "campagne:2"}, follow_redirects=False)
     assert appels == [("archiver", [4], [2]), ("garder", [4], []), ("restaurer", [], [2])]
     assert client.post("/archives/inconnu", data={}).status_code == 404
+
+
+def test_agenda_se_reconnecter(agenda):
+    """Connexion expirée : le site le dit et propose le QR code ; connecté : « Se reconnecter » reste à portée."""
+    FauxPronote.etat_ = {"connecte": False, "expire": True}
+    page = agenda.get("/agenda").text
+    assert "Pronote s&#39;est déconnecté" in page or "Pronote s'est déconnecté" in page
+    assert 'id="form-qr"' in page and "EduConnect" in page and 'getElementById("image-qr")' in page
+    FauxPronote.etat_ = {"connecte": True, "nom": "MARTIN Camille"}
+    page = agenda.get("/agenda").text
+    assert "Se reconnecter à Pronote" in page and page.count('id="form-qr"') == 1 and 'getElementById("image-qr")' in page
+    r = agenda.post("/agenda/connexion-qr", data={"qr": '{"url": "https://x"}', "pin": "1234"})
+    assert r.status_code == 200 and ("qr", '{"url": "https://x"}', "1234") in FauxPronote.appels
+
+
+def test_pronote_deconnecte_previent_une_fois(monkeypatch):
+    from claunote import notifications as nt
+    envoyes = {}
+    monkeypatch.setattr(db, "notifier_compte", lambda i, cle, *a, **k: envoyes.setdefault(cle, (i, a)))
+    nt.pronote_deconnecte(1)
+    nt.pronote_deconnecte(1)
+    nt.pronote_deconnecte(4)
+    assert len(envoyes) == 2 and {v[0] for v in envoyes.values()} == {None, 4}
+    assert all(v[1][2] == "/agenda#reconnexion" for v in envoyes.values())

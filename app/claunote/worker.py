@@ -1168,6 +1168,8 @@ def _synchro_compte(compte_id: int) -> bool:
     qui = "" if compte_id == 1 else f" (compte {compte_id})"
     try:
         r = pronote.synchroniser(compte_id=compte_id)
+        if r.get("expire"):
+            notifications.pronote_deconnecte(compte_id)
         if r["connecte"]:
             log(f"pronote{qui} : {r['evenements']} évaluation(s)/devoir(s), {len(r['preparees'])} révision(s) lancée(s)"
                 + (f", erreurs : {r['erreurs']}" if r["erreurs"] else ""))
