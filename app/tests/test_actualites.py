@@ -618,3 +618,19 @@ def test_apparence_suit_le_compte_sur_tous_les_appareils(client, anonyme):
     r = autre.get("/reglages")
     assert 'data-theme="sombre"' in r.text   # enregistré sur le compte, pas dans le navigateur
     assert "h.dataset.theme !== ici.dataset.theme" in r.text   # reprise sans recharger à la main
+
+
+def test_admin_met_son_fil_par_defaut(client, monkeypatch):
+    monkeypatch.setattr(db, "sujets", lambda: [{**SUJETS[1], "n": 0, "recherche_id": None, "recherche_erreur": None}])
+    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": None,
+                                                     "sujet": None, "sujet_id": None, "notifier": False, "n": 0,
+                                                     "dernier": None, "erreur": None, "echecs": 0, "site": "ex.fr"}])
+    r = client.get("/actualites/sources")
+    assert "Fil par défaut pour tout le monde" in r.text and "la sélection de départ" in r.text
+    r = client.post("/actualites/defaut", data={"depuis": "mon-fil"}, follow_redirects=False)
+    assert r.status_code == 303
+    p = json.loads(client.etat["actualites_defaut"])
+    # Le sujet « Dev » n'avait pas « Me notifier » : activé dans le fil par défaut (alertes urgentes)
+    assert p["sujets"][0]["nom"] == "Dev" and p["sujets"][0]["notifier"] is True
+    assert [f["url"] for f in p["flux"]] == ["https://ex.fr/feed"] and not p["depart"]
+    assert "ton fil, copié le" in client.get("/actualites/sources").text
