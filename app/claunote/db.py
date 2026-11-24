@@ -1574,12 +1574,27 @@ def cartes(rev_id: int | None = None):
             (rev_id, rev_id)).fetchall()
 
 
-def prochaine_carte(rev_id: int | None = None):
-    """Carte la plus en retard (les nouvelles après celles déjà vues)."""
+NOUVELLES_DU_JOUR = """SELECT count(DISTINCT v.carte_id) AS n FROM revues_cartes v
+    WHERE v.le >= date_trunc('day', now() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris'
+      AND NOT EXISTS (SELECT 1 FROM revues_cartes w WHERE w.carte_id = v.carte_id AND w.le < date_trunc('day', now() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris'
+                     )"""
+
+
+def _nouvelles_restantes(c, nouvelles_max: int | None) -> int | None:
+    """Nouvelles cartes encore permises aujourd'hui (Mon profil) ; None : sans limite."""
+    if not nouvelles_max:
+        return None
+    return max(0, nouvelles_max - c.execute(NOUVELLES_DU_JOUR).fetchone()["n"])
+
+
+def prochaine_carte(rev_id: int | None = None, nouvelles_max: int | None = None):
+    """Carte la plus en retard (les nouvelles après celles déjà vues, au plus `nouvelles_max` par jour)."""
     with connect() as c:
+        reste = _nouvelles_restantes(c, nouvelles_max)
+        nouvelles = "" if reste is None or reste > 0 else " AND k.vue_le IS NOT NULL"
         return c.execute(
             f"""SELECT k.*, r.sujet, r.reperes FROM cartes k JOIN revisions r ON r.id = k.revision_id
-               WHERE {A_REVOIR} AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s)
+               WHERE {A_REVOIR} AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s){nouvelles}
                ORDER BY COALESCE(k.echeance, k.prochaine::timestamptz) > now(), k.vue_le IS NULL,
                         COALESCE(k.echeance, k.prochaine::timestamptz), k.vue_le NULLS FIRST, k.id
                LIMIT 1""",
@@ -1601,10 +1616,13 @@ def maj_carte(carte_id: int, note: int, m: dict):
                   (carte_id, note, m["retenue"], m["stabilite"], m["difficulte"]))
 
 
-def nb_cartes_a_revoir(rev_id: int | None = None) -> int:
+def nb_cartes_a_revoir(rev_id: int | None = None, nouvelles_max: int | None = None) -> int:
     with connect() as c:
-        return c.execute(f"SELECT count(*) AS n FROM cartes k WHERE {A_REVOIR} "
-                         f"AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()["n"]
+        r = c.execute(f"SELECT count(*) FILTER (WHERE k.vue_le IS NOT NULL) AS vues, "
+                      f"count(*) FILTER (WHERE k.vue_le IS NULL) AS nouvelles FROM cartes k WHERE {A_REVOIR} "
+                      f"AND ((%s::int IS NULL AND {ACTIVE}) OR k.revision_id = %s)", (rev_id, rev_id)).fetchone()
+        reste = _nouvelles_restantes(c, nouvelles_max)
+    return r["vues"] + (r["nouvelles"] if reste is None else min(r["nouvelles"], reste))
 
 
 def a_revoir_par_matiere() -> dict:

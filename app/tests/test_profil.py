@@ -101,3 +101,31 @@ def test_rappel_du_jour_pour_chaque_invite(monkeypatch):
     nt.planifier_invites(lundi)   # une seule fois par jour
     # Le compte 2 reçoit le sien à son heure, même si l'admin est en cours (son emploi du temps à lui)
     assert envoyes == {"rappel:2026-10-26@2": (2, ("Réviser", "3 cartes", "/"), {})} and vus == [2]
+
+
+def test_preferences_de_revision(etat):
+    from claunote import pdf
+    assert profil.tailles(2) == (10, 20) and profil.nouvelles_max(2) is None and profil.consigne_fiche(2) == ""
+    profil.enregistrer(2, {"quiz_nb": "5", "cartes_nb": 40, "nouvelles_jour": "20", "fiche_forme": "explicative"})
+    assert profil.tailles(2) == (5, 40) and profil.nouvelles_max(2) == 20
+    assert profil.enregistrer(3, {"quiz_nb": "1000"})["quiz_nb"] == "10"   # seulement les choix proposés
+    from claunote import db as base
+    base_compte = base.compte_actuel
+    try:
+        base.compte_actuel = lambda: 2
+        assert "Fais un quiz de 5 questions" in revision.prompt("quiz", "VLAN")
+        assert "Fais 40 flashcards" in revision.prompt("cartes", "VLAN")
+        assert "fiche EXPLICATIVE" in revision.prompt("fiche", "VLAN")
+        assert "EXPLICATIVE" not in revision.prompt("examen", "VLAN")
+    finally:
+        base.compte_actuel = base_compte
+    assert "Fais un quiz de 10 questions" in revision.prompt("quiz", "VLAN") and "EXPLICATIVE" not in revision.prompt("fiche", "VLAN")
+    rev = {"id": 1, "genre": "fiche", "sujet": "VLAN", "statut": "pret", "contenu": "# VLAN\n## 1. A\n- x", "compte_id": 2}
+    assert pdf.section(rev, {})["une_colonne"] and not pdf.section({**rev, "compte_id": 1}, {})["une_colonne"]
+
+
+def test_page_profil_revisions(client):
+    r = client.post("/reglages/profil", data={"fiche_forme": "explicative", "quiz_nb": "20", "cartes_nb": "10",
+                                              "nouvelles_jour": "10"}, follow_redirects=True)
+    assert 'value="20" selected' in r.text and 'value="explicative" checked' in r.text
+    assert profil.lire(1)["nouvelles_jour"] == "10"

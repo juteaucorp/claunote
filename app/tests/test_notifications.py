@@ -58,7 +58,7 @@ def base(monkeypatch):
     monkeypatch.setattr(db, "retirer_abonnement", lambda e: b.abos.remove(next(a for a in b.abos if a["endpoint"] == e)))
     monkeypatch.setattr(db, "evenements_a_venir", lambda genre=None, jours=60: [
         e for e in b.evals if e["le"] < LUNDI + dt.timedelta(days=jours)])
-    monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: b.dues)
+    monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None, nouvelles_max=None: b.dues)
     monkeypatch.setattr(db, "nb_evaluations_proches", lambda jours=7: len(b.evals))
     monkeypatch.setattr(db, "nouveaux_cours_sans_revision", lambda: b.nouveaux)
     monkeypatch.setattr(db, "campagne_du_jour", lambda jour: b.campagne)

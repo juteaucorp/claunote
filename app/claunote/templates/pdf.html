@@ -64,6 +64,8 @@
   .dense .titre-dense { font: 600 12.5pt/1.15 "DejaVu Serif", "Liberation Serif", Georgia, serif; color: #1f1e1d; margin: 0; letter-spacing: -.01em; }
   .dense .infos-dense { font-size: 6.4pt; color: #6f6b63; margin: 0; }
   .dense .colonnes { columns: 3; column-gap: 4.5mm; column-fill: auto; }
+  .dense.une-colonne .colonnes { columns: 1; }
+  .dense.une-colonne .reponses { break-before: auto; }
   .dense h1, .dense h3 { font-family: "DejaVu Sans", "Liberation Sans", sans-serif; }
   .dense h2 { font: 600 8.4pt/1.2 "DejaVu Serif", "Liberation Serif", Georgia, serif; margin: 6pt 0 2.5pt; padding: 2.2pt 5pt;
     color: #fff; background: var(--p); border-radius: 3pt; letter-spacing: .01em; }
@@ -128,7 +130,7 @@
 {% endif %}
 
 {% for s in sections %}
-<div class="section{{ ' dense' if s.dense }}">
+<div class="section{{ ' dense' if s.dense }}{{ ' une-colonne' if s.une_colonne }}">
   {% if s.dense %}
   <div class="tete-dense"><img src="{{ logo }}" alt="">
     <div><div class="marque-dense">Claunote · fiche synthèse</div>

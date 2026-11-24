@@ -30,11 +30,22 @@ DETAIL = {
     "detaille": ("Détaillé", "Plus d'explications et d'exemples."),
 }
 ALTERNANCE = {"": "Je ne précise pas", "oui": "Oui", "non": "Non"}
+# Préférences de révision : appliquées directement (taille des quiz et des paquets, forme des fiches, cartes du jour)
+FICHE_FORME = {
+    "synthese": ("Synthèse dense", "Télégraphique, 3 colonnes : la fiche de la veille de l'épreuve."),
+    "explicative": ("Explicative", "Phrases complètes et exemples : pour comprendre, pas seulement relire."),
+}
+QUIZ_NB = {"5": "5 questions", "10": "10 questions", "20": "20 questions"}
+CARTES_NB = {"10": "10 cartes", "20": "20 cartes", "40": "40 cartes"}
+NOUVELLES_JOUR = {"0": "Sans limite", "10": "10 par jour", "20": "20 par jour", "40": "40 par jour"}
+CHOIX = {"alternance": ALTERNANCE, "explications": EXPLICATIONS, "detail": DETAIL, "fiche_forme": FICHE_FORME,
+         "quiz_nb": QUIZ_NB, "cartes_nb": CARTES_NB, "nouvelles_jour": NOUVELLES_JOUR}
 # Champs texte : (longueur maximale, plusieurs lignes ?)
 TEXTES = {"formation": (120, False), "entreprise": (160, False), "objectif": (200, False),
           "exemples": (200, False), "difficultes": (300, False), "libre": (1000, True)}
 DEFAUT = {"formation": "", "alternance": "", "entreprise": "", "objectif": "", "explications": "normal",
-          "detail": "equilibre", "exemples": "", "difficultes": "", "libre": ""}
+          "detail": "equilibre", "exemples": "", "difficultes": "", "libre": "",
+          "fiche_forme": "synthese", "quiz_nb": "10", "cartes_nb": "20", "nouvelles_jour": "0"}
 # Tâches où l'IA crée quelque chose pour l'élève : elle y lit son profil en entier
 TACHES = {"fiche", "quiz", "cartes", "plan", "programme", "examen", "question"}
 
@@ -65,7 +76,8 @@ def nettoyer(p: dict) -> dict:
     p = {**DEFAUT, **{k: v for k, v in (p or {}).items() if k in DEFAUT}}
     for cle, (longueur, lignes) in TEXTES.items():
         p[cle] = _propre(p[cle], longueur, lignes)
-    for cle, choix in (("alternance", ALTERNANCE), ("explications", EXPLICATIONS), ("detail", DETAIL)):
+    for cle, choix in CHOIX.items():
+        p[cle] = str(p[cle])
         if p[cle] not in choix:
             p[cle] = DEFAUT[cle]
     if p["alternance"] != "oui":
@@ -160,3 +172,30 @@ def adapter(prompt: str, tache: str | None = None, compte_id: int | None = None)
     except Exception:   # le profil ne doit jamais empêcher une fiche
         pass
     return prompt
+
+
+# --- Préférences de révision ----------------------------------------------------
+
+def tailles(compte_id: int | None = None) -> tuple[int, int]:
+    """(questions d'un quiz, cartes d'un paquet) choisis par le compte."""
+    p = lire(compte_id)
+    return int(p["quiz_nb"]), int(p["cartes_nb"])
+
+
+def nouvelles_max(compte_id: int | None = None) -> int | None:
+    """Nouvelles flashcards par jour au plus ; None : sans limite."""
+    return int(lire(compte_id)["nouvelles_jour"]) or None
+
+
+FICHE_EXPLICATIVE = """
+Forme choisie par l'élève dans ses réglages : une fiche EXPLICATIVE plutôt que télégraphique. Garde la même
+structure (titre, parties numérotées, PIÈGES, QUESTIONS, RÉPONSES) et le même contenu à savoir, mais :
+- des phrases complètes et simples au lieu du style télégraphique (pas de « → », « = », « · » pour lier) ;
+- pour chaque notion importante : ce que c'est, pourquoi ça marche ainsi, puis un exemple concret ;
+- longueur : 1 200 à 2 500 mots avant les questions, sans remplissage ; elle sera lue sur une colonne.
+"""
+
+
+def consigne_fiche(compte_id: int | None = None) -> str:
+    """Ajout à la consigne d'une fiche selon la forme choisie (vide : la synthèse dense d'origine)."""
+    return FICHE_EXPLICATIVE if lire(compte_id)["fiche_forme"] == "explicative" else ""

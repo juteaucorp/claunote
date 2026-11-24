@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 
 import fsrs
 
-from claunote import agent, coherence, schemas
+from claunote import agent, coherence, profil, schemas
 from claunote.agent import ErreurAgent, demander
 from claunote.rangement import slug
 
@@ -149,7 +149,7 @@ commencent par le mot-clé en gras : « - **Externalité** : effet de l'activit�
   chaque phrase.
 Longueur : dense et complète, l'équivalent d'une à deux pages A4 sur trois colonnes en petits caractères
 (900 à 2 000 mots avant les questions, selon l'ampleur du sujet), sans remplissage.
-Réponds uniquement avec la fiche{web_md}.
+{forme}Réponds uniquement avec la fiche{web_md}.
 """,
     "quiz": COMMUN + """
 Fais un quiz de {nb} questions à choix multiples sur « {sujet} », qui couvre l'ensemble des cours.
@@ -403,7 +403,8 @@ def prompt(genre: str, sujet: str, date_eval: dt.date | None = None, aujourdhui:
     if genre == "plan" and date_eval is None:
         raise ValueError("un plan de révision demande une date d'évaluation")
     aujourdhui = aujourdhui or dt.date.today()
-    return PROMPTS[genre].format(sujet=sujet, nb=10, nb_cartes=20, aujourdhui=date_fr(aujourdhui),
+    nb, nb_cartes = profil.tailles()   # Mon profil : taille des quiz et des paquets, forme des fiches
+    return PROMPTS[genre].format(sujet=sujet, nb=nb, nb_cartes=nb_cartes, forme=profil.consigne_fiche(), aujourdhui=date_fr(aujourdhui),
                                  date_eval=date_fr(date_eval) if date_eval else "", duree="2 heures",
                                  consigne=bloc_consigne(consigne, strict) + consigne_pieces(fichiers or []),
                                  regle_cours=REGLE_STRICTE if strict else REGLE_COMPLEMENT,

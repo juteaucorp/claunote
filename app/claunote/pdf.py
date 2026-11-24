@@ -12,7 +12,7 @@ import markdown
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from claunote import formules, revision, schemas
+from claunote import formules, profil, revision, schemas
 
 _env = Environment(loader=FileSystemLoader(Path(__file__).parent / "templates"), autoescape=select_autoescape())
 _env.filters["maths"] = formules.en_ligne_texte
@@ -92,6 +92,8 @@ def section(rev: dict, sources: dict[int, str], cartes: list[dict] | None = None
     elif rev["genre"] == "fiche":
         s["dense"], s["ia"] = True, "[IA]" in (rev["contenu"] or "")
         s["titre_dense"], s["corps"] = fiche_dense(str(md(rev["contenu"], dense=True)))
+        # Forme « explicative » choisie par son auteur (Mon profil) : une colonne, plus lisible pour des phrases
+        s["une_colonne"] = profil.lire(rev.get("compte_id"))["fiche_forme"] == "explicative"
     else:
         s["corps"] = md(rev["contenu"])
     if not corrige:
