@@ -604,6 +604,15 @@ def trier(claude_ok) -> int:
     alertes = db.alertes_recentes()
     consigne = prompt(sujets, alertes + [e for e in db.evenements_recents() if e not in alertes])
     faits = len(sans)
+    # Même article déjà trié avec exactement les mêmes sujets et la même formation (un autre compte qui suit la
+    # même veille) : son verdict est repris tel quel, Claude n'est pas rappelé pour rien
+    empreinte = hashlib.sha256(prompt(sujets).encode()).hexdigest()
+    repris = {a["id"]: v for a in a_ia if (v := _verdict_repris(a, empreinte, codes))}
+    if repris:
+        db.articles_trier(list(repris.values()))
+        faits += len(repris)
+        a_ia = [a for a in a_ia if a["id"] not in repris]
+    code_de = {i: c for c, i in codes.items()}
     for debut in range(0, len(a_ia), LOT):
         lot = a_ia[debut:debut + LOT]
         entree = "\n".join(json.dumps({"id": a["id"], "source": a["source"], "titre": a["titre"],
@@ -616,8 +625,32 @@ def trier(claude_ok) -> int:
             log(f"tri par l'IA impossible pour {len(lot)} articles ({e}) : mots-clés")
             resultats = {}
         db.articles_trier([resultats.get(a["id"]) or _sans_ia(a, sujets) for a in lot])
+        for a in lot:
+            if a["id"] in resultats:
+                _retenir(empreinte, a["cle"], {**resultats[a["id"]], "sujets": [code_de[i] for i in resultats[a["id"]]["sujets"]]})
         faits += len(lot)
     return faits
+
+
+# Verdicts récents de l'IA, par (empreinte de la consigne, article) : en mémoire du worker, 2 jours au plus
+_VERDICTS: dict[tuple[str, str], tuple[float, dict]] = {}
+VERDICTS_MAX, VERDICTS_DUREE = 5000, 2 * 86400
+
+
+def _retenir(empreinte: str, cle_article: str, verdict: dict, maintenant: float | None = None):
+    maintenant = maintenant or time.time()
+    if len(_VERDICTS) >= VERDICTS_MAX:
+        for k in [k for k, (le, _) in _VERDICTS.items() if maintenant - le > VERDICTS_DUREE] or list(_VERDICTS)[:VERDICTS_MAX // 5]:
+            del _VERDICTS[k]
+    _VERDICTS[(empreinte, cle_article)] = (maintenant, verdict)
+
+
+def _verdict_repris(a: dict, empreinte: str, codes: dict[str, int], maintenant: float | None = None) -> dict | None:
+    """Le verdict déjà donné pour cet article et cette consigne, avec les sujets de ce compte, ou None."""
+    le, v = _VERDICTS.get((empreinte, a["cle"]), (0.0, None))
+    if v is None or (maintenant or time.time()) - le > VERDICTS_DUREE:
+        return None
+    return {**v, "id": a["id"], "sujets": [codes[c] for c in v["sujets"] if c in codes]}
 
 
 # --- « L'essentiel » : le point du jour -------------------------------------------------
@@ -947,20 +980,24 @@ def annoncer(maintenant: dt.datetime | None = None) -> int:
 
 # --- Boucle du worker -----------------------------------------------------------------
 
-def _chaque_compte(faire, comptes_ids: list[int]):
+def _chaque_compte(faire, comptes_ids: list[int]) -> list[int]:
     """`faire()` dans le fil de chaque compte (sa partie de la base, son droit au forfait Claude). La panne d'un
-    fil ne bloque pas les autres ; une limite ou une panne de Claude remonte au worker (pause pour tous)."""
+    fil ne bloque pas les autres ; une limite ou une panne de Claude remonte au worker (pause pour tous).
+    Renvoie les comptes pour lesquels tout s'est bien passé."""
     from claunote import comptes   # comptes → agent, db : pas d'import circulaire au chargement
+    reussis = []
     for compte_id in comptes_ids:
         try:
             with comptes.pour(compte_id):
                 faire()
+            reussis.append(compte_id)
         except (agent.LimiteAtteinte, agent.ClaudeIndisponible) as e:
             if isinstance(e, agent.SansForfait):
                 continue
             raise
         except Exception as e:
             log(f"compte {compte_id} : {e}")
+    return reussis
 
 
 def _tour_compte(claude_ok):
@@ -970,11 +1007,16 @@ def _tour_compte(claude_ok):
     quotidien()
 
 
+_INITIALISES: set[int] = set()
+
+
 def tour(claude_ok, maintenant: float | None = None):
     """Relevé de tous les fils (sans Claude), puis tri, alertes et point du jour de chacun, l'admin d'abord."""
     maintenant = maintenant or time.time()
     comptes_ids = db.comptes_actualites()
-    _chaque_compte(initialiser, [c for c in comptes_ids if c != 1])   # l'admin d'origine : au démarrage du worker
+    # Sélection de départ des comptes pas encore vus depuis le démarrage du worker (l'admin d'origine : au démarrage)
+    nouveaux = [c for c in comptes_ids if c != 1 and c not in _INITIALISES]
+    _INITIALISES.update(_chaque_compte(initialiser, nouveaux))
     demande = db.etat_consommer("actualites_relever")
     dernier = float(db.etat_valeur("actualites_releve") or 0)
     if demande or maintenant - dernier >= RELEVE:

@@ -1,7 +1,14 @@
+# Journaux de chaque conteneur bornés à 3 × 10 Mo (sans ça, Docker les garde en entier, depuis la création du
+# conteneur, et ils grossissent sans fin). « docker compose logs » montre toujours les plus récents.
+x-journaux: &journaux
+  driver: json-file
+  options: {max-size: 10m, max-file: "3"}
+
 services:
   db:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    logging: *journaux
     env_file: .env
     volumes:
       - pgdata:/var/lib/postgresql/data   # disque local de la VM, jamais sur kDrive
@@ -14,6 +21,7 @@ services:
   web:
     build: ./app
     restart: unless-stopped
+    logging: *journaux
     # Sécurité : aucun privilège système (même root, il ne peut ni changer de droits ni en gagner)
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -36,6 +44,7 @@ services:
     # HTTPS pour l'appli iPhone et les notifications (voir infra/SETUP.md, section 13)
     image: caddy:2.11-alpine
     restart: unless-stopped
+    logging: *journaux
     environment:
       CLAUNOTE_HOTE: ${CLAUNOTE_HOTE:-localhost}
     ports:
@@ -52,6 +61,7 @@ services:
     image: cloudflare/cloudflared:2026.10.7
     profiles: [tunnel]
     restart: unless-stopped
+    logging: *journaux
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     read_only: true
@@ -68,6 +78,7 @@ services:
   worker:
     build: ./app
     restart: unless-stopped
+    logging: *journaux
     cpu_shares: 512    # priorité : le site et la base passent avant le travail de fond (1024 par défaut)
     command: python -m claunote.worker
     cap_drop: [ALL]
@@ -92,6 +103,7 @@ services:
     # Analyses → « Éteindre les modèles locaux » sur le site (arrête ollama et lecture, tout passe par Claude).
     image: ollama/ollama:0.40.15
     restart: unless-stopped
+    logging: *journaux
     cpu_shares: 256    # priorité basse : il prend le processeur libre, pas celui du site
     environment:
       # Mémoire : 2 réponses en même temps au plus (le fond + une question du chat) au lieu de 4 par défaut,
@@ -112,6 +124,7 @@ services:
     # Pour s'en passer : Analyses → « Éteindre les modèles locaux » sur le site.
     build: ./lecture
     restart: unless-stopped
+    logging: *journaux
     cpu_shares: 256    # priorité basse, comme Ollama
     environment:
       LECTURE_THREADS: ${LECTURE_THREADS:-2}   # cœurs utilisés par calcul
@@ -123,6 +136,7 @@ services:
   pronote:
     build: ./pronote
     restart: unless-stopped
+    logging: *journaux
     environment:
       TZ: Europe/Paris
       NODE_OPTIONS: --max-old-space-size=256   # Node garde sinon jusqu'à 2 Go avant de faire le ménage
@@ -138,6 +152,7 @@ services:
     # c'est elle qui décide quoi reconstruire, pas seulement ce que le dernier git pull a apporté.
     build: ./infra/maj
     restart: unless-stopped
+    logging: *journaux
     environment:
       DEPOT: ${PWD}
     volumes:

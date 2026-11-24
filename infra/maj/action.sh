@@ -194,7 +194,10 @@ case "$action" in
     if [ -n "$relancer" ]; then docker compose restart $relancer || fin erreur "Échec du redémarrage de $relancer."; fi
     echo "== redémarré en $(duree $t)"
     noter_installe   # seulement ici : une étape ratée plus haut sera refaite à la prochaine mise à jour
+    # Anciennes images et cache de construction de plus de 30 jours : rendus à chaque mise à jour, sans attendre
+    # « Libérer de la place » (le cache récent est gardé : la mise à jour suivante ne retélécharge rien)
     docker image prune -f > /dev/null
+    docker builder prune -f --filter until=720h > /dev/null 2>&1
     decrire
     installes=$(echo $construire $relancer)
     if [ "$avant" = "$apres" ]; then

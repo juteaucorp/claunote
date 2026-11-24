@@ -192,6 +192,7 @@ et les réglages du quotidien se font aussi sur le site (*Activité*, *Réglages
 | `LOCAL_CONTROLE` | Part des analyses locales sûres que Claude contrôle quand même | `0.1` |
 | `PRONOTE_INTERVALLE_H`, `PRONOTE_PREPARATION_AUTO` | Synchro Pronote, préparation automatique des contrôles | `3`, `1` |
 | `PRONOTE_VERIF_MIN` | Vérification rapide (cours modifiés, nouvelles notes), en minutes ; `0` la coupe | `15` |
+| `PRONOTE_VERIF_CALME_MIN` | La même, un jour sans cours ni aujourd'hui ni demain (week-end, vacances, entreprise) | `60` |
 | `CLAUNOTE_UTILISATEUR`, `CLAUNOTE_MOT_DE_PASSE` | Connexion au site (mot de passe changeable sur le site) | `admin` / `claunote` |
 | `DECOUPAGE_PAGES` | Au-delà, un PDF est d'abord découpé en documents | `40` |
 | `CPU_MOYENNE_MAX`, `CPU_FENETRE_MIN`, `OLLAMA_THREADS` | Budget du processeur sur la durée (pics permis, pas de VM à fond en permanence), cœurs d'Ollama | `0.6`, `15`, tous sauf un |
