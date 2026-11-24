@@ -46,7 +46,9 @@ def test_voir_en_tant_que(client, faux_comptes):
     # Rien n'est fait à sa place, même ce qu'il a le droit de faire
     r = client.post("/doc/1/visibilite", data={"valeur": "public"}, headers={"HX-Request": "true"})
     assert r.status_code == 403 and "lecture seule" in r.text
-    assert client.post(f"/comptes/{i}/apercu").status_code == 403
+    assert "toast-apercu" in page.text and "en-apercu" in page.text   # bouton bloqué sur place, message intégré
+    r = client.post(f"/comptes/{i}/apercu")
+    assert r.status_code == 403 and "Lecture seule · Claunote" in r.text and "--accent" in r.text   # repli au style claunote
     debut = [j for j in client.journal if j["type"] == "apercu"]
     assert len(debut) == 1 and "« admin » voit le site comme « camille »" in debut[0]["detail"]
     # Retour à son compte

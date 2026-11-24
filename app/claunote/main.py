@@ -114,10 +114,27 @@ def _refus_apercu(request: Request, apercu_: dict) -> Response:
              "Reviens à ton compte (bandeau en haut) pour agir.")
     if request.headers.get("HX-Request") or request.query_params.get("paquet"):
         return Response(texte, status_code=403)
-    return HTMLResponse(f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-                        f"<title>Aperçu en lecture seule</title><body style='font-family:system-ui;margin:24px'>"
-                        f"<p>👁 {html.escape(texte)}</p><p><a href='javascript:history.back()'>Retour</a></p>",
-                        status_code=403)
+    # Repli sans JavaScript (le bandeau bloque d'habitude le bouton avant) : une page au style claunote
+    return HTMLResponse(_PAGE_REFUS_APERCU.replace("{texte}", html.escape(texte)), status_code=403)
+
+
+_PAGE_REFUS_APERCU = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lecture seule · Claunote</title><link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<style>
+  :root { --fond: #faf9f5; --carte: #fff; --texte: #1f1e1d; --doux: #6f6b63; --bord: #ebe7de; --accent: #d97757; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --fond: #1c1b1a; --carte: #262523; --texte: #eeebe4; --doux: #a7a299;
+    --bord: #38362f; --accent: #e08a6d; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box;
+    background: var(--fond); color: var(--texte); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  .carte { max-width: 440px; background: var(--carte); border: 2px solid var(--accent); border-radius: 18px; padding: 24px; text-align: center; }
+  img { width: 56px; height: 56px; border-radius: 14px; border: 1px solid var(--bord); background: #fff; }
+  h1 { font-size: 1.3rem; margin: 12px 0 6px; } p { color: var(--doux); margin: 0 0 18px; }
+  a { display: inline-block; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; padding: 10px 18px; border-radius: 12px; }
+</style></head><body><div class="carte"><img src="/static/logo.svg" alt="">
+<h1>👁 Lecture seule</h1><p>{texte}</p><a href="javascript:history.back()">Retour</a></div></body></html>"""
+
+
 PUBLIC_PREFIXES = ("/static/",)
 
 
