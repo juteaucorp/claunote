@@ -1178,7 +1178,48 @@ def _chaque_compte(faire, comptes_ids: list[int]) -> list[int]:
     return reussis
 
 
+def suit_l_admin() -> bool:
+    """Ce compte a exactement le fil de l'admin (le fil par défaut, sans rien changé) : il reprend ses articles,
+    son tri et son « Essentiel » au lieu de tout refaire ; seules ses notifications et ses lectures sont à lui."""
+    if _origine() or personnalise():
+        return False
+    mien = _signature_fil()
+    with db.pour_compte(1):
+        return _signature_fil() == mien
+
+
+def miroir() -> int:
+    """Recopie les articles triés de l'admin dans le fil du compte (voir db.articles_miroir)."""
+    depuis = db.etat_valeur(cle("actualites_miroir_le"))
+    maintenant = dt.datetime.now(dt.timezone.utc)
+    n = db.articles_miroir(db.compte_actuel(), dt.datetime.fromisoformat(depuis) if depuis else None)
+    db.etat_ecrire(cle("actualites_miroir_le"), (maintenant - dt.timedelta(minutes=5)).isoformat())
+    db.articles_nettoyer()
+    return n
+
+
+def defaut_en_permanence() -> bool:
+    """Réglage de l'admin : son fil est le fil par défaut, toujours à jour (activé tant qu'il ne l'a pas coupé)."""
+    return db.etat_valeur("actualites_defaut_permanent") != "non"
+
+
+def suivre_le_fil_admin():
+    """Fil par défaut « en permanence » : un changement du fil de l'admin devient tout de suite le fil par défaut."""
+    if not defaut_en_permanence():
+        return
+    p = profil_defaut()
+    mien = profil_du_fil()
+    mien["sujets"] = [{**x, "notifier": True} for x in mien["sujets"]]
+    if p.get("depart") or _cle_fil(p) != _cle_fil(mien) or [x["notifier"] for x in p["flux"]] != [x["notifier"] for x in mien["flux"]]:
+        definir_defaut()
+        log("fil par défaut mis à jour (le fil de l'admin, en permanence)")
+
+
 def _tour_compte(claude_ok):
+    if _origine():
+        suivre_le_fil_admin()
+    elif suit_l_admin():
+        miroir()   # articles, tri et alertes de l'admin : ni relevé ni IA pour ce compte
     trier(claude_ok)
     annoncer()
     faire_point(claude_ok)
@@ -1194,5 +1235,5 @@ def tour(claude_ok, maintenant: float | None = None):
     dernier = float(db.etat_valeur("actualites_releve") or 0)
     if demande or maintenant - dernier >= RELEVE:
         db.etat_ecrire("actualites_releve", str(maintenant))
-        _chaque_compte(relever, comptes_ids)
+        _chaque_compte(lambda: None if suit_l_admin() else relever(), comptes_ids)
     _chaque_compte(lambda: _tour_compte(claude_ok), comptes_ids)
