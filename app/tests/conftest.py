@@ -62,10 +62,11 @@ class FauxComptes:
         return i
 
     def creer_invitation(self, empreinte, genre, expire_le, role="invite", droits=None, note=None, cree_par=None,
-                         compte_id=None):
+                         compte_id=None, appareil=None):
         i = len(self.invitations) + 1
         self.invitations[i] = {"id": i, "empreinte": empreinte, "genre": genre, "expire_le": expire_le, "role": role,
                                "droits": droits or [], "note": note, "cree_par": cree_par, "compte_id": compte_id,
+                               "appareil": appareil,
                                "utilise_le": None, "utilise_par": None, "cree_le": dt.datetime.now(dt.timezone.utc),
                                "pour": None, "utilise_par_identifiant": None}
         return i

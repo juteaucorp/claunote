@@ -467,6 +467,7 @@ CREATE TABLE IF NOT EXISTS invitations (
     utilise_le  TIMESTAMPTZ,
     utilise_par INT
 );
+ALTER TABLE invitations ADD COLUMN IF NOT EXISTS appareil TEXT;   -- appareil approuvé par le lien (accès par Internet)
 DELETE FROM invitations WHERE expire_le < now() - interval '30 days';
 -- Qui a déposé quel fichier dans l'inbox : le worker donne le document à ce compte
 CREATE TABLE IF NOT EXISTS depots (
@@ -2996,15 +2997,16 @@ def nb_admins_actifs(sauf: int | None = None) -> int:
 
 
 def creer_invitation(empreinte: str, genre: str, expire_le, role: str = "invite", droits: list[str] | None = None,
-                     note: str | None = None, cree_par: int | None = None, compte_id: int | None = None) -> int:
+                     note: str | None = None, cree_par: int | None = None, compte_id: int | None = None,
+                     appareil: str | None = None) -> int:
     with sans_compte(), connect() as c:
         if genre == "mot_de_passe":   # un seul lien de nouveau mot de passe valable à la fois par compte
             c.execute("DELETE FROM invitations WHERE genre = 'mot_de_passe' AND compte_id = %s AND utilise_le IS NULL",
                       (compte_id,))
         return c.execute(
-            "INSERT INTO invitations (empreinte, genre, expire_le, role, droits, note, cree_par, compte_id) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-            (empreinte, genre, expire_le, role, droits or [], note, cree_par, compte_id)).fetchone()["id"]
+            "INSERT INTO invitations (empreinte, genre, expire_le, role, droits, note, cree_par, compte_id, appareil) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (empreinte, genre, expire_le, role, droits or [], note, cree_par, compte_id, appareil)).fetchone()["id"]
 
 
 def invitation(empreinte: str):
