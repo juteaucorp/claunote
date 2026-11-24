@@ -403,7 +403,7 @@ templates.env.filters["empreinte"] = lambda html_: hashlib.sha1(str(html_).encod
 templates.env.globals["nb_a_verifier"] = lambda: db.nb_a_verifier()
 templates.env.globals["nb_import_a_confirmer"] = lambda: db.nb_import_a_confirmer()
 templates.env.globals["nb_evaluations_proches"] = lambda: db.nb_evaluations_proches()
-templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir()
+templates.env.globals["nb_cartes_a_revoir"] = lambda: db.nb_cartes_a_revoir(nouvelles_max=profil.nouvelles_max((moi() or {}).get("id")))
 templates.env.globals["installation_a_faire"] = installation.a_faire
 templates.env.globals["turnstile_requis"] = turnstile.requis   # captcha par Internet (_turnstile.html)
 templates.env.globals["turnstile_cle"] = turnstile.cle_site
@@ -411,6 +411,7 @@ templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_de
 templates.env.globals["moi"] = moi
 templates.env.globals["voir_en_tant_que"] = apercu_en_cours   # « Voir en tant que » en cours (bandeau de base.html)
 templates.env.globals["apparence"] = lambda: apparence.lire(moi())   # thème et style du compte (base.html)
+templates.env.globals["mon_profil"] = lambda: profil.lire((moi() or {}).get("id"))   # préférences de révision
 templates.env.globals["peut"] = lambda droit: comptes.peut(moi(), droit)
 # Boutons Public / Privé : seulement s'il y a d'autres comptes, et sur ses propres éléments
 templates.env.globals["partage_possible"] = lambda: bool(moi()) and db.plusieurs_comptes()
@@ -1618,7 +1619,8 @@ def page_profil(request: Request, message: str = ""):
     p = profil.lire(compte_id)
     return templates.TemplateResponse(request, "profil.html", {
         "p": p, "message": message, "explications": profil.EXPLICATIONS, "detail": profil.DETAIL,
-        "alternance": profil.ALTERNANCE, "longueurs": {k: v[0] for k, v in profil.TEXTES.items()},
+        "alternance": profil.ALTERNANCE, "fiche_forme": profil.FICHE_FORME, "quiz_nb": profil.QUIZ_NB,
+        "cartes_nb": profil.CARTES_NB, "nouvelles_jour": profil.NOUVELLES_JOUR, "longueurs": {k: v[0] for k, v in profil.TEXTES.items()},
         "formation_matieres": profil.formation(compte_id, {**p, "formation": ""}),
         "parcours": profil.parcours(compte_id), "bloc": profil.bloc(compte_id)})
 
@@ -1626,11 +1628,15 @@ def page_profil(request: Request, message: str = ""):
 @app.post("/reglages/profil")
 def enregistrer_profil(formation: str = Form(""), alternance: str = Form(""), entreprise: str = Form(""),
                        objectif: str = Form(""), explications: str = Form("normal"), detail: str = Form("equilibre"),
-                       exemples: str = Form(""), difficultes: str = Form(""), libre: str = Form("")):
+                       exemples: str = Form(""), difficultes: str = Form(""), libre: str = Form(""),
+                       fiche_forme: str = Form("synthese"), quiz_nb: str = Form("10"), cartes_nb: str = Form("20"),
+                       nouvelles_jour: str = Form("0")):
     compte_id = (moi() or {}).get("id") or 1
     profil.enregistrer(compte_id, {"formation": formation, "alternance": alternance, "entreprise": entreprise,
                                    "objectif": objectif, "explications": explications, "detail": detail,
-                                   "exemples": exemples, "difficultes": difficultes, "libre": libre})
+                                   "exemples": exemples, "difficultes": difficultes, "libre": libre,
+                                   "fiche_forme": fiche_forme, "quiz_nb": quiz_nb, "cartes_nb": cartes_nb,
+                                   "nouvelles_jour": nouvelles_jour})
     return RedirectResponse("/reglages/profil?message=" + quote("Profil enregistré : l'IA en tient compte dès maintenant."),
                             status_code=303)
 
@@ -2301,8 +2307,12 @@ async def demander_revision(request: Request):
     return RedirectResponse(f"/revision/{rev_id}", status_code=303)
 
 
-DESCRIPTIONS_GENRES = {"fiche": "synthèse dense + questions", "quiz": "10 questions à choix", "cartes": "20 cartes à mémoriser",
-                       "examen": "sujet type examen + corrigé", "plan": "jour par jour jusqu'au contrôle"}
+def descriptions_genres() -> dict:
+    """Selon Mon profil : forme des fiches, taille des quiz et des paquets."""
+    p = profil.lire((moi() or {}).get("id"))
+    fiche = "explicative + questions" if p["fiche_forme"] == "explicative" else "synthèse dense + questions"
+    return {"fiche": fiche, "quiz": f"{p['quiz_nb']} questions à choix", "cartes": f"{p['cartes_nb']} cartes à mémoriser",
+            "examen": "sujet type examen + corrigé", "plan": "jour par jour jusqu'au contrôle"}
 
 
 @app.post("/reviser/demande", response_class=HTMLResponse)
@@ -2330,7 +2340,7 @@ def lire_demande(request: Request, texte: str = Form("")):
     gabarit = "_demande.html" if request.headers.get("HX-Request") else "reviser_demande.html"
     return templates.TemplateResponse(request, gabarit, {
         "compris": compris, "phrase": demande.phrase(compris), "genres": revision.COURTS,
-        "descriptions": DESCRIPTIONS_GENRES, "cochees": cochees, "devant": devant,
+        "descriptions": descriptions_genres(), "cochees": cochees, "devant": devant,
         "autres": [(n, liste) for n, liste in autres if liste], "aucun_cours": not choix,
         "demain": aujourdhui + dt.timedelta(days=1)})
 
@@ -3235,11 +3245,11 @@ def page_cartes(request: Request):
 @app.get("/cartes/session", response_class=HTMLResponse)
 def session_cartes(request: Request, paquet: int | None = None):
     """Une carte à la fois : recto, on retourne, on note de « À revoir » à « Facile »."""
-    carte = db.prochaine_carte(paquet)
+    carte = db.prochaine_carte(paquet, nouvelles_max=profil.nouvelles_max((moi() or {}).get("id")))
     reperes = (carte["reperes"] or {}) if carte else {}
     return templates.TemplateResponse(request, "session_cartes.html", {
         "carte": carte, "paquet": paquet, "notes": revision.NOTES, "reperes": reperes,
-        "reste": db.nb_cartes_a_revoir(paquet),
+        "reste": db.nb_cartes_a_revoir(paquet, nouvelles_max=profil.nouvelles_max((moi() or {}).get("id"))),
         # Quand la carte reviendra, pour chaque bouton (FSRS)
         "apercu": {n: revision.delai(carte, n) for n in revision.NOTES} if carte else {}})
 

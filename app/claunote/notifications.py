@@ -33,7 +33,7 @@ from py_vapid.utils import b64urlencode
 from cryptography.hazmat.primitives import serialization
 from pywebpush import WebPushException, webpush
 
-from claunote import archivage, db, emploi_du_temps, pronote, revision
+from claunote import archivage, db, emploi_du_temps, profil, pronote, revision
 
 PARIS = pronote.PARIS
 CONTACT = os.environ.get("CLAUNOTE_PUSH_CONTACT") or "mailto:claunote@example.com"
@@ -118,7 +118,7 @@ def en_silence(maintenant: dt.datetime, p: dict) -> bool:
 
 def badge() -> int:
     """Pastille sur l'icône de l'appli : flashcards du jour + évaluations de la semaine."""
-    return db.nb_cartes_a_revoir() + db.nb_evaluations_proches()
+    return db.nb_cartes_a_revoir(nouvelles_max=profil.nouvelles_max()) + db.nb_evaluations_proches()
 
 
 def envoyer(abo: dict, charge: dict) -> str | None:
@@ -272,7 +272,7 @@ def rappel_du_jour(aujourd_hui: dt.date) -> tuple[str, str, str] | None:
     """Le rappel quotidien le plus utile : (titre, texte, page à ouvrir), ou None s'il n'y a rien."""
     evals = [(e, (e["le"].astimezone(PARIS).date() - aujourd_hui).days)
              for e in db.evenements_a_venir("evaluation", 8)]
-    dues = db.nb_cartes_a_revoir()
+    dues = db.nb_cartes_a_revoir(nouvelles_max=profil.nouvelles_max())
     sans_fiche = [(e, j) for e, j in evals if not e["revision_id"]]
     if sans_fiche:
         e, j = sans_fiche[0]

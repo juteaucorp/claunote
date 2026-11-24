@@ -5,8 +5,9 @@
 {% include "_reviser.html" %}
 <p class="fil"><a href="/reviser">Réviser</a> › Nouvelle révision</p>
 <h1>Nouvelle révision</h1>
-{% set DESCRIPTIONS = {"fiche": "Synthèse dense : méthodes, par cœur, pièges, questions", "quiz": "10 questions corrigées",
-  "cartes": "20 cartes à retenir en répétition espacée", "examen": "Un sujet type examen + son corrigé",
+{% set pf = mon_profil() %}
+{% set DESCRIPTIONS = {"fiche": ("Explicative : notions expliquées, exemples, pièges, questions" if pf.fiche_forme == 'explicative' else "Synthèse dense : méthodes, par cœur, pièges, questions"), "quiz": pf.quiz_nb ~ " questions corrigées",
+  "cartes": pf.cartes_nb ~ " cartes à retenir en répétition espacée", "examen": "Un sujet type examen + son corrigé",
   "plan": "Jour par jour jusqu'à l'évaluation"} %}
 {% if not choix and not document %}
 <div class="carte">Il faut d'abord des cours classés : dépose des scans depuis <a href="/deposer">Déposer</a>.</div>

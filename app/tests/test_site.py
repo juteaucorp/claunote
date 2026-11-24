@@ -29,7 +29,7 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "nb_documents", lambda: 8)
     monkeypatch.setattr(db, "evenements_a_venir", lambda genre=None, jours=60: [])
     monkeypatch.setattr(db, "documents_pronote", lambda limite=30: [])
-    monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None: 0)
+    monkeypatch.setattr(db, "nb_cartes_a_revoir", lambda rev_id=None, nouvelles_max=None: 0)
     monkeypatch.setattr(db, "noter_ouverture", lambda rev_id: None)
     monkeypatch.setattr(db, "candidats_archivage", lambda: ([], []))
     monkeypatch.setattr(db, "archives", lambda: ([], []))
@@ -647,7 +647,7 @@ CARTE = {"id": 31, "revision_id": 8, "recto": "Qu'est-ce qu'un VLAN ?", "verso":
 def cartes(client, monkeypatch):
     monkeypatch.setattr(db, "paquets", lambda: [{"id": 8, "sujet": "VLAN", "cree_le": date(2026, 10, 23),
                                                  "total": 1, "a_revoir": 1, "nouvelles": 1}])
-    monkeypatch.setattr(db, "prochaine_carte", lambda paquet=None: CARTE if paquet in (None, 8) else None)
+    monkeypatch.setattr(db, "prochaine_carte", lambda paquet=None, nouvelles_max=None: CARTE if paquet in (None, 8) else None)
     monkeypatch.setattr(db, "cartes", lambda rev_id=None: [CARTE] if rev_id in (None, 8) else [])
     monkeypatch.setattr(db, "carte", lambda i: CARTE if i == 31 else None)
     monkeypatch.setattr(db, "maj_carte", lambda *a: client.appels.append(("carte",) + a))

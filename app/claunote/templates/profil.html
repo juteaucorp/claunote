@@ -3,7 +3,7 @@
 {% block contenu %}
 <p class="doux retour"><a href="/reglages">‹ Réglages</a></p>
 <h1>Mon profil</h1>
-<p class="doux">Ce que Claunote sait de toi. <strong>L'IA le lit à chaque fiche, quiz, flashcard, campagne et question</strong> pour s'adapter à toi. Rien n'est obligatoire.</p>
+<p class="doux">Ce que Claunote sait de toi. <strong>L'IA le lit à chaque fiche, quiz, flashcard, campagne et question</strong> pour s'adapter à toi, et tes révisions suivent tes choix. Rien n'est obligatoire.</p>
 {% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
 
 <form method="post" action="/reglages/profil" class="carte profil">
@@ -57,6 +57,25 @@
     <textarea name="libre" rows="4" maxlength="{{ longueurs.libre }}" placeholder="ex. je suis dyslexique, je révise surtout dans le train, je préfère les tableaux">{{ p.libre }}</textarea>
   </label>
 
+  <h2>Tes révisions</h2>
+  <fieldset>
+    <legend>Forme des fiches</legend>
+    <div class="choix">
+      {% for cle, (nom, aide) in fiche_forme.items() %}
+      <label class="option"><input type="radio" name="fiche_forme" value="{{ cle }}" {{ 'checked' if p.fiche_forme == cle }}><span><strong>{{ nom }}</strong><br><span class="doux">{{ aide }}</span></span></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  <div class="selects">
+    <label>Un quiz
+      <select name="quiz_nb">{% for cle, nom in quiz_nb.items() %}<option value="{{ cle }}" {{ 'selected' if p.quiz_nb == cle }}>{{ nom }}</option>{% endfor %}</select></label>
+    <label>Un paquet de flashcards
+      <select name="cartes_nb">{% for cle, nom in cartes_nb.items() %}<option value="{{ cle }}" {{ 'selected' if p.cartes_nb == cle }}>{{ nom }}</option>{% endfor %}</select></label>
+    <label>Nouvelles flashcards
+      <select name="nouvelles_jour">{% for cle, nom in nouvelles_jour.items() %}<option value="{{ cle }}" {{ 'selected' if p.nouvelles_jour == cle }}>{{ nom }}</option>{% endfor %}</select></label>
+  </div>
+  <p class="doux">Les cartes déjà vues reviennent toujours à leur date ; la limite ne retient que les nouvelles.</p>
+
   <button class="principal">Enregistrer</button>
 </form>
 
@@ -81,6 +100,9 @@
   .profil .option:has(input:checked) { border-color: var(--accent); background: var(--accent-pale); }
   .profil .option input { margin: 3px 0 0; accent-color: var(--accent); }
   .profil:not(:has(input[name=alternance][value=oui]:checked)) .si-alternance { display: none; }
+  .profil .selects { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .profil .selects label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+  .profil .selects select { font: inherit; font-weight: 400; }
   .ce-que-lit pre { white-space: pre-wrap; font: inherit; font-size: .88rem; margin: 8px 0 0; color: var(--doux, inherit); }
   .profil .choix.court { grid-template-columns: repeat(3, 1fr); }
 </style>
