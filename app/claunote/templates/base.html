@@ -151,7 +151,7 @@
     .icone-entete { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 12px; color: var(--texte); }
     .icone-entete:active { background: var(--bord); }
     /* Barre d'onglets flottante en verre, comme iOS 26 */
-    nav.onglets { display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 20;
+    nav.onglets { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; position: fixed; left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 20;
       max-width: 520px; margin: 0 auto; padding: 5px; border-radius: 32px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
     nav.onglets > a, nav.onglets summary { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 2px 6px;
       color: var(--texte); text-decoration: none; font-size: .66rem; font-weight: 600; list-style: none; border-radius: 26px; transition: background .2s, transform .15s; }
@@ -328,7 +328,31 @@
 {# Réglages : un seul point d'entrée, la pastille dit s'il y a quelque chose à regarder (alertes, mise à jour, pause) #}
 {% set a_regler = (nb_alertes_securite() + nb_mises_a_jour() + nb_demandes_ia() + (1 if analyses_en_pause() else 0)) if admin else 0 %}
 {% set plus_n = attente + a_regler %}
+{% macro onglet_haut(cle) %}
+{% if cle == 'actualites' %}
+{% if peut('actualites') %}<a href="/actualites" id="maj-h-actus" class="maj {{ 'actif' if rubrique == 'actualites' }}">Actualités{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
+{% elif cle == 'cours' %}
+{% if peut('bibliotheque') %}<a href="/bibliotheque" id="maj-h-cours" class="maj {{ 'actif' if rubrique == 'cours' }}" title="{{ nb_cours }} cours classés">Cours{% if nb_cours %}<span class="compteur">{{ nb_cours }}</span>{% endif %}</a>{% endif %}
+{% elif cle == 'reviser' %}
+{% if peut('reviser') %}<a href="/reviser" id="maj-h-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
+{% elif cle == 'agenda' %}
+{% if peut('agenda') %}<a href="/agenda" id="maj-h-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
+{% endif %}
+{% endmacro %}
+{% macro onglet_bas(cle) %}
+{% if cle == 'actualites' %}
+{% if peut('actualites') %}<a href="/actualites" id="maj-o-actus" class="maj {{ 'actif' if rubrique == 'actualites' }}">{{ icone('actualites') }}Actualités{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
+{% elif cle == 'cours' %}
+{% if peut('bibliotheque') %}<a href="/bibliotheque" id="maj-o-cours" class="maj {{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}<span>Cours{% if nb_cours %} <span class="compteur">{{ nb_cours }}</span>{% endif %}</span></a>{% endif %}
+{% elif cle == 'reviser' %}
+{% if peut('reviser') %}<a href="/reviser" id="maj-o-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
+{% elif cle == 'agenda' %}
+{% if peut('agenda') %}<a href="/agenda" id="maj-o-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
+{% endif %}
+{% endmacro %}
 {% macro liens_plus() %}
+      {# Rubriques retirées des onglets (Réglages › Apparence) : toujours là, dans Plus #}
+      {% for cle in ap.caches %}{% set r = rubriques[cle] %}{% if peut(r[2]) %}<a href="{{ r[1] }}">{{ icone(r[3]) }}<span>{{ r[0] }}<small>{{ r[4] }}</small></span></a>{% endif %}{% endfor %}
       {% if peut('deposer') %}<a href="/deposer">{{ icone('deposer') }}<span>Ajouter<small>photo, fichiers, dossiers</small></span>{% if a_importer %}<span class="badge">{{ a_importer }}</span>{% endif %}</a>{% endif %}
       {% if peut('organiser') %}<a href="/a-verifier">{{ icone('organiser') }}<span>Ranger<small>à vérifier, matières, tous les documents</small></span>{% if attente - a_importer %}<span class="badge">{{ attente - a_importer }}</span>{% endif %}</a>{% endif %}
       <a href="/reglages">{{ icone('compte') }}<span>Réglages<small>{% if admin %}ton compte, administration{% else %}ton compte, notifications, tes données{% endif %}</small></span>{% if a_regler %}<span class="badge">{{ a_regler }}</span>{% endif %}</a>
@@ -337,10 +361,7 @@
   <div class="barre">
     <a class="marque" href="/"><img src="/static/{{ 'logo-vigie.svg' if ap.style == 'vigie' else 'logo.svg' }}" alt="">Claunote</a>
     <nav class="haut" aria-label="Menu">
-      {% if peut('actualites') %}<a href="/actualites" id="maj-h-actus" class="maj {{ 'actif' if rubrique == 'actualites' }}">Actualités{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
-      {% if peut('bibliotheque') %}<a href="/bibliotheque" id="maj-h-cours" class="maj {{ 'actif' if rubrique == 'cours' }}" title="{{ nb_cours }} cours classés">Cours{% if nb_cours %}<span class="compteur">{{ nb_cours }}</span>{% endif %}</a>{% endif %}
-      {% if peut('reviser') %}<a href="/reviser" id="maj-h-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
-      {% if peut('agenda') %}<a href="/agenda" id="maj-h-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
+      {% for cle in ap.onglets %}{{ onglet_haut(cle) }}{% endfor %}
     </nav>
     <div class="outils">
       <form action="/recherche" class="recherche-entete"><input name="q" type="search" placeholder="Rechercher…" value="{{ q|default('') }}" aria-label="Rechercher"></form>
@@ -356,10 +377,7 @@
   </div>
 </header>
 <nav class="onglets verre" aria-label="Onglets">
-  {% if peut('actualites') %}<a href="/actualites" id="maj-o-actus" class="maj {{ 'actif' if rubrique == 'actualites' }}">{{ icone('actualites') }}Actualités{% if actus %}<span class="badge">{{ actus }}</span>{% endif %}</a>{% endif %}
-  {% if peut('bibliotheque') %}<a href="/bibliotheque" id="maj-o-cours" class="maj {{ 'actif' if rubrique == 'cours' }}">{{ icone('cours') }}<span>Cours{% if nb_cours %} <span class="compteur">{{ nb_cours }}</span>{% endif %}</span></a>{% endif %}
-  {% if peut('reviser') %}<a href="/reviser" id="maj-o-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
-  {% if peut('agenda') %}<a href="/agenda" id="maj-o-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
+  {% for cle in ap.onglets %}{{ onglet_bas(cle) }}{% endfor %}
   <details id="plus" data-menu>
     <summary id="maj-o-plus" class="maj {{ 'actif' if rubrique == 'plus' }}">{{ icone('plus') }}Plus{% if plus_n %}<span class="badge">{{ plus_n }}</span>{% endif %}</summary>
     <div class="feuille verre">{{ liens_plus() }}</div>

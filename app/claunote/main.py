@@ -411,6 +411,7 @@ templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_de
 templates.env.globals["moi"] = moi
 templates.env.globals["voir_en_tant_que"] = apercu_en_cours   # « Voir en tant que » en cours (bandeau de base.html)
 templates.env.globals["apparence"] = lambda: apparence.lire(moi())   # thème et style du compte (base.html)
+templates.env.globals["rubriques"] = apparence.RUBRIQUES
 templates.env.globals["mon_profil"] = lambda: profil.lire((moi() or {}).get("id"))   # préférences de révision
 templates.env.globals["peut"] = lambda droit: comptes.peut(moi(), droit)
 # Boutons Public / Privé : seulement s'il y a d'autres comptes, et sur ses propres éléments
@@ -1566,7 +1567,10 @@ def deconnecter_partout(request: Request, appareils_aussi: str = Form("")):
 # --- Bibliothèque ----------------------------------------------------------
 
 def _premiere_page(compte: dict | None) -> str:
-    """Page d'arrivée (plus de page « Aujourd'hui ») : Actualités, sinon la première rubrique permise."""
+    """Page d'arrivée (plus de page « Aujourd'hui ») : celle choisie dans Apparence, sinon Actualités, sinon la
+    première rubrique permise."""
+    if choisie := _sans_erreur(lambda: apparence.accueil(compte, comptes.peut), None):
+        return choisie
     for url, droit in (("/actualites", "actualites"), ("/bibliotheque", "bibliotheque"), ("/reviser", "reviser"),
                        ("/agenda", "agenda")):
         if comptes.peut(compte, droit):
@@ -1601,7 +1605,25 @@ def _sans_erreur(f, defaut=None):
 @app.get("/reglages/apparence", response_class=HTMLResponse)
 def page_apparence(request: Request, message: str = ""):
     return templates.TemplateResponse(request, "apparence.html", {
-        "ap": apparence.lire(moi()), "modes": apparence.MODES, "styles": apparence.STYLES, "message": message})
+        "ap": apparence.lire(moi()), "modes": apparence.MODES, "styles": apparence.STYLES, "message": message,
+        "permises": [k for k, r in apparence.RUBRIQUES.items() if comptes.peut(moi(), r[2])]})
+
+
+@app.post("/reglages/navigation")
+async def enregistrer_navigation(request: Request):
+    """Onglets gardés, leur ordre (position 1 à 4) et la page d'accueil du compte."""
+    f = await request.form()
+    def position(k):
+        try:
+            return int(f.get(f"ordre_{k}") or 9)
+        except ValueError:
+            return 9
+    gardes = sorted((k for k in apparence.ORDRE if f.get(f"onglet_{k}")),
+                    key=lambda k: (position(k), apparence.ORDRE.index(k)))
+    if moi():
+        apparence.enregistrer_navigation(moi(), gardes, str(f.get("accueil") or ""))
+    return RedirectResponse("/reglages/apparence?message=" + quote("Onglets et page d'accueil enregistrés."),
+                            status_code=303)
 
 
 @app.post("/reglages/apparence")
