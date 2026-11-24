@@ -27,7 +27,7 @@ import datetime as dt
 from pathlib import Path
 from xml.etree import ElementTree
 
-from claunote import formations, lecture, modeles
+from claunote import formations, lecture, modeles, profil
 
 SEUIL_CONFIANCE = 0.7
 SOURCES = {".py", ".sql", ".ipynb", ".html", ".htm", ".js", ".php", ".java", ".c", ".cpp", ".cs", ".sh", ".ps1",
@@ -330,6 +330,7 @@ def appeler_claude(prompt: str, cwd: Path, outils: list[str] | None = None,
     """
     if not _forfait.get():
         raise SansForfait("ce compte n'utilise pas le forfait Claude de l'admin (modèles locaux seulement)")
+    prompt = profil.adapter(prompt, tache)   # son parcours et, pour une création, son profil (profil.py)
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", modeles.identifiant(modele),
            "--settings", REGLAGES_CLAUDE, "--disallowedTools", ",".join(OUTILS_INTERDITS)]
     if modele == "opus" and not modeles.obligatoire(tache):

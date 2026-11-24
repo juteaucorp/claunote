@@ -17,7 +17,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from claunote import lecture, revision
+from claunote import lecture, profil, revision
 from claunote.agent import ErreurAgent, demander
 
 MODES = {"ia": "IA", "local": "Rapide, sans IA"}
@@ -169,8 +169,8 @@ def repondre_local(question: str, historique: list[dict], passages: list[dict], 
     """Le modèle local répond : {"reponse", "confiance", "aide", "demande", "reperes"} ; ErreurAgent s'il échoue."""
     from claunote import local
     texte, reperes = entree(question, historique, passages, agenda, TEXTE_LOCAL)
-    brut = local.ollama(PROMPT_LOCAL.format(portee=f"\nSujet choisi par l'élève : {portee}." if portee else ""),
-                        texte, json_seul=True, timeout=600)
+    systeme = PROMPT_LOCAL.format(portee=f"\nSujet choisi par l'élève : {portee}." if portee else "")
+    brut = local.ollama(profil.adapter(systeme, "question"), texte, json_seul=True, timeout=600)
     try:
         d = json.loads(brut)
     except ValueError as e:
