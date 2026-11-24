@@ -673,7 +673,7 @@ question du chat ────────► service lecture : FlashRank ─► 
 ```
 
 **À retenir** : un appareil inconnu ne voit **que la page du code**, même avec le bon mot de passe.
-Chaque appareil a son propre accès, que tu **retires en un clic** (*Réglages → Compte → Appareils par Internet*).
+Chaque appareil a son propre accès, que tu **retires en un clic** (*Réglages → Compte → Mes appareils par Internet* ; ceux des autres comptes : *Réglages → Comptes*).
 
 ### Pourquoi un code d'appareil plutôt qu'une option Cloudflare
 
@@ -722,7 +722,7 @@ Les noms de menus bougent parfois ; le principe reste le même.
 
 1. **Premier code**, au choix :
    - par le VPN : `http://<BIND_ADDR>:8000/compte` → **Ajouter un appareil** ;
-   - sur la VM : `docker compose exec web python -m claunote.appareils`.
+   - sur la VM : `docker compose exec web python -m claunote.appareils` (ou `… claunote.appareils camille` pour un autre compte).
 
    Le code (ex. `K7QM-3XPA`) vaut **15 minutes, une seule fois**.
 2. **iPhone** : Safari → `https://claunote.ton-domaine.fr` → tape le code → connexion →

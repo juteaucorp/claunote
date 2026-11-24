@@ -14,8 +14,9 @@
     <p><label>Nom de cet appareil<br><input name="nom" maxlength="60" value="{{ nom or '' }}" required></label></p>
     {{ captcha("appareil") }}
     <button class="principal">Approuver cet appareil</button>
-    <p class="doux">Le code se crée dans <em>Réglages → Compte → Appareils par Internet</em>, depuis un appareil
-      déjà approuvé ou par ton VPN. Il vaut 15 minutes, une seule fois.</p>
+    <p class="doux">Le code se crée dans <em>Réglages → Compte → Mes appareils par Internet</em>, depuis un appareil
+      déjà approuvé (ou demande-le à l'admin). Il vaut 15 minutes, une seule fois.
+      <strong>Nouveau compte ?</strong> Ouvre directement le lien d'invitation de l'admin : il approuve cet appareil.</p>
   </form>
 </div>
 <script>

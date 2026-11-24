@@ -16,7 +16,8 @@ def _jeton(page: str) -> str:
 
 
 def _inviter(client, droits=None, role="invite"):
-    data = {"role": role, "note": "Camille", "droits": droits if droits is not None else comptes.DROITS_INVITE}
+    data = {"role": role, "note": "Camille", "droits": droits if droits is not None else comptes.DROITS_INVITE,
+            "appareil": "iPhone de Camille"}
     r = client.post("/comptes/inviter", data=data)
     assert r.status_code == 200 and "Affiché <strong>une seule fois</strong>" in r.text
     return _jeton(r.text)
@@ -35,7 +36,8 @@ def test_droit_requis():
     assert comptes.droit_requis("/doc/3") == "bibliotheque"
     assert comptes.droit_requis("/doc/3/supprimer", "POST") == "organiser"
     assert comptes.droit_requis("/organiser/matieres") == "organiser"
-    assert comptes.droit_requis("/appareils/code", "POST") == "admin" and comptes.droit_requis("/appareil") is None
+    # ses propres appareils par Internet : tout compte connecté (la page vérifie à qui est l'appareil)
+    assert comptes.droit_requis("/appareils/code", "POST") is None and comptes.droit_requis("/appareil") is None
     assert comptes.droit_requis("/compte") is None and comptes.droit_requis("/notifications") is None
     assert comptes.besoin_claude("/organiser/matieres/ia", "POST")
     # fiches, quiz, campagnes, modifications : sans forfait, elles attendent l'accord de l'admin (pas de refus)

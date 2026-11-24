@@ -142,13 +142,36 @@ async def exiger_connexion(request: Request, call_next):
     return RedirectResponse(f"/connexion?{urlencode({'suite': suite})}", status_code=303)
 
 
+def _appareil_valable(request: Request) -> dict | None:
+    """Appareil approuvé, et son compte encore utilisable (désactivé, expiré, supprimé : l'appareil ne passe plus)."""
+    a = appareils.reconnu(request.cookies.get(appareils.COOKIE))
+    return a if a and comptes.utilisable(comptes.trouver(a["compte_id"])) else None
+
+
+# Sans appareil approuvé, par Internet : créer son compte avec le lien de l'admin (le lien approuve l'appareil),
+# et lire les conditions qu'il faut accepter pour ça. Le lien de nouveau mot de passe, lui, demande un appareil.
+SANS_APPAREIL = frozenset({"/conditions", "/tes-donnees"})
+
+
+def _passe_sans_appareil(request: Request) -> bool:
+    chemin = request.url.path
+    if chemin in SANS_APPAREIL:
+        return request.method == "GET"
+    if chemin != "/invitation":
+        return False
+    if request.method == "POST":
+        return True   # jeton, captcha et blocage par adresse vérifiés par la page elle-même
+    inv = comptes.invitation(request.query_params.get("jeton", ""))
+    return bool(inv) and inv["genre"] == "compte"
+
+
 # Déclaré après exiger_connexion, donc exécuté avant : par Internet, l'appareil passe avant le mot de passe
 @app.middleware("http")
 async def appareil_approuve(request: Request, call_next):
     """Par Cloudflare Tunnel, seuls les appareils approuvés atteignent le site (voir appareils.py)."""
     chemin = request.url.path
     if (not appareils.par_tunnel(request.headers) or not appareils.actif() or chemin == "/appareil"
-            or chemin.startswith("/static/") or appareils.reconnu(request.cookies.get(appareils.COOKIE))):
+            or chemin.startswith("/static/") or _appareil_valable(request) or _passe_sans_appareil(request)):
         return await call_next(request)
     securite.appareil_inconnu(request)
     if securite.bannie(appareils.ip_client(request)):
@@ -576,7 +599,8 @@ def _contexte_compte(request: Request, **plus) -> dict:
     host = request.headers.get("host", "")
     return {"utilisateur": (moi() or {}).get("identifiant", ""), "cles": db.cles_acces(),
             "cles_impossible": cles.possible(host, _https(request)), "nom_sslip": cles.nom_sslip(host),
-            "hote": cles.hote(host), "appareils": appareils.liste(), "code_expire": appareils.code_en_cours(),
+            "hote": cles.hote(host), "appareils": appareils.du_compte(moi()["id"]),
+            "code_expire": appareils.code_en_cours(moi()["id"]),
             "par_tunnel": appareils.par_tunnel(request.headers), "droits_noms": {d: v[0] for d, v in comptes.DROITS.items()},
             "appareil_ici": appareils.reconnu(request.cookies.get(appareils.COOKIE)), **plus}
 
@@ -608,27 +632,42 @@ def approuver_appareil(request: Request, code: str = Form(...), nom: str = Form(
                   else "Code inconnu ou expiré : crée-en un nouveau (Réglages → Compte).")
         return templates.TemplateResponse(request, "appareil.html", {"suite": _suite_sure(suite), "sans_nav": True,
                                                                      "erreur": erreur, "nom": nom}, status_code=403)
-    nom_appareil = (nom or "Appareil").strip()[:60] or "Appareil"
-    securite.noter("appareil_ajoute", request, f"« {nom_appareil} »", alerte=(
-        f"« {nom_appareil} » peut maintenant ouvrir le site par Internet. Si ce n'est pas toi : "
-        "Réglages → Compte → Retirer, puis Sécurité → Déconnecter partout."))
+    _noter_appareil_ajoute(request, appareils.reconnu(valeur))
     r = RedirectResponse(_suite_sure(suite), status_code=303)
     r.set_cookie(appareils.COOKIE, valeur, max_age=appareils.DUREE, httponly=True, samesite="lax", secure=True)
     return r
 
 
+def _noter_appareil_ajoute(request: Request, a: dict | None, comment: str = "code d'appareil"):
+    """Nouvel appareil par Internet : journal et alerte aux admins, avec le compte auquel il est relié."""
+    if not a:
+        return
+    k = comptes.trouver(a["compte_id"]) or {}
+    qui = f"@{k.get('identifiant', '?')}"
+    securite.noter("appareil_ajoute", request, f"« {a['nom']} » relié à {qui} ({comment})", alerte=(
+        f"« {a['nom']} » ({qui}) peut maintenant ouvrir le site par Internet. Si ce n'est pas prévu : "
+        "Réglages → Comptes → Appareils → Retirer."))
+
+
 @app.post("/appareils/code", response_class=HTMLResponse)
 def creer_code_appareil(request: Request):
-    securite.noter("code_cree", request, "code valable 15 min")
+    """Chacun ajoute lui-même un appareil à SON compte (déjà connecté, depuis un appareil approuvé ou le VPN)."""
+    securite.noter("code_cree", request, f"code valable 15 min pour @{moi()['identifiant']}")
     return templates.TemplateResponse(request, "compte.html",
-                                      _contexte_compte(request, code_appareil=appareils.nouveau_code()))
+                                      _contexte_compte(request, code_appareil=appareils.nouveau_code(moi()["id"])))
 
 
 @app.post("/appareils/{ident}/retirer")
-def retirer_appareil(request: Request, ident: str):
-    nom = next((a["nom"] for a in appareils.liste() if a["id"] == ident), ident)
+def retirer_appareil(request: Request, ident: str, suite: str = Form("")):
+    """Son propre appareil ; l'admin, ceux de tout le monde (page Comptes)."""
+    a = next((a for a in appareils.liste() if a["id"] == ident), None)
+    if not a or (a["compte_id"] != moi()["id"] and not comptes.est_admin(moi())):
+        raise HTTPException(404, "appareil inconnu")
     appareils.retirer(ident)
-    securite.noter("appareil_retire", request, f"« {nom} »")
+    k = comptes.trouver(a["compte_id"]) or {}
+    securite.noter("appareil_retire", request, f"« {a['nom']} » de @{k.get('identifiant', '?')}")
+    if suite == "comptes" and comptes.est_admin(moi()):
+        return _retour_comptes(f"« {a['nom']} » ne peut plus ouvrir le site par Internet.")
     return RedirectResponse("/compte#appareils", status_code=303)
 
 
@@ -1053,7 +1092,8 @@ def _page_comptes(request: Request, statut: int = 200, **plus):
         "droits_invite": comptes.DROITS_INVITE, "forfaits": comptes.FORFAIT, "forfait_invite": comptes.FORFAIT_INVITE,
         "niveau_forfait": comptes.niveau_forfait, "roles": comptes.ROLES, "duree_min": comptes.DUREE_JETON // 60,
         "maintenant": dt.datetime.now(dt.timezone.utc), "disque": disque.etat(),
-        "appareils": db.nb_appareils_par_compte(), **plus}, status_code=statut)
+        "appareils": db.nb_appareils_par_compte(), "appareils_internet": appareils.par_compte(),
+        "tunnel": appareils.actif(), **plus}, status_code=statut)
 
 
 def _lien_jeton(request: Request, jeton: str) -> str:
@@ -1067,12 +1107,17 @@ def page_comptes(request: Request, message: str = ""):
 
 @app.post("/comptes/inviter", response_class=HTMLResponse)
 def inviter(request: Request, role: str = Form("invite"), droits: list[str] = Form([]), note: str = Form(""),
-            forfait: str = Form(comptes.FORFAIT_INVITE)):
-    jeton, fin = comptes.inviter(moi()["id"], role, comptes.avec_forfait(droits, forfait), note)
+            forfait: str = Form(comptes.FORFAIT_INVITE), appareil: str = Form("")):
+    appareil = " ".join(appareil.split())[:60]
+    if not appareil:
+        return _page_comptes(request, 400, erreur="Donne le nom de l'appareil de la personne (ex. « iPhone de Camille ») : "
+                                                  "le lien d'invitation l'autorise à ouvrir le site par Internet.")
+    jeton, fin = comptes.inviter(moi()["id"], role, comptes.avec_forfait(droits, forfait), note, appareil)
     securite.noter("invitation", request, f"jeton créé ({comptes.ROLES.get(role, role)}, valable "
-                   f"{comptes.DUREE_JETON // 60} min){' : ' + note.strip()[:60] if note.strip() else ''}")
+                   f"{comptes.DUREE_JETON // 60} min, appareil « {appareil} »)"
+                   f"{' : ' + note.strip()[:60] if note.strip() else ''}")
     return _page_comptes(request, jeton={"valeur": jeton, "lien": _lien_jeton(request, jeton), "fin": fin,
-                                         "genre": "compte"})
+                                         "genre": "compte", "appareil": appareil})
 
 
 TEXTE_TEST = "Notification de test envoyée par l'admin 🔔"
@@ -1153,6 +1198,15 @@ def deconnecter_compte(request: Request, compte_id: int):
     return _retour_comptes(f"« {cible['identifiant']} » est déconnecté de tous ses appareils.")
 
 
+@app.post("/comptes/{compte_id}/appareil-code", response_class=HTMLResponse)
+def code_appareil_pour(request: Request, compte_id: int):
+    """L'admin crée un code d'appareil pour quelqu'un (nouveau téléphone, appli iPhone installée après coup)."""
+    cible = _cible(compte_id)
+    code = appareils.nouveau_code(compte_id)
+    securite.noter("code_cree", request, f"code valable 15 min pour @{cible['identifiant']} (par l'admin)")
+    return _page_comptes(request, code_appareil={"valeur": code, "pour": cible["identifiant"], "compte_id": compte_id})
+
+
 @app.post("/comptes/{compte_id}/mot-de-passe", response_class=HTMLResponse)
 def lien_mot_de_passe(request: Request, compte_id: int):
     cible = _cible(compte_id)
@@ -1173,6 +1227,7 @@ def supprimer_compte(request: Request, compte_id: int, confirmation: str = Form(
         return _page_comptes(request, 400, erreur="Il faut toujours au moins un admin actif.")
     db.supprimer_compte(compte_id)
     comptes.oublier(compte_id)
+    appareils.retirer_du_compte(compte_id)
     securite.noter("compte_supprime", request, f"« {cible['identifiant']} » et ses données", alerte=(
         f"Le compte « {cible['identifiant']} » et toutes ses données ont été supprimés."))
     return _retour_comptes(f"Compte « {cible['identifiant']} » supprimé, avec ses données sur le site.")
@@ -1202,7 +1257,9 @@ def _page_invitation(request: Request, jeton: str = "", statut: int = 200, **plu
     cible = db.compte(inv["compte_id"]) if inv and inv.get("compte_id") else None
     return templates.TemplateResponse(request, "invitation.html", {
         "jeton": comptes.normaliser_jeton(jeton) if inv else "", "inv": inv, "cible": cible, "sans_nav": True,
-        "mdp_min": comptes.MDP_MIN, "version": comptes.CONDITIONS_VERSION, **plus}, status_code=statut)
+        "mdp_min": comptes.MDP_MIN, "version": comptes.CONDITIONS_VERSION,
+        "par_internet": appareils.par_tunnel(request.headers) and appareils.actif() and not _appareil_valable(request),
+        **plus}, status_code=statut)
 
 
 @app.get("/invitation", response_class=HTMLResponse)
@@ -1231,6 +1288,11 @@ def utiliser_invitation(request: Request, jeton: str = Form(...), identifiant: s
         securite.echec("invitation_echec", request, "jeton inconnu ou expiré")
         return _page_invitation(request, "", 403, erreur="Jeton inconnu, déjà utilisé ou expiré : demande-en un "
                                                          "nouveau à l'admin.")
+    sans_appareil = (appareils.par_tunnel(request.headers) and appareils.actif()
+                     and not _appareil_valable(request))
+    if inv["genre"] == "mot_de_passe" and sans_appareil:
+        return _page_invitation(request, "", 403, erreur="Par Internet, ce lien s'ouvre depuis un appareil déjà approuvé. "
+                                                         "Nouvel appareil : demande un code d'appareil à l'admin.")
     if inv["genre"] == "mot_de_passe":
         cible = db.compte(inv["compte_id"])
         erreur = comptes.verifier_mot_de_passe(mot_de_passe, confirmation, (cible or {}).get("identifiant", ""))
@@ -1257,6 +1319,10 @@ def utiliser_invitation(request: Request, jeton: str = Form(...), identifiant: s
                    "une invitation. Si ce n'est pas prévu : Réglages → Comptes → Supprimer.")
     r = RedirectResponse("/", status_code=303)
     _cookie_session(request, r, db.compte(compte_id))
+    if sans_appareil:   # par Internet : le lien approuve aussi cet appareil, relié au nouveau compte
+        valeur = appareils.approuver_par_invitation(inv.get("appareil") or f"Appareil de {identifiant}", compte_id)
+        _noter_appareil_ajoute(request, appareils.reconnu(valeur), "lien d'invitation")
+        r.set_cookie(appareils.COOKIE, valeur, max_age=appareils.DUREE, httponly=True, samesite="lax", secure=True)
     return r
 
 
