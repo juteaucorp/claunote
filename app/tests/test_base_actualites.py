@@ -146,6 +146,7 @@ def test_nouveau_compte_recoit_la_selection_de_depart(base):
     with db.pour_compte(invite):
         assert len(db.flux_liste()) == len(actualites.FLUX_DEFAUT)
         assert [s["nom"] for s in db.sujets()] == sorted(n for n, _, _ in actualites.SUJETS_DEFAUT)
+        actualites.marquer_personnalise()   # comme la page Sources quand il retire un sujet
         db.sujet_supprimer(db.sujets()[0]["id"])
     actualites.tour(lambda: False)   # ses changements restent : la sélection n'est donnée qu'une fois
     with db.pour_compte(invite):
@@ -276,3 +277,50 @@ def test_essentiel_pour_les_comptes_avec_le_droit(base, monkeypatch):
 
     actualites.tour(lambda: True)    # rien de nouveau : ni Claude, ni nouvelle copie
     assert len(points) == 2
+
+
+# --- Fil de l'admin par défaut en permanence : les comptes qui le suivent reprennent tout de lui -------------
+
+def test_comptes_sur_le_fil_admin_reprennent_ses_articles_et_ses_alertes(base, monkeypatch):
+    suit = db.creer_compte("camille", "h", "invite", ["actualites", "claude", "essentiel"])
+    perso = db.creer_compte("dominique", "h", "invite", ["actualites", "claude"])
+    _fil(1)
+    with db.pour_compte(suit):
+        db.enregistrer_abonnement("https://push.example/suit", "p", "a", "tel-suit")
+    _fil(perso, sujet="Réseaux", mots=("faille",), url="https://autre.fr/feed")
+    with db.pour_compte(perso):
+        actualites.marquer_personnalise()
+    db.etat_ecrire("actualites_releve", str(9e12))
+    appels = []
+
+    def demander(tache, prompt, cwd, entree=None, timeout=0, lire=None, **k):
+        if tache != "actualites":
+            raise agent.ErreurAgent("pas de point ici")
+        appels.append(db.compte_actuel())
+        ids = [json.loads(l)["id"] for l in entree.splitlines()]
+        return lire(json.dumps([{"id": i, "sujets": ["S1"], "score": 0.95, "resume": "Patcher FortiOS",
+                                 "alerte": True, "evenement": "fortios"} for i in ids])), "haiku"
+    monkeypatch.setattr(agent, "demander", demander)
+    actualites.tour(lambda: True)   # le fil de l'admin devient le fil par défaut (en permanence, réglage de départ)
+    actualites.tour(lambda: True)   # le compte qui suit le reçoit, puis reprend ses articles
+    assert actualites.profil_defaut()["depart"] is False
+    with db.pour_compte(suit):
+        assert actualites.suit_l_admin()
+        a = db.articles("tout")[0][0]
+        assert a["titre"] == FAILLE and a["tri"] == "ia" and a["alerte"] and a["pourquoi"] == "Patcher FortiOS"
+        assert a["sujets"] == [s["id"] for s in db.sujets() if s["nom"] == "Cybersécurité"]
+    with db.pour_compte(perso):
+        assert not actualites.suit_l_admin()
+    assert suit not in appels and appels.count(1) == 1 and perso in appels   # rien n'est refait pour celui qui suit
+    cles = {n["compte_id"]: n["cle"] for n in _notifs()}
+    assert cles[None] == "actu-alerte:cve-2026-11111" and cles[suit] == f"actu-alerte:cve-2026-11111@{suit}"
+
+    # L'admin change son fil : le fil par défaut suit, et le compte aussi
+    with db.pour_compte(1):
+        db.sujet_ajouter("Cloud", "Azure, AWS", ["Azure"])
+    actualites.tour(lambda: True)
+    actualites.tour(lambda: True)
+    with db.pour_compte(suit):
+        assert "Cloud" in [s["nom"] for s in db.sujets()] and actualites.suit_l_admin()
+    with db.pour_compte(perso):
+        assert "Cloud" not in [s["nom"] for s in db.sujets()]
