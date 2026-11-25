@@ -99,6 +99,8 @@ def test_alerte_sonne_chez_chaque_compte_selon_son_fil(base, monkeypatch):
                                  "alerte": True, "evenement": "fortios"} for i in ids])), "haiku"
     monkeypatch.setattr(agent, "demander", demander)
     monkeypatch.setattr(notifications, "en_silence", lambda m, p: False)
+    # Pas de notification du jour (« L'essentiel ») : sinon le test dépend de l'heure où la CI tourne
+    monkeypatch.setattr(actualites, "heure_quotidienne", lambda: (None, "test"))
     actualites.tour(lambda: True)
 
     # l'IA pour l'admin ; le compte en autonomie suit le même fil : le même verdict est repris, sans rappeler Claude
@@ -301,6 +303,7 @@ def test_comptes_sur_le_fil_admin_reprennent_ses_articles_et_ses_alertes(base, m
         return lire(json.dumps([{"id": i, "sujets": ["S1"], "score": 0.95, "resume": "Patcher FortiOS",
                                  "alerte": True, "evenement": "fortios"} for i in ids])), "haiku"
     monkeypatch.setattr(agent, "demander", demander)
+    monkeypatch.setattr(actualites, "heure_quotidienne", lambda: (None, "test"))   # indépendant de l'heure de la CI
     actualites.tour(lambda: True)   # le fil de l'admin devient le fil par défaut (en permanence, réglage de départ)
     actualites.tour(lambda: True)   # le compte qui suit le reçoit, puis reprend ses articles
     assert actualites.profil_defaut()["depart"] is False
