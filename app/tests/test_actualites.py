@@ -82,17 +82,19 @@ def test_tri_par_l_ia(monkeypatch):
     def demander(tache, prompt, cwd, entree=None, timeout=0, lire=None, **k):
         vus.update(tache=tache, prompt=prompt, ids=[json.loads(l)["id"] for l in entree.splitlines()])
         return lire('Voilà : [{"id": 1, "sujets": ["S1", "S9"], "score": 0.9, "resume": "Faille exploitée : patcher",'
+                    ' "titre": " « Exchange : faille exploitée, patch disponible »",'
                     ' "alerte": true, "evenement": "Exchange CVE-2026-1"},'
-                    ' {"id": 2, "sujets": [], "score": 0.05, "alerte": true}, {"id": 99, "sujets": ["S1"], "score": 1}]'), "haiku"
+                    ' {"id": 2, "sujets": [], "score": 0.05, "alerte": true, "titre": "Promo"}, {"id": 99, "sujets": ["S1"], "score": 1}]'), "haiku"
     monkeypatch.setattr(agent, "demander", demander)
     assert ac.trier(lambda: True) == 2
     assert vus["tache"] == "actualites" and vus["ids"] == [1, 2] and "S1 — Cybersécurité : Failles" in vus["prompt"]
     # l'IA réutilise l'étiquette d'une information déjà vue (alertes d'abord, sans doublon)
     assert "fuite-france-travail, proxmox-9-1" in vus["prompt"]
     assert b.tries == [{"id": 1, "tri": "ia", "sujets": [7], "score": 0.9, "pourquoi": "Faille exploitée : patcher",
+                        "titre_ia": "Exchange : faille exploitée, patch disponible",
                         "alerte": True, "evenement": "exchange-cve-2026-1", "notion": None},
                        {"id": 2, "tri": "ia", "sujets": [], "score": 0.05, "pourquoi": None,   # hors sujet : jamais d'alerte
-                        "alerte": False, "evenement": None, "notion": None}]
+                        "titre_ia": None, "alerte": False, "evenement": None, "notion": None}]
 
 
 def test_tri_etiquette_et_notion_meme_sans_alerte(monkeypatch):
@@ -115,7 +117,7 @@ def test_tri_sans_claude_attend_puis_mots_cles(monkeypatch):
     ac.trier(lambda: False)
     # le récent attend le retour de Claude ; celui qui attend depuis 4 h passe aux mots-clés
     assert b.tries == [{"id": 2, "tri": "mots_cles", "sujets": [7, 9], "score": None, "pourquoi": None,
-                        "alerte": False, "evenement": None, "notion": None}]
+                        "alerte": False, "evenement": None, "notion": None, "titre_ia": None}]
 
 
 def test_tri_reponse_illisible_repli_mots_cles(monkeypatch):
@@ -366,8 +368,10 @@ def test_point_du_jour(monkeypatch):
     assert ac.faire_point(lambda: True, 10_000)
     assert p.appels == [("actualites_point", [1, 3])]
     point = ac.point()
-    assert point["points"] == [{"texte": "Fuite chez X : 2 M de comptes.", "ids": [1, 3]}]   # ids inventés retirés
-    assert "a_retenir" not in point and point["ids"] == [1, 3] and point["modele"] == "opus"
+    assert point["points"] == [{"texte": "Fuite chez X : 2 M de comptes.", "ids": [1, 3], "titre": "", "action": "",
+                                "suite": False}]   # ids inventés retirés
+    assert point["a_retenir"] is None and point["en_bref"] == ""           # ancienne forme : ignorée
+    assert point["ids"] == [1, 3] and point["modele"] == "opus"
     assert not ac.faire_point(lambda: True, 10_060)      # rien de neuf : pas de nouvel appel
     c.append(carte(5))
     assert not ac.faire_point(lambda: True, 10_060)      # du neuf, mais le dernier point date d'une minute
@@ -453,7 +457,7 @@ def test_page_actualites_essentiel_regroupement_et_cours(client, monkeypatch):
     assert r.status_code == 200
     assert "L'essentiel" in r.text and "Fuite chez X." in r.text
     assert "Pour ton BTS" not in r.text and "Révise le RGPD." not in r.text   # outil pour toutes les formations
-    assert r.text.index("Fuite chez X.") < r.text.index("Tout marquer comme lu") < r.text.index('id="a1"')
+    assert r.text.index("Fuite chez X.") < r.text.index("Tout lu") < r.text.index('id="a1"')
     assert "Aussi chez" in r.text and ">Numerama</a>" in r.text and r.text.count('id="a2"') == 0   # regroupé
     assert 'href="/doc/55"' in r.text and "VLAN · ton cours" in r.text     # lié à ton cours
     assert 'src="/actualites/1/image"' in r.text
@@ -801,3 +805,114 @@ def test_selection_de_depart_rangee_par_categories():
     assert len({f["url"] for f in p["flux"]}) == len(p["flux"]) and all(f["categorie"] for f in p["flux"])
     assert ac.categorie_connue("https://www.it-connect.fr/feed") == "IT"
     assert ac.categorie_connue("https://inconnu.ex/feed") == ""
+
+
+def test_essentiel_renforce(monkeypatch):
+    c = [carte(1, alerte=True, sources=3), carte(3)]
+    p = Point(monkeypatch, c, {"actualites_point": json.dumps(
+        {"le": 9_000, "ids": [1], "points": [{"titre": "Fuite X", "texte": "Hier", "ids": [1]}]})})
+    vus = {}
+
+    def demander(tache, prompt, cwd, entree=None, timeout=0, lire=None, **k):
+        vus.update(prompt=prompt, entree=[json.loads(l) for l in entree.splitlines()])
+        return lire('{"en_bref": "Fuite massive chez X : change ton mot de passe.", "points": [{"titre": "Fuite X",'
+                    ' "texte": "2 M de comptes.", "action": "Changer son mot de passe", "suite": true, "ids": [1, 3]}],'
+                    ' "a_retenir": {"notion": "RGPD", "texte": "Une fuite se déclare à la CNIL sous 72 h."}}'), "opus"
+    monkeypatch.setattr(agent, "demander", demander)
+    assert ac.faire_point(lambda: True, 9_000 + ac.POINT_TOUTES)
+    assert "L'essentiel précédent disait : Fuite X." in vus["prompt"] and vus["entree"][0]["sources"] == 3
+    point = ac.point()
+    assert point["en_bref"] == "Fuite massive chez X : change ton mot de passe."
+    assert point["points"] == [{"titre": "Fuite X", "texte": "2 M de comptes.", "action": "Changer son mot de passe",
+                                "suite": True, "ids": [1, 3]}]
+    assert point["a_retenir"] == {"notion": "RGPD", "texte": "Une fuite se déclare à la CNIL sous 72 h."}
+    assert p.appels == []   # demander remplacé
+
+
+def test_notification_du_jour_en_une_phrase(monkeypatch):
+    etat = {"actualites_point": json.dumps({"le": dt.datetime(2026, 11, 25, 6, tzinfo=dt.timezone.utc).timestamp(),
+                                            "en_bref": "Une phrase.", "points": [{"texte": "A", "ids": [1]}]})}
+    monkeypatch.setattr(db, "etat_valeur", etat.get)
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
+    monkeypatch.setattr(ac.notifications, "preferences", lambda: {})
+    envoyees = []
+    monkeypatch.setattr(ac, "notifier", lambda base, titre, corps, url: envoyees.append(corps) or True)
+    assert ac.quotidien(dt.datetime(2026, 11, 25, 8, tzinfo=notifications.PARIS))
+    assert envoyees == ["Une phrase."]
+
+
+def test_visite_precedente(monkeypatch):
+    etat = {}
+    monkeypatch.setattr(db, "etat_valeur", etat.get)
+    monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
+    assert ac.visite(maintenant=1_000) is None                         # première visite
+    assert ac.visite(maintenant=1_600) is None                         # 10 min après : même visite
+    assert ac.visite(maintenant=1_600 + ac.VISITE_PAUSE + 1).timestamp() == 1_600   # nouvelle visite
+    assert ac.visite(noter=False, maintenant=99_999).timestamp() == 1_600           # rafraîchissement : rien ne bouge
+    assert ac.visite(maintenant=1_600 + ac.VISITE_PAUSE + 60).timestamp() == 1_600  # toujours la même visite
+
+
+def test_regrouper_compte_les_sources_et_le_nouveau():
+    depuis = MAINTENANT - dt.timedelta(minutes=5)
+    cartes = ac.regrouper([carte(1, evenement="x", cree_le=MAINTENANT - dt.timedelta(hours=2)),
+                           carte(2, evenement="x", cree_le=MAINTENANT), carte(3, evenement="x", source="Site1"),
+                           carte(4, cree_le=MAINTENANT - dt.timedelta(hours=1))], depuis)
+    assert [(c["id"], c["sources"], c["ids"], c["nouveau"]) for c in cartes] == [(1, 2, [1, 2, 3], True), (4, 1, [4], False)]
+
+
+def test_page_coup_d_oeil(client, monkeypatch):
+    import time
+    appels = {}
+    lignes = [{**carte(1, sujets=[7], score=0.9, pourquoi="2 M de comptes", evenement="fuite-x",
+                       titre_ia="Fuite chez X : 2 millions de comptes", cree_le=dt.datetime.now(dt.timezone.utc)),
+               "favori": False, "total": 2, "titre": "Vous ne devinerez jamais qui s'est fait pirater"},
+              {**carte(2, evenement="fuite-x", source="Numerama"), "favori": False, "total": 2}]
+
+    def articles(*x, **k):
+        appels.update(k)
+        return lignes, 2
+    monkeypatch.setattr(db, "articles", articles)
+    monkeypatch.setattr(db, "sujets", lambda: [])
+    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": MAINTENANT}])
+    monkeypatch.setattr(db, "recherche", lambda q, limite=30: [{"id": 55, "titre": "Cours RGPD", "nom": "rgpd.pdf"}]
+                        if q == "RGPD" else [])
+    monkeypatch.setattr(db, "articles_par_ids", lambda ids: [
+        {"id": 1, "titre": "Fuite", "lien": "https://ex.fr/1", "lu": False, "alerte": True, "source": "Ex",
+         "cree_le": dt.datetime.now(dt.timezone.utc)},
+        {"id": 2, "titre": "Fuite", "lien": "https://nu.fr/2", "lu": False, "alerte": False, "source": "Numerama",
+         "cree_le": MAINTENANT}])
+    monkeypatch.setattr(db, "tendances", lambda: [{"notion": "RGPD", "n": 4, "sources": 3, "avant": 0, "alerte": False}])
+    monkeypatch.setattr(db, "actualites_depuis", lambda depuis, limite=5: {
+        "nouveaux": 5, "alertes": 1, "histoires": 3, "non_lus": 5,
+        "a_la_une": [{"id": 1, "titre": "x", "titre_ia": "Fuite chez X", "lien": "https://ex.fr/1", "alerte": True,
+                      "lu": False, "source": "Ex", "sources": 2},
+                     {"id": 9, "titre": "y", "titre_ia": "Proxmox 9.1 est sorti", "lien": "https://ex.fr/9", "alerte": False,
+                      "lu": False, "source": "Ex", "sources": 1, "evenement": "proxmox"}]})
+    client.etat["actualites_visite"] = json.dumps({"derniere": time.time() - 3 * 86400, "precedente": None})
+    client.etat["actualites_point"] = json.dumps({
+        "le": time.time(), "ids": [1, 2], "en_bref": "Grosse fuite chez X.",
+        "points": [{"titre": "Fuite X", "texte": "2 M de comptes.", "action": "Changer son mot de passe", "ids": [1, 2]}],
+        "a_retenir": {"notion": "RGPD", "texte": "Déclarer à la CNIL sous 72 h."}})
+    r = client.get("/actualites")
+    assert r.status_code == 200 and appels["tri"] == "importance"
+    t = r.text
+    assert "Depuis ta visite" in t and "5 nouveautés</strong> en 3 histoires" in t and "1 alerte" in t
+    assert "Grosse fuite chez X." in t and "<strong>Fuite X</strong> : 2 M de comptes." in t
+    assert "<strong>À faire</strong> : Changer son mot de passe" in t and "2 sources" in t
+    assert "Pour tes cours · RGPD" in t and 'href="/doc/55"' in t
+    assert "Aussi pendant ton absence" in t and "Proxmox 9.1 est sorti" in t   # parti 3 jours
+    assert 'data-lu="1" title="x"' not in t                                 # déjà dans L'essentiel : pas répété
+    assert "Ça monte" in t and "q=RGPD&amp;periode=24h" in t
+    assert "Fuite chez X : 2 millions de comptes" in t and "Titre d'origine : Vous ne devinerez jamais" in t
+    assert 'data-histoire="1"' in t and "Le plus important" in t and 'data-affichage="titres"' in t
+    assert t.index("Grosse fuite chez X.") < t.index("Aussi pendant ton absence") < t.index("Ça monte") < t.index('id="a1"')
+    # « Le plus récent » choisi : gardé dans les pages suivantes
+    client.get("/actualites?vue=pour_toi&tri=recents")
+    assert appels["tri"] == "recents"
+    client.get("/actualites?vue=tout")
+    assert appels["tri"] == "recents"
+
+
+def test_histoire_lue(client, monkeypatch):
+    monkeypatch.setattr(db, "histoire_lue", lambda i: [i, 8])
+    assert client.post("/actualites/3/histoire-lue").json() == {"ok": True, "ids": [3, 8]}

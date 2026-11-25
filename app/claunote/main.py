@@ -3589,6 +3589,20 @@ def _jour_actu(d: dt.datetime, aujourdhui: dt.date) -> str:
     return f"{jours[jour.weekday()]} {jour.day} {mois[jour.month - 1]}"
 
 
+def _quand_actu(d: dt.datetime) -> str:
+    """« à 18:40 », « hier à 18:40 », « lundi à 18:40 » ou « il y a 9 jours »."""
+    d = d.astimezone(pronote.PARIS)
+    ecart = (dt.datetime.now(pronote.PARIS).date() - d.date()).days
+    heure = d.strftime("%H:%M")
+    if ecart <= 0:
+        return f"de {heure}"
+    if ecart == 1:
+        return f"d'hier à {heure}"
+    if ecart < 7:
+        return f"de {['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'][d.weekday()]} à {heure}"
+    return f"d'il y a {ecart} jours"
+
+
 def _categories_actu(flux_l: list) -> list[dict]:
     """Les catégories (dossiers) des sources, avec leurs articles non lus, comme dans un lecteur RSS."""
     par: dict[str, dict] = {}
@@ -3635,29 +3649,44 @@ templates.env.filters["duree"] = _duree_txt
 @app.get("/actualites", response_class=HTMLResponse)
 def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None = None, flux: int | None = None,
                     page: int = 1, article: int | None = None, q: str = "", categorie: str | None = None,
-                    type: str = "", periode: str = "", non_lus: bool = False, tri: str = "recents"):
+                    type: str = "", periode: str = "", non_lus: bool = False, tri: str = ""):
     vue = vue if vue in VUES_ACTU else "pour_toi"
     q = q.strip()[:200]
     categorie = (categorie or "").strip() or None
     type = type if type in TYPES_ACTU else ""
     periode = periode if periode in PERIODES_ACTU else ""
-    tri = "pertinence" if tri == "pertinence" and q else "recents"
     filtres = bool(q or categorie is not None or type or periode or non_lus)
     if sujet or flux or (filtres and vue != "favoris"):
         vue = "tout"   # une recherche ou un filtre porte sur tous les articles (ou sur les favoris)
+    if q:
+        tri = "pertinence" if tri == "pertinence" else "recents"
+    elif vue == "pour_toi" and not sujet:
+        tri = "recents" if tri == "recents" else "importance"   # « Pour toi » : le plus important d'abord, jour par jour
+    else:
+        tri = "recents"
     page = max(page, 1)
-    if not request.headers.get("x-rafraichir"):   # vraie visite (pas le rafraîchissement auto) : ton heure de lecture
+    vraie_visite = not request.headers.get("x-rafraichir")   # pas le rafraîchissement automatique de la page
+    if vraie_visite:   # ton heure de lecture
         try:
             actualites.noter_lecture()
         except Exception as e:
             print(f"actualités : heure de lecture non notée : {e}", flush=True)
+    precedente = actualites.visite(noter=vraie_visite and not db.en_lecture_seule())
     liste, total = db.articles(vue, sujet, flux, PAR_PAGE_ACTU, (page - 1) * PAR_PAGE_ACTU, q=q, categorie=categorie,
                                media=TYPES_ACTU[type][0] if type else None,
                                jours=PERIODES_ACTU[periode][0] if periode else None, non_lus=non_lus, tri=tri)
     if not q:   # une recherche montre chaque article trouvé (pas de regroupement « aussi chez »)
-        liste = actualites.regrouper(liste)
+        liste = actualites.regrouper(liste, precedente)
     else:
-        liste = [{**a, "aussi": [], "image_id": a["id"]} for a in liste]
+        liste = [{**a, "aussi": [], "image_id": a["id"], "ids": [a["id"]], "sources": 1,
+                  "nouveau": bool(precedente and a["cree_le"] > precedente)} for a in liste]
+    accueil = page == 1 and not sujet and not flux and not filtres and vue != "favoris"
+    # « Depuis ta visite » (Inoreader, Feedly) et ce qui monte (tendances), en haut de la première page
+    depuis = None
+    if accueil and vue == "pour_toi" and precedente:
+        depuis = {**db.actualites_depuis(precedente), "le": precedente,
+                  "le_txt": _quand_actu(precedente), "absent": time.time() - precedente.timestamp() > 20 * 3600}
+    tendances = db.tendances() if accueil else []
     cours = actualites.cours_lies([a.get("notion") for a in liste])
     aujourdhui = dt.datetime.now(pronote.PARIS).date()
     # « L'essentiel » : en haut de « Pour toi », première page seulement
@@ -3669,7 +3698,18 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
             essentiel = {**p, "le_txt": dt.datetime.fromtimestamp(float(p["le"]), pronote.PARIS).strftime("%H:%M"),
                          "points": [{**x, "articles": [sources[i] for i in x["ids"] if i in sources]}
                                     for x in p["points"]]}
-            essentiel["points"] = [x for x in essentiel["points"] if x["articles"]]
+            essentiel["points"] = [{**x, "lu": all(a["lu"] for a in x["articles"]),
+                                    "sources": len({a["source"] for a in x["articles"]}),
+                                    "nouveau": bool(precedente and any(a["cree_le"] > precedente for a in x["articles"]))}
+                                   for x in essentiel["points"] if x["articles"]]
+            essentiel["nouveau"] = bool(precedente and float(p["le"]) > precedente.timestamp())
+            r = p.get("a_retenir")
+            if isinstance(r, dict) and r.get("notion") and r.get("texte"):
+                essentiel["a_retenir"] = {**r, "cours": actualites.cours_lies([r["notion"]]).get(r["notion"])}
+    if depuis and essentiel:   # « Pendant ton absence » : seulement ce que « L'essentiel » ne dit pas déjà
+        vus = {a["id"] for x in essentiel["points"] for a in x["articles"]}
+        vus_ev = {a.get("evenement") for x in essentiel["points"] for a in x["articles"]} - {None}
+        depuis["a_la_une"] = [a for a in depuis["a_la_une"] if a["id"] not in vus and a.get("evenement") not in vus_ev]
     groupes: list[tuple[str, list]] = []
     for a in liste:
         jour = _jour_actu(a["publie_le"], aujourdhui)
@@ -3680,11 +3720,13 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
     flux_l = db.flux_liste()
 
     recherche = {"q": q, "categorie": categorie, "type": type, "periode": periode, "non_lus": "1" if non_lus else "",
-                 "tri": tri if tri != "recents" else ""}
+                 "tri": "pertinence" if tri == "pertinence" else ""}
+    # Dans le lien : la pertinence d'une recherche, ou « par heure » choisi à la place de l'importance de « Pour toi »
+    tri_lien = recherche["tri"] or ("recents" if tri == "recents" and vue == "pour_toi" and not sujet else "")
 
     def lien_page(n: int) -> str:
         return "/actualites?" + urlencode({k: v for k, v in {"vue": vue, "sujet": sujet, "flux": flux, **recherche,
-                                                              "page": n}.items() if v})
+                                                              "tri": tri_lien, "page": n}.items() if v})
     return templates.TemplateResponse(request, "actualites.html", {
         "recherche": recherche, "filtres": filtres, "types": TYPES_ACTU, "periodes": PERIODES_ACTU,
         "categories": _categories_actu(flux_l),
@@ -3694,7 +3736,8 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
         "sujet_nom": next((s["nom"] for s in sujets if s["id"] == sujet), None),
         "flux_nom": next((f["titre"] or f["url"] for f in flux_l if f["id"] == flux), None),
         "en_attente": sum(1 for f in flux_l if f["releve_le"] is None),
-        "reglages": actualites.reglages(), "essentiel": essentiel, "cours": cours})
+        "reglages": actualites.reglages(), "essentiel": essentiel, "cours": cours, "tri": tri,
+        "depuis": depuis, "tendances": tendances, "accueil": accueil})
 
 
 @app.get("/actualites/{article_id}/image")
@@ -3736,6 +3779,12 @@ def page_vigie(request: Request):
 
 
 VIGIE_URL = "https://vigie.dix-neuf.ovh"
+
+
+@app.post("/actualites/{article_id}/histoire-lue")
+def actualite_histoire_lue(article_id: int):
+    """« Lu » sur une carte : l'article et ses reprises chez les autres sites (la même histoire)."""
+    return {"ok": True, "ids": db.histoire_lue(article_id)}
 
 
 @app.post("/actualites/tout-lu")

@@ -407,3 +407,60 @@ def test_categories_suivies_par_le_fil_par_defaut(base):
     # Sélection de départ : sa version change avec ses sources (les comptes qui la suivent reçoivent les nouvelles)
     actualites.definir_defaut(depuis_mon_fil=False)
     assert actualites.profil_defaut()["version"].endswith(":" + actualites._empreinte_depart())
+
+
+# --- Coup d'œil : importance, depuis ta visite, tendances, histoire lue d'un coup ---------------------------
+
+def _actu(c, flux_id, cle, titre, heures, score=0.6, alerte=False, evenement=None, notion=None, cree_heures=None,
+          sujets="{1}"):
+    return c.execute(
+        "INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, cree_le, sujets, tri, annonce, alerte,"
+        " score, evenement, notion) VALUES (%s, %s, '', %s, '', now() - %s * interval '1 hour',"
+        " now() - %s * interval '1 hour', %s, 'ia', true, %s, %s, %s, %s) RETURNING id",
+        (flux_id, cle, titre, heures, heures if cree_heures is None else cree_heures, sujets, alerte, score,
+         evenement, notion)).fetchone()["id"]
+
+
+def test_coup_d_oeil_importance_depuis_tendances(base):
+    db.sujet_ajouter("Cybersécurité", "Failles", ["faille"], True)
+    f1, f2, f3 = (db.flux_ajouter(f"https://s{i}.fr/feed", f"S{i}", f"s{i}.fr") for i in (1, 2, 3))
+    with db.connect() as c:
+        petit = _actu(c, f1, "petit", "Petite info récente", 0.2, score=0.6)
+        repris = _actu(c, f1, "r1", "Fuite reprise partout", 1, score=0.6, evenement="fuite-x", notion="RGPD")
+        _actu(c, f2, "r2", "Fuite reprise (S2)", 1.5, score=0.6, evenement="fuite-x", notion="RGPD")
+        _actu(c, f3, "r3", "Fuite reprise (S3)", 2, score=0.6, evenement="fuite-x", notion="rgpd")
+        alerte = _actu(c, f2, "al", "Faille exploitée", 3, score=0.8, alerte=True, notion="VLAN")
+        hier = _actu(c, f1, "hier", "Grosse info d'avant-hier", 50, score=0.95, cree_heures=50)
+        _actu(c, f2, "vieux", "RGPD dans le passé", 80, score=0.6, notion="TLS", cree_heures=80)
+        _actu(c, f3, "tls", "TLS 1.4", 2, score=0.6, notion="TLS")
+        _actu(c, f1, "tls2", "TLS encore", 2, score=0.6, notion="TLS")
+    # « Le plus important » : jour par jour, l'alerte, puis l'histoire reprise par 3 sources, puis le reste
+    lignes = db.articles("pour_toi", tri="importance")[0]
+    ids = [a["id"] for a in lignes]
+    jour = {a["id"]: a["publie_le"].astimezone(notifications.PARIS).date() for a in lignes}
+    if jour[petit] == jour[alerte]:   # (juste après minuit, l'alerte de 3 h est la veille)
+        assert ids[:2] == [alerte, repris] and ids.index(petit) > ids.index(repris)
+    assert ids.index(hier) > ids.index(petit) and ids.index(hier) > ids.index(alerte)
+    assert [a["id"] for a in db.articles("pour_toi")[0]][0] == petit          # « Le plus récent » inchangé
+    # Depuis ta visite d'il y a 10 h : 8 nouveautés en 6 histoires, 1 alerte ; à la une : l'alerte puis la fuite
+    d = db.actualites_depuis(dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=10))
+    assert (d["nouveaux"], d["alertes"], d["histoires"]) == (7, 1, 5)   # alertes comptées en histoires
+    assert [a["id"] for a in d["a_la_une"][:2]] == [alerte, repris] and d["a_la_une"][1]["sources"] == 3
+    # Ça monte : au moins 2 sources en 24 h ; RGPD (3 sources, sans casse), TLS (2, mais on en parlait déjà)
+    t = {x["notion"].lower(): x for x in db.tendances()}
+    assert set(t) == {"rgpd", "tls"} and t["rgpd"]["sources"] == 3 and t["rgpd"]["avant"] == 0 and t["tls"]["avant"] == 1
+    # « Lu » sur une carte : toute l'histoire
+    assert sorted(db.histoire_lue(repris)) == sorted(a["id"] for a in db.articles("tout")[0] if a["evenement"] == "fuite-x")
+    assert db.histoire_lue(petit) == [petit]
+
+
+def test_titre_neutre_suit_le_miroir_et_les_verdicts(base):
+    invite = db.creer_compte("camille", "h", "invite", ["actualites"])
+    _fil(1)
+    _fil(invite)
+    with db.pour_compte(1):
+        art = db.articles("tout")[0][0]
+        db.articles_trier([{"id": art["id"], "tri": "ia", "sujets": [], "score": 0.9, "pourquoi": "Patch",
+                            "titre_ia": "FortiOS : faille critique exploitée"}])
+        assert db.articles("tout")[0][0]["titre_ia"] == "FortiOS : faille critique exploitée"
+    assert db.verdicts_ia(["ex.fr/fortios"], invite)["ex.fr/fortios"]["titre_ia"] == "FortiOS : faille critique exploitée"

@@ -79,25 +79,89 @@
 <p class="filtre">Flux : <strong>{{ flux_nom }}</strong> · <a href="/actualites?vue=tout">voir tous les flux</a></p>
 {% endif %}
 
+{% if depuis %}
+<p class="depuis" id="depuis">
+  {% if depuis.nouveaux %}{{ icone('nouveau', 16) }}<span>Depuis ta visite {{ depuis.le_txt }} :
+    <strong>{{ depuis.nouveaux }} nouveauté{{ 's' if depuis.nouveaux > 1 }}</strong>{% if depuis.histoires < depuis.nouveaux %} en {{ depuis.histoires }} histoire{{ 's' if depuis.histoires > 1 }}{% endif %}{% if depuis.alertes %} · <strong class="rouge">{{ depuis.alertes }} alerte{{ 's' if depuis.alertes > 1 }}</strong>{% endif %}</span>
+  {% else %}{{ icone('check', 16) }}<span>Rien de neuf depuis ta visite {{ depuis.le_txt }}.</span>{% endif %}
+</p>
+{% endif %}
+
 {% if essentiel %}
 <section class="carte essentiel" aria-labelledby="titre-essentiel">
   <div class="tete">
     <h2 id="titre-essentiel">{{ icone('actualites', 20) }}L'essentiel</h2>
-    <span class="doux">fait à {{ essentiel.le_txt }}</span>
+    <span class="doux">{% if essentiel.nouveau %}<span class="neuf">Mis à jour</span> {% endif %}fait à {{ essentiel.le_txt }} · 30 s de lecture</span>
   </div>
+  {% if essentiel.en_bref %}<p class="en-bref">{{ essentiel.en_bref }}</p>{% endif %}
   <ol>
     {% for p in essentiel.points %}
-    <li class="{{ 'alerte' if p.articles|selectattr('alerte')|list }}">
-      <p>{{ p.texte }}</p>
-      <div class="sources doux">{% for a in p.articles %}{% if a.lien %}<a href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}" title="{{ a.titre }}">{{ a.source }}</a>{% else %}<a href="#a{{ a.id }}">{{ a.source }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+    <li class="{{ 'alerte' if p.articles|selectattr('alerte')|list }} {{ 'lu' if p.lu }}">
+      <p>{% if p.titre %}<strong>{{ p.titre }}</strong> : {% endif %}{{ p.texte }}</p>
+      {% if p.action %}<p class="a-faire">{{ icone('check', 14) }}<span><strong>À faire</strong> : {{ p.action }}</span></p>{% endif %}
+      <div class="sources doux">
+        {% if p.nouveau %}<span class="neuf">Nouveau</span>{% elif p.suite %}<span class="suite">Suite</span>{% endif %}
+        {% if p.sources > 1 %}<span class="couverture" title="{{ p.sources }} sources en parlent">{{ p.sources }} sources</span>{% endif %}
+        {% for a in p.articles %}{% if a.lien %}<a href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}" title="{{ a.titre }}">{{ a.source }}</a>{% else %}<a href="#a{{ a.id }}">{{ a.source }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>
     </li>
     {% endfor %}
   </ol>
+  {% if essentiel.a_retenir %}{% set r = essentiel.a_retenir %}
+  <div class="a-retenir">
+    {{ icone('etudiant', 18) }}
+    <p><strong>Pour tes cours · {{ r.notion }}</strong> : {{ r.texte }}
+      {% if r.cours %}<a href="/doc/{{ r.cours.id }}">Revoir ton cours{{ icone('fleche', 14) }}</a>{% endif %}</p>
+  </div>
+  {% endif %}
 </section>
 {% endif %}
-{% if groupes and vue != 'favoris' and not filtres and not flux and not sujet %}
-<form method="post" action="/actualites/tout-lu" class="tout-lu"><input type="hidden" name="vue" value="{{ vue }}">
-  <button class="petit">{{ icone('check', 18) }}Tout marquer comme lu</button></form>
+
+{% if depuis and depuis.absent and depuis.a_la_une %}
+<section class="carte une" aria-labelledby="titre-une">
+  <h2 id="titre-une">{{ "Aussi pendant ton absence" if essentiel else "Pendant ton absence" }}</h2>
+  <ul>
+    {% for a in depuis.a_la_une %}
+    <li class="{{ 'alerte' if a.alerte }} {{ 'lu' if a.lu }}">
+      {% if a.lien %}<a href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}" title="{{ a.titre }}">{{ a.titre_ia or a.titre }}</a>{% else %}<a href="#a{{ a.id }}">{{ a.titre_ia or a.titre }}</a>{% endif %}
+      <span class="doux">{{ a.source }}{% if a.sources > 1 %} · {{ a.sources }} sources{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if tendances %}
+<nav class="tendances" aria-label="Ce qui monte">
+  <span class="tete doux">{{ icone('etat', 16) }}Ça monte</span>
+  {% for t in tendances %}
+  <a href="/actualites?{{ {'q': t.notion, 'periode': '24h'}|urlencode }}" class="{{ 'alerte' if t.alerte }}" title="{{ t.n }} articles, {{ t.sources }} sources en 24 h">{{ t.notion }}<span class="compte">{{ t.sources }}</span>{% if not t.avant %}<span class="neuf">nouveau</span>{% endif %}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+{% if groupes %}
+<div class="outils-actu">
+  {% if vue == 'pour_toi' and not sujet and not filtres and not flux %}
+  <div class="segments" role="group" aria-label="Ordre">
+    <a href="/actualites?vue=pour_toi" class="{{ 'actif' if tri == 'importance' }}">Le plus important</a>
+    <a href="/actualites?vue=pour_toi&amp;tri=recents" class="{{ 'actif' if tri == 'recents' }}">Le plus récent</a>
+  </div>
+  {% endif %}
+  <div class="segments affichage" role="group" aria-label="Affichage">
+    <button type="button" data-affichage="cartes" aria-pressed="true">Résumés</button>
+    <button type="button" data-affichage="titres" aria-pressed="false">Titres</button>
+  </div>
+  {% if vue != 'favoris' and not filtres and not flux and not sujet %}
+  <form method="post" action="/actualites/tout-lu" class="tout-lu"><input type="hidden" name="vue" value="{{ vue }}">
+    <button class="petit">{{ icone('check', 18) }}Tout lu</button></form>
+  {% endif %}
+  <button type="button" class="petit aide-clavier" aria-label="Raccourcis clavier" title="Raccourcis clavier (?)">?</button>
+</div>
+<div class="carte raccourcis" hidden>
+  <p><strong>Raccourcis clavier</strong></p>
+  <p class="doux"><kbd>j</kbd> / <kbd>k</kbd> suivant / précédent · <kbd>o</kbd> ouvrir · <kbd>m</kbd> marquer lu ·
+    <kbd>s</kbd> favori · <kbd>t</kbd> titres ou résumés · <kbd>/</kbd> chercher</p>
+</div>
 {% endif %}
 
 {% if not flux_liste %}
@@ -130,20 +194,23 @@
 
 {% for jour, liste in groupes %}
 <h2 class="jour">{{ jour }}</h2>
-<ul class="carte lignes actus">
+<ul class="carte lignes actus{{ ' favoris' if vue == 'favoris' }}">
   {% for a in liste %}
   <li id="a{{ a.id }}" class="{{ 'nonlu' if not a.lu }} {{ 'cible' if article == a.id }}">
     <div class="corps">
       <div class="meta doux">
         {% if not a.lu %}<span class="point" aria-label="non lu"></span>{% endif %}
         <span class="source">{{ a.source }}</span> · {{ a.publie_le.astimezone(paris).strftime('%H:%M') }}
+        {% if a.nouveau and not a.lu %}<span class="neuf">Nouveau</span>{% endif %}
+        {% if a.sources > 1 %}<span class="couverture" title="Même information chez {{ a.sources }} sources">{{ a.sources }} sources</span>{% endif %}
         {% if a.media == 'audio' %}<span class="genre">🎙 Podcast{% if a.duree %} · {{ a.duree|duree }}{% endif %}</span>
         {% elif a.media == 'video' %}<span class="genre">▶ Vidéo</span>{% endif %}
         {% if a.alerte %}<span class="important alerte-actu">Alerte</span>
         {% elif a.tri == 'ia' and a.score is not none and a.score >= 0.75 %}<span class="important">Important</span>{% endif %}
       </div>
-      {% if a.lien %}<a class="titre" href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}">{{ a.titre|marquer(recherche.q) }}</a>
-      {% else %}<span class="titre">{{ a.titre|marquer(recherche.q) }}</span>{% endif %}
+      {% set titre = a.titre_ia or a.titre %}
+      {% if a.lien %}<a class="titre" href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}"{% if a.titre_ia and a.titre_ia != a.titre %} title="Titre d'origine : {{ a.titre }}"{% endif %}>{{ titre|marquer(recherche.q) }}</a>
+      {% else %}<span class="titre">{{ titre|marquer(recherche.q) }}</span>{% endif %}
       {% if a.pourquoi %}<p class="pourquoi">{{ a.pourquoi|marquer(recherche.q) }}</p>
       {% elif a.extrait and a.extrait != a.titre %}<p class="extrait doux">{{ a.extrait|marquer(recherche.q) }}</p>{% endif %}
       {% if a.media == 'audio' and a.media_url %}<button type="button" class="petit ecouter" data-audio="{{ a.media_url }}" data-lu-id="{{ a.id }}">▶ Écouter</button>{% endif %}
@@ -154,7 +221,8 @@
         {% for n in a.noms_sujets %}<span>{{ n }}</span>{% endfor %}</div>{% endif %}
     </div>
     {% if a.image %}<img class="vignette" src="/actualites/{{ a.image_id }}/image" alt="" loading="lazy" decoding="async" width="88" height="88">{% endif %}
-    <div class="fin">{% include "_actualite_favori.html" %}</div>
+    <div class="fin">{% include "_actualite_favori.html" %}
+      {% if not a.lu %}<button type="button" class="marquer-lu" data-histoire="{{ a.id }}" title="{{ 'Marquer l\'histoire comme lue (' ~ a.sources ~ ' sources)' if a.sources > 1 else 'Marquer comme lu' }}" aria-label="Marquer comme lu">{{ icone('check', 20) }}</button>{% endif %}</div>
   </li>
   {% endfor %}
 </ul>
@@ -252,6 +320,72 @@
   .actus audio { display: block; width: 100%; margin-top: 6px; }
   .actus .vignette { flex: none; width: 88px; height: 88px; object-fit: cover; border-radius: 10px; background: var(--bord); margin-top: 2px; }
   @media (max-width: 420px) { .actus .vignette { width: 64px; height: 64px; } }
+  /* --- Coup d'œil : depuis ta visite, essentiel renforcé, tendances, ordre, affichage, clavier --- */
+  .depuis { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: .92rem; color: var(--doux); }
+  .depuis svg { flex: none; color: var(--accent); }
+  .depuis strong { color: var(--texte); }
+  .depuis .rouge { color: var(--alerte); }
+  .neuf { padding: 0 7px; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 700; font-size: .7rem;
+    line-height: 18px; letter-spacing: .02em; text-transform: uppercase; }
+  .suite { padding: 0 7px; border-radius: 999px; border: 1px solid var(--accent); color: var(--accent-fonce); font-weight: 600; font-size: .7rem; line-height: 16px; }
+  .couverture { padding: 0 7px; border-radius: 999px; background: var(--bord); color: var(--texte); font-weight: 600; font-size: .72rem; line-height: 18px; }
+  .essentiel li > * { grid-column: 2; }
+  .essentiel li::before { grid-column: 1; grid-row: 1 / span 3; }
+  .essentiel .en-bref { margin: 8px 0 0; font-size: 1.02rem; font-weight: 600; line-height: 1.4; color: var(--texte); }
+  .essentiel li.lu p { color: var(--doux); }
+  .essentiel li.lu::before { background: var(--bord); color: var(--doux); }
+  .essentiel li p strong { color: var(--texte); }
+  .essentiel li p.a-faire { color: var(--accent-fonce); }
+  .essentiel .a-faire { display: flex; align-items: flex-start; gap: 6px; margin: 3px 0 0; font-size: .88rem; color: var(--accent-fonce); }
+  .essentiel .a-faire svg { flex: none; margin-top: 3px; }
+  .essentiel .a-faire strong { color: inherit; }
+  .essentiel .sources { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+  .essentiel .a-retenir { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: 12px;
+    background: var(--carte); border: 1px dashed var(--accent); }
+  .essentiel .a-retenir svg { flex: none; color: var(--accent-fonce); margin-top: 2px; }
+  .essentiel .a-retenir p { margin: 0; line-height: 1.4; font-size: .93rem; }
+  .essentiel .a-retenir a { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; font-weight: 600; white-space: nowrap; }
+  .une { padding: 14px 20px; margin-bottom: 8px; }
+  .une h2 { margin: 0 0 6px; font-size: 1rem; }
+  .une ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .une li { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+  .une li a { color: var(--texte); font-weight: 600; text-decoration: none; }
+  .une li a:hover { text-decoration: underline; }
+  .une li.alerte a::before { content: "! "; color: var(--alerte); font-weight: 800; }
+  .une li.lu a { font-weight: 500; color: var(--doux); }
+  .une li .doux { font-size: .8rem; }
+  .tendances { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 6px 0 4px; padding: 2px 0; }
+  .tendances::-webkit-scrollbar { display: none; }
+  .tendances .tete { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: .82rem; font-weight: 600; }
+  .tendances a { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: .82rem;
+    border: 1px solid var(--bord); background: var(--carte); color: var(--texte); text-decoration: none; }
+  .tendances a.alerte { border-color: var(--alerte); }
+  .tendances a:hover { border-color: var(--accent); }
+  .tendances .compte { font-size: .72rem; color: var(--doux); font-weight: 700; }
+  @media (max-width: 760px) { .tendances { margin-left: -12px; margin-right: -12px; padding-left: 12px; padding-right: 12px; } }
+  .outils-actu { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; }
+  .outils-actu .tout-lu { margin: 0 0 0 auto; }
+  .segments { display: inline-flex; border: 1px solid var(--bord); border-radius: 999px; overflow: hidden; background: var(--carte); }
+  .segments a, .segments button { padding: 5px 12px; font-size: .82rem; font-weight: 500; color: var(--doux); text-decoration: none; border: 0;
+    background: none; border-radius: 0; min-height: 0; cursor: pointer; }
+  .segments .actif, .segments [aria-pressed="true"] { background: var(--accent-pale); color: var(--accent-fonce); font-weight: 600; }
+  .aide-clavier { min-width: 32px; padding: 4px 10px; font-weight: 700; }
+  @media (hover: none) { .aide-clavier { display: none; } }
+  .raccourcis { padding: 10px 16px; margin-top: 8px; }
+  .raccourcis p { margin: 0; font-size: .88rem; }
+  .raccourcis kbd { font: inherit; font-size: .8rem; padding: 0 5px; border: 1px solid var(--bord); border-bottom-width: 2px; border-radius: 4px; }
+  .actus .fin { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .marquer-lu { border: 0; background: none; padding: 6px; min-height: 0; color: var(--doux); cursor: pointer; border-radius: 8px; }
+  .marquer-lu:hover, .favori:hover { background: var(--accent-pale); color: var(--accent-fonce); }
+  .actus:not(.favoris) li:not(.nonlu) .titre, .actus:not(.favoris) li:not(.nonlu) .pourquoi { color: var(--doux); }
+  .actus li.focus-clavier { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
+  .actus .neuf { font-size: .65rem; line-height: 17px; }
+  /* Affichage « Titres » : une ligne par histoire, pour balayer vite (comme la vue liste de Feedly ou Inoreader) */
+  html.actu-titres .actus .pourquoi, html.actu-titres .actus .extrait, html.actu-titres .actus .vignette,
+  html.actu-titres .actus .sujets, html.actu-titres .actus .aussi, html.actu-titres .actus .ecouter { display: none; }
+  html.actu-titres .actus > li { padding-top: 8px; padding-bottom: 8px; }
+  html.actu-titres .actus .titre { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  html.actu-titres .actus .fin { flex-direction: row; }
 </style>
 <script>
   // Image refusée ou introuvable : la place est rendue au texte
@@ -275,6 +409,64 @@
     navigator.sendBeacon(`/actualites/${lien.dataset.lu}/lu`);
     const li = lien.closest("li");
     if (li) { li.classList.remove("nonlu"); li.querySelector(".point")?.remove(); }
+  });
+  // Marquer lu (toute l'histoire : ses reprises chez les autres sites aussi)
+  const marquerLu = (li) => { li.classList.remove("nonlu"); li.querySelector(".point")?.remove(); li.querySelector(".neuf")?.remove(); };
+  document.addEventListener("click", async (e) => {
+    const b = e.target.closest && e.target.closest("button[data-histoire]");
+    if (!b) return;
+    const li = b.closest("li");
+    marquerLu(li); b.remove();
+    try { await fetch(`/actualites/${b.dataset.histoire}/histoire-lue`, { method: "POST", credentials: "same-origin" }); } catch (_) {}
+  });
+  // Résumés ou titres seuls (retenu sur cet appareil)
+  const affichage = (mode) => {
+    document.documentElement.classList.toggle("actu-titres", mode === "titres");
+    document.querySelectorAll("[data-affichage]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.affichage === mode)));
+    try { localStorage.setItem("claunote-actu-affichage", mode); } catch (_) {}
+  };
+  let modeAffichage = "cartes";
+  try { modeAffichage = localStorage.getItem("claunote-actu-affichage") || "cartes"; } catch (_) {}
+  affichage(modeAffichage);
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest("[data-affichage]");
+    if (b) { modeAffichage = b.dataset.affichage; affichage(modeAffichage); }
+    if (e.target.closest && e.target.closest(".aide-clavier")) {
+      const r = document.querySelector(".raccourcis"); if (r) r.hidden = !r.hidden;
+    }
+  });
+  // La page se met à jour toute seule : on remet l'affichage choisi
+  new MutationObserver(() => {
+    document.querySelectorAll("[data-affichage]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.affichage === modeAffichage)));
+  }).observe(document.getElementById("contenu") || document.body, { childList: true });
+  // Clavier (sur ordinateur) : j/k, o, m, s, t, /, ?
+  let courant = -1;
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || (e.target.matches && e.target.matches("input, textarea, select, [contenteditable]"))) return;
+    const items = [...document.querySelectorAll(".actus > li")];
+    const ici = items.findIndex((li) => li.classList.contains("focus-clavier"));
+    courant = ici;
+    const aller = (i) => {
+      if (!items.length) return;
+      i = Math.max(0, Math.min(items.length - 1, i));
+      items.forEach((li) => li.classList.remove("focus-clavier"));
+      items[i].classList.add("focus-clavier");
+      items[i].scrollIntoView({ block: "nearest", behavior: "smooth" });
+      courant = i;
+    };
+    const li = items[courant];
+    switch (e.key) {
+      case "j": aller(courant + 1); break;
+      case "k": aller(courant - 1); break;
+      case "o": case "Enter": if (li) { const a = li.querySelector("a.titre"); if (a) a.click(); else return; } else return; break;
+      case "m": if (li) li.querySelector("button[data-histoire]")?.click(); aller(courant + 1); break;
+      case "s": if (li) li.querySelector(".favori")?.click(); break;
+      case "t": modeAffichage = modeAffichage === "titres" ? "cartes" : "titres"; affichage(modeAffichage); break;
+      case "/": document.querySelector(".champ-recherche input")?.focus(); break;
+      case "?": { const r = document.querySelector(".raccourcis"); if (r) r.hidden = !r.hidden; break; }
+      default: return;
+    }
+    e.preventDefault();
   });
 </script>
 {% endblock %}

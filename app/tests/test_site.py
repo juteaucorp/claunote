@@ -84,6 +84,9 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "abonnements", lambda: [])
     monkeypatch.setattr(db, "nb_actualites_nouvelles", lambda: 0)
     monkeypatch.setattr(db, "articles", lambda *a, **k: ([], 0))
+    monkeypatch.setattr(db, "tendances", lambda *a, **k: [])
+    monkeypatch.setattr(db, "actualites_depuis", lambda depuis, limite=5: {"nouveaux": 0, "alertes": 0, "histoires": 0,
+                                                                           "non_lus": 0, "a_la_une": []})
     monkeypatch.setattr(main.lecture, "etat", lambda: {})                 # service lecture absent
     monkeypatch.setattr(main.lecture, "classer", lambda *a, **k: None)
     monkeypatch.setattr(db, "pieces_jointes", lambda revision_id=None, campagne_id=None, contenu=False: [])
