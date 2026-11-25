@@ -896,7 +896,9 @@ def test_page_coup_d_oeil(client, monkeypatch):
     r = client.get("/actualites")
     assert r.status_code == 200 and appels["tri"] == "importance"
     t = r.text
-    assert "Depuis ta visite" in t and "5 nouveautés</strong> en 3 histoires" in t and "1 alerte" in t
+    assert "<strong>+5</strong> depuis ta visite" in t and 'id="depuis"' not in t   # dans l'en-tête de L'essentiel
+    assert "30 s de lecture" not in t and 'class="recherche-actu" method="get" action="/actualites" role="search" hidden' in t
+    assert "Sujets et catégories" not in t or "panneau-filtres" in t
     assert "Grosse fuite chez X." in t and "<strong>Fuite X</strong> : 2 M de comptes." in t
     assert "<strong>À faire</strong> : Changer son mot de passe" in t and "2 sources" in t
     assert "Pour tes cours · RGPD" in t and 'href="/doc/55"' in t
@@ -922,3 +924,16 @@ def test_alerte_lue_reste_marquee_dans_l_essentiel():
     from pathlib import Path
     css = Path(ac.__file__).with_name("templates").joinpath("actualites.html").read_text()
     assert ".essentiel li.lu::before" not in css and ".essentiel li.lu:not(.alerte)::before" in css
+
+
+def test_haut_de_page_allege(client, monkeypatch):
+    monkeypatch.setattr(db, "sujets", lambda: [{**SUJETS[0], "n": 1, "recherche_id": None, "recherche_erreur": None}])
+    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": MAINTENANT,
+                                                     "categorie": "Linux", "non_lus": 44, "sujet_id": None}])
+    t = client.get("/actualites").text
+    # une seule rangée : Pour toi / Tout / Favoris, sujets et catégories repliés, sans compteurs
+    assert '<details class="panneau-filtres">' in t and ">Linux</a>" in t and ">Linux<span" not in t
+    assert t.index("panneau-filtres") > t.index(">Favoris")
+    assert "<button type=\"button\" class=\"petit\" data-ouvrir-recherche" in t   # la recherche se déplie à la demande
+    t = client.get(f"/actualites?sujet={SUJETS[0]['id']}").text
+    assert 'class="actif">Cybersécurité</a>' in t and "class=\"petit\" data-ouvrir-recherche" not in t
