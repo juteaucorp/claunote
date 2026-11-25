@@ -524,6 +524,7 @@
         if (attente > PERIODE) { attente = PERIODE; planifier(Date.now() - derniere > PERIODE ? 300 : PERIODE); }
       }, { passive: true, capture: true }));
     const modifie = (zone) => {
+      if (zone.querySelector("audio, video")) return true;   // un épisode en écoute : la page ne bouge pas
       const actif = document.activeElement;
       if (actif && zone.contains(actif) && actif.matches("input, textarea, select, [contenteditable]")) return true;
       const sel = window.getSelection && window.getSelection();

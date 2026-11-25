@@ -10,6 +10,7 @@ import re
 import os
 import random
 import tempfile
+import unicodedata
 import threading
 import time
 from collections import defaultdict
@@ -298,7 +299,7 @@ async def anti_csrf(request: Request, call_next):
 
 # Pas de script ni d'image venus d'ailleurs, pas d'envoi de données ailleurs, pas d'affichage dans un autre site
 CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-       "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob:; "
+       "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob: https:; "
        "frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; "
        "form-action 'self'; frame-ancestors 'self'")
 # Captcha Turnstile allumé : son script et son iframe viennent de challenges.cloudflare.com (et rien d'autre)
@@ -3588,25 +3589,80 @@ def _jour_actu(d: dt.datetime, aujourdhui: dt.date) -> str:
     return f"{jours[jour.weekday()]} {jour.day} {mois[jour.month - 1]}"
 
 
+def _categories_actu(flux_l: list) -> list[dict]:
+    """Les catégories (dossiers) des sources, avec leurs articles non lus, comme dans un lecteur RSS."""
+    par: dict[str, dict] = {}
+    for f in flux_l:
+        if f.get("categorie") and not f.get("sujet_id"):
+            c = par.setdefault(f["categorie"], {"nom": f["categorie"], "non_lus": 0})
+            c["non_lus"] += f.get("non_lus") or 0
+    return sorted(par.values(), key=lambda c: c["nom"].lower())
+
+
+TYPES_ACTU = {"article": ("", "Articles"), "audio": ("audio", "Podcasts"), "video": ("video", "Vidéos")}
+PERIODES_ACTU = {"24h": (1, "24 heures"), "7j": (7, "7 jours"), "30j": (30, "30 jours")}
+
+
+def marquer(texte: str | None, q: str = "") -> Markup:
+    """Échappe le texte et surligne (<mark>) les mots cherchés, sans tenir compte des accents ni de la casse."""
+    texte = html.escape(texte or "")
+    mots = [m.strip('"') for m in re.findall(r'-?"[^"]+"|-?\S+', q or "")
+            if not m.startswith("-") and m.lower() not in {"or", "ou"}]
+    motifs = []
+    for m in sorted({m for m in mots if len(m) >= 2}, key=len, reverse=True):
+        base = "".join(c for c in unicodedata.normalize("NFD", html.escape(m).lower()) if unicodedata.category(c) != "Mn")
+        motifs.append("".join(VARIANTES.get(c, re.escape(c)) for c in base))
+    if not motifs:
+        return Markup(texte)
+    return Markup(re.sub("(" + "|".join(motifs) + ")", r"<mark>\1</mark>", texte, flags=re.I))
+
+
+VARIANTES = {"a": "[aàâäáã]", "c": "[cç]", "e": "[eéèêë]", "i": "[iîïíì]", "o": "[oôöóò]", "u": "[uùûüú]", "y": "[yÿý]",
+             "n": "[nñ]"}
+templates.env.filters["marquer"] = marquer
+
+
+def _duree_txt(secondes: int | None) -> str:
+    if not secondes:
+        return ""
+    h, m = divmod(round(secondes / 60), 60)
+    return f"{h} h {m:02d}" if h else f"{max(m, 1)} min"
+
+
+templates.env.filters["duree"] = _duree_txt
+
+
 @app.get("/actualites", response_class=HTMLResponse)
 def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None = None, flux: int | None = None,
-                    page: int = 1, article: int | None = None):
+                    page: int = 1, article: int | None = None, q: str = "", categorie: str | None = None,
+                    type: str = "", periode: str = "", non_lus: bool = False, tri: str = "recents"):
     vue = vue if vue in VUES_ACTU else "pour_toi"
-    if sujet or flux:
-        vue = "tout"
+    q = q.strip()[:200]
+    categorie = (categorie or "").strip() or None
+    type = type if type in TYPES_ACTU else ""
+    periode = periode if periode in PERIODES_ACTU else ""
+    tri = "pertinence" if tri == "pertinence" and q else "recents"
+    filtres = bool(q or categorie is not None or type or periode or non_lus)
+    if sujet or flux or (filtres and vue != "favoris"):
+        vue = "tout"   # une recherche ou un filtre porte sur tous les articles (ou sur les favoris)
     page = max(page, 1)
     if not request.headers.get("x-rafraichir"):   # vraie visite (pas le rafraîchissement auto) : ton heure de lecture
         try:
             actualites.noter_lecture()
         except Exception as e:
             print(f"actualités : heure de lecture non notée : {e}", flush=True)
-    liste, total = db.articles(vue, sujet, flux, PAR_PAGE_ACTU, (page - 1) * PAR_PAGE_ACTU)
-    liste = actualites.regrouper(liste)
+    liste, total = db.articles(vue, sujet, flux, PAR_PAGE_ACTU, (page - 1) * PAR_PAGE_ACTU, q=q, categorie=categorie,
+                               media=TYPES_ACTU[type][0] if type else None,
+                               jours=PERIODES_ACTU[periode][0] if periode else None, non_lus=non_lus, tri=tri)
+    if not q:   # une recherche montre chaque article trouvé (pas de regroupement « aussi chez »)
+        liste = actualites.regrouper(liste)
+    else:
+        liste = [{**a, "aussi": [], "image_id": a["id"]} for a in liste]
     cours = actualites.cours_lies([a.get("notion") for a in liste])
     aujourdhui = dt.datetime.now(pronote.PARIS).date()
     # « L'essentiel » : en haut de « Pour toi », première page seulement
     essentiel = None
-    if vue == "pour_toi" and page == 1 and not sujet and not flux:
+    if vue == "pour_toi" and page == 1 and not sujet and not flux and not filtres:
         p = actualites.point()
         if p and p.get("points") and time.time() - float(p.get("le") or 0) < actualites.POINT_AFFICHE:
             sources = {a["id"]: a for a in db.articles_par_ids(sorted({i for x in p["points"] for i in x["ids"]}))}
@@ -3623,10 +3679,15 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None =
     sujets = db.sujets()
     flux_l = db.flux_liste()
 
+    recherche = {"q": q, "categorie": categorie, "type": type, "periode": periode, "non_lus": "1" if non_lus else "",
+                 "tri": tri if tri != "recents" else ""}
+
     def lien_page(n: int) -> str:
-        return "/actualites?" + urlencode({k: v for k, v in {"vue": vue, "sujet": sujet, "flux": flux,
+        return "/actualites?" + urlencode({k: v for k, v in {"vue": vue, "sujet": sujet, "flux": flux, **recherche,
                                                               "page": n}.items() if v})
     return templates.TemplateResponse(request, "actualites.html", {
+        "recherche": recherche, "filtres": filtres, "types": TYPES_ACTU, "periodes": PERIODES_ACTU,
+        "categories": _categories_actu(flux_l),
         "vue": vue, "vues": VUES_ACTU, "sujet": sujet, "flux": flux, "groupes": groupes, "total": total,
         "page": page, "pages": -(-total // PAR_PAGE_ACTU), "par": PAR_PAGE_ACTU, "lien_page": lien_page,
         "sujets": sujets, "flux_liste": flux_l, "article": article, "paris": pronote.PARIS,
@@ -3690,8 +3751,15 @@ def actualites_relever():
 
 
 def _page_sources(request: Request, message: str = "", erreur: str = "", saisie: dict | None = None):
+    flux_l = db.flux_liste()
+    dossiers: dict[str, list] = {}
+    for f in sorted(flux_l, key=lambda f: (f["sujet_id"] is not None, not f.get("categorie"), (f.get("categorie") or "").lower())):
+        nom = "Recherches Google Actualités" if f["sujet_id"] else (f.get("categorie") or "Sans catégorie")
+        dossiers.setdefault(nom, []).append(f)
     return templates.TemplateResponse(request, "actualites_sources.html", {
-        "sujets": db.sujets(), "flux_liste": db.flux_liste(), "message": message, "erreur": erreur,
+        "dossiers": dossiers, "noms_categories": sorted({f["categorie"] for f in flux_l if f.get("categorie")}, key=str.lower)
+                                                 or [c for c in dict.fromkeys(c for _, _, c, _ in actualites.FLUX_DEFAUT)],
+        "sujets": db.sujets(), "flux_liste": flux_l, "message": message, "erreur": erreur,
         "saisie": saisie or {}, "reglages": actualites.reglages(), "paris": pronote.PARIS,
         "notifs": notifications.preferences().get("actualites", True),
         "quotidien": actualites.heure_quotidienne(), "personnalise": actualites.personnalise(),
@@ -3706,14 +3774,22 @@ def page_actualites_page_sources(request: Request, message: str = ""):
     return _page_sources(request, message)
 
 
+def _categorie(texte: str) -> str:
+    return re.sub(r"\s+", " ", texte or "").strip()[:40]
+
+
 @app.post("/actualites/flux", response_class=HTMLResponse)
-def ajouter_flux(request: Request, url: str = Form(...), notifier: bool = Form(False)):
+def ajouter_flux(request: Request, url: str = Form(...), notifier: bool = Form(False), categorie: str = Form("")):
     try:
         adresse, infos, items = actualites.decouvrir(url)
     except actualites.FluxIllisible as e:
-        return _page_sources(request, erreur=f"Flux non ajouté : {e}.", saisie={"url": url})
+        return _page_sources(request, erreur=f"Flux non ajouté : {e}.", saisie={"url": url, "categorie": categorie})
     actualites.marquer_personnalise()
-    flux_id = db.flux_ajouter(adresse, infos["titre"], infos["site"] or urlsplit(adresse).hostname or "", notifier=notifier)
+    categorie = _categorie(categorie) or actualites.categorie_connue(adresse, infos["site"] or "") \
+        or ("Podcast" if items and all(i["media"] == "audio" for i in items) else "") \
+        or ("YouTube" if items and all(i["media"] == "video" for i in items) else "")
+    flux_id = db.flux_ajouter(adresse, infos["titre"], infos["site"] or urlsplit(adresse).hostname or "", notifier=notifier,
+                              categorie=categorie)
     sujets = db.sujets()
     for i in items:  # déjà en ligne : rangés sans notification, triés par l'IA au prochain passage
         i["cle"] = actualites.cle_article(i["lien"], i["titre"], flux_id)
@@ -3731,6 +3807,14 @@ def flux_notifier(flux_id: int, notifier: bool = Form(False)):
     actualites.marquer_personnalise()
     db.flux_maj(flux_id, notifier=notifier)
     return RedirectResponse("/actualites/sources#flux", status_code=303)
+
+
+@app.post("/actualites/flux/{flux_id}/categorie")
+def flux_categorie(flux_id: int, categorie: str = Form("")):
+    """Ranger une source dans une catégorie (dossier), comme dans un lecteur RSS."""
+    actualites.marquer_personnalise()
+    db.flux_maj(flux_id, categorie=_categorie(categorie))
+    return RedirectResponse(f"/actualites/sources#f{flux_id}", status_code=303)
 
 
 @app.post("/actualites/flux/{flux_id}/supprimer")

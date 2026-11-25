@@ -63,18 +63,56 @@ QUOTIDIEN_DEFAUT = dt.time(7, 30)   # heure de la notification du jour tant qu'o
 QUOTIDIEN_JOURS = 28                # jours d'habitudes de lecture gardés
 QUOTIDIEN_MIN = 5                   # jours de lecture qu'il faut pour choisir l'heure toute seule
 
+# (adresse, nom, catégorie, page d'accueil du site). Une adresse « podcast:Nom » ou « youtube:Nom » est retrouvée au
+# premier relevé (annuaire Apple Podcasts, page de la chaîne) ; un flux qui ne répond plus est recherché sur la page
+# d'accueil du site (la plupart l'annoncent), il se répare tout seul.
 FLUX_DEFAUT = [
-    ("https://www.cert.ssi.gouv.fr/alerte/feed/", "CERT-FR : alertes de sécurité"),
-    ("https://www.cert.ssi.gouv.fr/actualite/feed/", "CERT-FR : actualités"),
-    ("https://www.it-connect.fr/feed/", "IT-Connect"),
-    ("https://next.ink/feed/", "Next"),
-    ("https://korben.info/feed", "Korben"),
-    ("https://www.lemondeinformatique.fr/flux-rss/thematique/toutes-les-actualites/rss.xml", "Le Monde Informatique"),
-    ("https://www.numerama.com/feed/", "Numerama"),
-    ("https://www.01net.com/feed/", "01net"),
-    ("https://www.clubic.com/feed/news.rss", "Clubic"),
+    # Sécurité
+    ("https://www.cert.ssi.gouv.fr/alerte/feed/", "CERT-FR : alertes de sécurité", "Sécurité", "https://www.cert.ssi.gouv.fr/"),
+    ("https://www.cert.ssi.gouv.fr/actualite/feed/", "CERT-FR : actualités", "Sécurité", "https://www.cert.ssi.gouv.fr/"),
+    ("https://www.bleepingcomputer.com/feed/", "BleepingComputer", "Sécurité", "https://www.bleepingcomputer.com/"),
+    ("https://cyberguerre.numerama.com/feed/", "Cyberguerre", "Sécurité", "https://cyberguerre.numerama.com/"),
+    ("https://feeds.feedburner.com/TheHackersNews", "The Hacker News", "Sécurité", "https://thehackernews.com/"),
+    ("https://www.undernews.fr/feed", "UnderNews", "Sécurité", "https://www.undernews.fr/"),
+    ("https://www.welivesecurity.com/fr/rss/feed/", "WeLiveSecurity", "Sécurité", "https://www.welivesecurity.com/fr/"),
+    # Tech généraliste
+    ("https://next.ink/feed/", "Next", "Tech généraliste", "https://next.ink/"),
+    ("https://korben.info/feed", "Korben", "Tech généraliste", "https://korben.info/"),
+    ("https://www.numerama.com/feed/", "Numerama", "Tech généraliste", "https://www.numerama.com/"),
+    ("https://www.ginjfo.com/feed", "GinjFo", "Tech généraliste", "https://www.ginjfo.com/"),
+    ("https://www.tomshardware.fr/feed/", "Tom's Hardware", "Tech généraliste", "https://www.tomshardware.fr/"),
+    ("https://www.lemondeinformatique.fr/flux-rss/thematique/toutes-les-actualites/rss.xml", "Le Monde Informatique",
+     "Tech généraliste", "https://www.lemondeinformatique.fr/"),
+    ("https://www.01net.com/feed/", "01net", "Tech généraliste", "https://www.01net.com/"),
+    ("https://www.clubic.com/feed/news.rss", "Clubic", "Tech généraliste", "https://www.clubic.com/"),
+    # IT (admin systèmes et réseaux)
+    ("https://www.it-connect.fr/feed/", "IT-Connect", "IT", "https://www.it-connect.fr/"),
+    ("https://4sysops.com/feed/", "4sysops", "IT", "https://4sysops.com/"),
+    ("https://blogmotion.fr/feed", "Blogmotion", "IT", "https://blogmotion.fr/"),
+    ("https://lecrabeinfo.net/feed", "Le Crabe Info", "IT", "https://lecrabeinfo.net/"),
+    ("https://www.malekal.com/feed/", "malekal.com", "IT", "https://www.malekal.com/"),
+    ("https://www.tech2tech.fr/feed/", "Tech2Tech", "IT", "https://www.tech2tech.fr/"),
+    # Linux
+    ("https://www.linuxtricks.fr/rss.xml", "Linuxtricks", "Linux", "https://www.linuxtricks.fr/"),
+    # Microsoft
+    ("https://www.monwindows.com/feed", "MonWindows", "Microsoft", "https://www.monwindows.com/"),
+    ("https://www.nextofwindows.com/feed", "Next of Windows", "Microsoft", "https://www.nextofwindows.com/"),
+    ("https://www.windowscentral.com/feeds/all", "Windows Central", "Microsoft", "https://www.windowscentral.com/"),
+    # NAS
+    ("https://www.cachem.fr/feed/", "Cachem", "NAS", "https://www.cachem.fr/"),
+    ("https://nascompares.com/feed/", "NAS Compares", "NAS", "https://nascompares.com/"),
+    # Podcast (épisodes écoutables sur la page)
+    ("podcast:De quoi j'me mail", "De quoi j'me mail", "Podcast", ""),
+    ("podcast:Le rendez-vous Tech", "Le rendez-vous Tech", "Podcast", ""),
+    ("podcast:Tech Café", "Tech Café", "Podcast", ""),
+    # YouTube (une chaîne = un flux de ses vidéos)
+    ("youtube:Tech2Tech Mikaël", "Tech2Tech (YouTube)", "YouTube", ""),
 ]
-FLUX_AJOUTES = {"actualites_flux_2": ["Numerama", "01net"], "actualites_flux_3": ["Clubic"]}   # ajoutés après coup aux installations existantes
+# Ajoutés après coup aux installations existantes (une fois), par nom
+FLUX_AJOUTES = {"actualites_flux_2": ["Numerama", "01net"], "actualites_flux_3": ["Clubic"],
+                # les sources de ton lecteur RSS (2026-11), rangées par catégories comme chez toi
+                "actualites_flux_4": [t for _, t, _, _ in FLUX_DEFAUT
+                                      if not t.startswith("CERT-FR") and t not in ("Le Monde Informatique", "01net", "Clubic")]}
 SUJETS_DEFAUT = [   # sélection de départ (informatique), à changer sur la page Sources selon ta formation
     ("Cybersécurité", "Failles critiques à corriger, cyberattaques marquantes, rançongiciels, fuites de données, "
      "recommandations de l'ANSSI.",
@@ -226,16 +264,48 @@ def passer_en_sisr():
     log(f"sujets de départ passés en option SISR ({', '.join(s['nom'] for s in remplaces)} remplacés)")
 
 
+def _hote(url: str) -> str:
+    return (urlsplit(url).hostname or "").removeprefix("www.") if url.startswith("http") else ""
+
+
 def ajouter_nouveaux_flux():
-    """Flux ajoutés à la sélection de départ après coup : proposés une fois aux installations existantes."""
-    par_titre = {t: u for u, t in FLUX_DEFAUT}
+    """Flux ajoutés à la sélection de départ après coup : proposés une fois aux installations existantes
+    (un site que tu suis déjà, même sous une autre adresse, n'est pas ajouté deux fois)."""
+    par_titre = {t: (u, c, site) for u, t, c, site in FLUX_DEFAUT}
     for cle, titres in FLUX_AJOUTES.items():
         if db.etat_valeur(cle):
             continue
         db.etat_ecrire(cle, "1")
+        deja = {_hote(f["url"]) for f in db.flux_liste()} | {_hote(f["site"] or "") for f in db.flux_liste()}
+        ajoutes = []
         for t in titres:
-            db.flux_ajouter(par_titre[t], t, urlsplit(par_titre[t]).hostname or "")
-        log(f"flux ajoutés : {', '.join(titres)}")
+            u, c, site = par_titre[t]
+            if _hote(u) and _hote(u) in deja - {"feeds.feedburner.com"}:
+                continue
+            db.flux_ajouter(u, t, site, categorie=c)
+            ajoutes.append(t)
+        if ajoutes:
+            log(f"flux ajoutés : {', '.join(ajoutes)}")
+    ranger_par_categories()
+
+
+def categorie_connue(url: str, site: str = "") -> str:
+    """La catégorie de départ d'un site connu (même adresse de flux ou même site), sinon ""."""
+    for u, _, c, s in FLUX_DEFAUT:
+        if url == u or (_hote(url) and _hote(url) in {_hote(u), _hote(s)} - {"feeds.feedburner.com"}) \
+                or (_hote(site) and _hote(site) in {_hote(u), _hote(s)} - {"feeds.feedburner.com"}):
+            return c
+    return ""
+
+
+def ranger_par_categories():
+    """Une fois : les sources déjà suivies prennent la catégorie de départ de leur site (Sécurité, IT…)."""
+    if db.etat_valeur(cle("actualites_categories")):
+        return
+    db.etat_ecrire(cle("actualites_categories"), "1")
+    for f in db.flux_liste():
+        if not f["sujet_id"] and not f["categorie"] and (c := categorie_connue(f["url"], f["site"] or "")):
+            db.flux_maj(f["id"], categorie=c)
 
 
 def resumes_condenses():
@@ -250,7 +320,12 @@ def resumes_condenses():
 def _depart() -> dict:
     return {"sujets": [{"nom": n, "description": d, "mots_cles": list(m), "notifier": True, "recherche": False}
                        for n, d, m in SUJETS_DEFAUT],
-            "flux": [{"url": u, "titre": t, "site": urlsplit(u).hostname or "", "notifier": False} for u, t in FLUX_DEFAUT]}
+            "flux": [{"url": u, "titre": t, "site": site, "notifier": False, "categorie": c} for u, t, c, site in FLUX_DEFAUT]}
+
+
+def _empreinte_depart() -> str:
+    """Change quand la sélection de départ change : les comptes qui la suivent reçoivent les nouvelles sources."""
+    return hashlib.sha1(json.dumps([FLUX_DEFAUT, SUJETS_DEFAUT], ensure_ascii=False).encode()).hexdigest()[:8]
 
 
 def profil_defaut() -> dict:
@@ -260,7 +335,7 @@ def profil_defaut() -> dict:
     except ValueError:
         p = None
     if not isinstance(p, dict) or p.get("depart") or not isinstance(p.get("sujets"), list):
-        return {**_depart(), "version": str((p or {}).get("version") or "depart"), "depart": True,
+        return {**_depart(), "version": f"{(p or {}).get('version') or 'depart'}:{_empreinte_depart()}", "depart": True,
                 "le": (p or {}).get("le")}
     return p
 
@@ -270,8 +345,8 @@ def profil_du_fil() -> dict:
     sujets = db.sujets()
     return {"sujets": [{"nom": s["nom"], "description": s["description"], "mots_cles": list(s["mots_cles"]),
                         "notifier": bool(s["notifier"]), "recherche": bool(s["recherche_id"])} for s in sujets],
-            "flux": [{"url": f["url"], "titre": f["titre"], "site": f["site"], "notifier": bool(f["notifier"])}
-                     for f in db.flux_liste() if not f["sujet_id"]]}
+            "flux": [{"url": f["url"], "titre": f["titre"], "site": f["site"], "notifier": bool(f["notifier"]),
+                      "categorie": f.get("categorie") or ""} for f in db.flux_liste() if not f["sujet_id"]]}
 
 
 def definir_defaut(depuis_mon_fil: bool = True) -> dict:
@@ -335,10 +410,14 @@ def appliquer_defaut() -> bool:
             continue
         if f["url"] not in voulus:
             db.flux_supprimer(f["id"])
-        elif bool(f["notifier"]) != voulus.pop(f["url"])["notifier"]:
+            continue
+        x = voulus.pop(f["url"])
+        if bool(f["notifier"]) != x["notifier"]:
             db.flux_maj(f["id"], notifier=not f["notifier"])
+        if f["categorie"] != x.get("categorie", ""):
+            db.flux_maj(f["id"], categorie=x.get("categorie", ""))
     for x in voulus.values():   # nouveaux : leur premier relevé ne sonne pas (articles déjà en ligne)
-        db.flux_ajouter(x["url"], x["titre"], x["site"], notifier=x["notifier"])
+        db.flux_ajouter(x["url"], x["titre"], x["site"], notifier=x["notifier"], categorie=x.get("categorie", ""))
     if change:
         db.articles_retrier()
     db.etat_ecrire(cle("actualites_defaut_vu"), p["version"])
@@ -392,8 +471,9 @@ def initialiser():
     db.etat_ecrire("actualites_init", "1")
     for nom, description, mots in SUJETS_DEFAUT:
         db.sujet_ajouter(nom, description, mots)
-    for url, titre in FLUX_DEFAUT:
-        db.flux_ajouter(url, titre, urlsplit(url).hostname or "")
+    db.etat_ecrire(cle("actualites_categories"), "1")
+    for url, titre, categorie, site in FLUX_DEFAUT:
+        db.flux_ajouter(url, titre, site, categorie=categorie)
     log(f"sélection de départ : {len(FLUX_DEFAUT)} flux, {len(SUJETS_DEFAUT)} sujets")
 
 
@@ -505,6 +585,32 @@ def image_article(e, lien: str = "") -> str:
     return ""
 
 
+def duree(texte) -> int | None:
+    """itunes:duration (« 3600 », « 59:07 », « 1:02:03 ») → secondes."""
+    try:
+        parts = [int(float(x)) for x in str(texte or "").strip().split(":")]
+    except ValueError:
+        return None
+    if not parts or len(parts) > 3:
+        return None
+    total = 0
+    for x in parts:
+        total = total * 60 + x
+    return total if 0 < total < 24 * 3600 else None
+
+
+def media_article(e, lien: str = "") -> dict:
+    """Épisode de podcast (pièce jointe audio : écoutable sur la page) ou vidéo YouTube."""
+    for l in e.get("links") or []:
+        if l.get("rel") == "enclosure" and (l.get("type") or "").lower().startswith("audio/") and lien_sur(l.get("href")):
+            return {"media": "audio", "media_url": lien_sur(l.get("href"))[:1000],
+                    "duree": duree(e.get("itunes_duration"))}
+    hote = (urlsplit(lien).hostname or "").removeprefix("www.").removeprefix("m.")
+    if e.get("yt_videoid") or hote in ("youtube.com", "youtu.be"):
+        return {"media": "video", "media_url": "", "duree": None}
+    return {"media": "", "media_url": "", "duree": None}
+
+
 def lire_flux(contenu: bytes, flux_id: int = 0) -> tuple[dict, list[dict]]:
     """Contenu d'un flux → (infos du flux, articles prêts pour la base)."""
     f = feedparser.parse(contenu)
@@ -524,7 +630,7 @@ def lire_flux(contenu: bytes, flux_id: int = 0) -> tuple[dict, list[dict]]:
         if not resume and e.get("content"):
             resume = e.content[0].get("value", "")
         items.append({"cle": cle, "lien": lien, "titre": titre or lien, "extrait": texte_simple(resume),
-                      "publie_le": _date(e), "image": image_article(e, lien)})
+                      "publie_le": _date(e), "image": image_article(e, lien), **media_article(e, lien)})
     infos = {"titre": texte_simple(f.feed.get("title"), 120), "site": lien_sur(f.feed.get("link"))}
     return infos, items
 
@@ -532,16 +638,100 @@ def lire_flux(contenu: bytes, flux_id: int = 0) -> tuple[dict, list[dict]]:
 ALTERNATE = re.compile(r"<link\b[^>]*>", re.I)
 
 
+YOUTUBE_FLUX = "https://www.youtube.com/feeds/videos.xml?channel_id={}"
+CHAINE = re.compile(r'(?:"channelId"|"externalId"|"browseId")\s*:\s*"(UC[\w-]{22})"|youtube\.com/channel/(UC[\w-]{22})')
+YOUTUBE_COOKIES = {"Cookie": "SOCS=CAI; CONSENT=YES+"}   # sans la page « Avant d'accéder à YouTube » (Europe)
+
+
+def _est_youtube(url: str) -> bool:
+    return (urlsplit(url).hostname or "").removeprefix("www.").removeprefix("m.") in ("youtube.com", "youtu.be")
+
+
+def _chaine_youtube(page: str) -> str | None:
+    m = CHAINE.search(page)
+    return (m.group(1) or m.group(2)) if m else None
+
+
+def flux_youtube(entree: str, c: httpx.Client) -> str:
+    """Une chaîne YouTube (lien de la chaîne, @pseudo, ou son nom) → l'adresse du flux de ses vidéos."""
+    entree = entree.strip()
+    if m := re.search(r"youtube\.com/channel/(UC[\w-]{22})", entree):
+        return YOUTUBE_FLUX.format(m.group(1))
+    if entree.startswith("@"):
+        page = f"https://www.youtube.com/{entree}"
+    elif _est_youtube(entree if "://" in entree else "https://" + entree):
+        u = urlsplit(entree if "://" in entree else "https://" + entree)
+        page = urlunsplit(("https", "www.youtube.com", u.path, u.query, ""))
+    else:   # un nom : la première chaîne trouvée par la recherche YouTube (filtre « Chaînes »)
+        page = "https://www.youtube.com/results?" + urlencode({"search_query": entree, "sp": "EgIQAg=="})
+    r = c.get(page, headers=YOUTUBE_COOKIES)
+    r.raise_for_status()
+    chaine = _chaine_youtube(r.text)
+    if not chaine:
+        raise FluxIllisible("chaîne YouTube introuvable : colle le lien de la chaîne (youtube.com/@…)")
+    return YOUTUBE_FLUX.format(chaine)
+
+
+def flux_podcast(entree: str, c: httpx.Client) -> str:
+    """Un podcast (lien Apple Podcasts ou son nom) → l'adresse de son flux RSS, par l'annuaire d'Apple."""
+    if m := re.search(r"podcasts\.apple\.com/.*?id(\d+)", entree):
+        r = c.get("https://itunes.apple.com/lookup", params={"id": m.group(1), "entity": "podcast"})
+    else:
+        r = c.get("https://itunes.apple.com/search", params={"term": entree.strip(), "media": "podcast", "country": "fr",
+                                                            "limit": 5})
+    r.raise_for_status()
+    try:
+        resultats = r.json().get("results") or []
+    except ValueError:
+        resultats = []
+    if not m:   # recherche par nom : le plus ressemblant d'abord (tous les mots du nom), sinon le premier
+        voulu = _sans_accents(re.sub(r"[^\w ]", " ", entree)).split()
+        resultats.sort(key=lambda x: not all(v in _sans_accents(x.get("collectionName") or "") for v in voulu))
+    for x in resultats:
+        if lien_sur(x.get("feedUrl")):
+            return x["feedUrl"]
+    raise FluxIllisible("podcast introuvable dans l'annuaire Apple Podcasts : colle l'adresse de son flux RSS")
+
+
+def _source_speciale(url: str) -> tuple[str, str] | None:
+    """« podcast:Nom », « youtube:Nom », un lien Apple Podcasts ou une chaîne YouTube → (genre, ce qu'on cherche)."""
+    if m := re.match(r"(podcast|youtube)\s*:\s*(.+)", url, re.I):
+        return m.group(1).lower(), m.group(2)
+    if re.search(r"podcasts\.apple\.com/", url):
+        return "podcast", url
+    if _est_youtube(url if "://" in url else "https://" + url) and "/feeds/videos.xml" not in url and "watch?" not in url:
+        return "youtube", url
+    if url.startswith("@") and " " not in url:
+        return "youtube", url
+    return None
+
+
+def resoudre(url: str, c: httpx.Client) -> str:
+    """Adresse d'un flux telle quelle, ou celle d'un podcast / d'une chaîne YouTube retrouvée."""
+    special = _source_speciale(url.strip())
+    if not special:
+        return url
+    genre, quoi = special
+    return flux_podcast(quoi, c) if genre == "podcast" else flux_youtube(quoi, c)
+
+
 def decouvrir(url: str, client: httpx.Client | None = None) -> tuple[str, dict, list[dict]]:
-    """Adresse d'un flux, ou d'un site qui en annonce un (<link rel="alternate">) → (url du flux, infos, articles)."""
+    """Adresse d'un flux, d'un site qui en annonce un (<link rel="alternate">), d'une chaîne YouTube, d'un podcast
+    (lien Apple Podcasts ou « podcast:Nom ») → (url du flux, infos, articles)."""
     url = url.strip()
-    if not re.match(r"https?://", url, re.I):
-        url = "https://" + url
-    if not lien_sur(url):
-        raise FluxIllisible("adresse invalide")
     c = client or _client()
     try:
-        r = c.get(url)
+        try:
+            url = resoudre(url, c)
+        except httpx.HTTPStatusError as e:
+            raise FluxIllisible(f"le site répond {e.response.status_code}") from e
+        except httpx.HTTPError as e:
+            raise FluxIllisible(_injoignable(e)) from e
+        if not re.match(r"https?://", url, re.I):
+            url = "https://" + url
+        if not lien_sur(url):
+            raise FluxIllisible("adresse invalide")
+        r = c.get(url, headers=YOUTUBE_COOKIES if _est_youtube(url) else None)
         r.raise_for_status()
         try:
             infos, items = lire_flux(r.content)
@@ -557,6 +747,11 @@ def decouvrir(url: str, client: httpx.Client | None = None) -> tuple[str, dict, 
                     r2.raise_for_status()
                     infos, items = lire_flux(r2.content)
                     return str(r2.url), infos, items
+        if _est_youtube(str(r.url)) and (chaine := _chaine_youtube(r.text)):   # page d'une vidéo : sa chaîne
+            r2 = c.get(YOUTUBE_FLUX.format(chaine))
+            r2.raise_for_status()
+            infos, items = lire_flux(r2.content)
+            return str(r2.url), infos, items
         raise FluxIllisible("aucun flux RSS trouvé sur cette page : colle l'adresse du flux lui-même")
     except httpx.HTTPStatusError as e:
         raise FluxIllisible(f"le site répond {e.response.status_code}") from e
@@ -576,6 +771,11 @@ def relever_un(flux: dict, sujets: list[dict], client: httpx.Client) -> int:
         entetes["If-Modified-Since"] = flux["modifie"]
     maintenant = dt.datetime.now(dt.timezone.utc)
     try:
+        if _source_speciale(flux["url"]):   # « podcast:Nom », « youtube:Nom » : l'adresse du flux est retrouvée une fois
+            adresse = resoudre(flux["url"], client)
+            flux = {**flux, "url": adresse}
+            if not _changer_adresse(flux["id"], adresse):
+                raise FluxIllisible("ce flux est déjà dans ta liste")
         r = client.get(flux["url"], headers=entetes)
         if r.status_code == 304:
             db.flux_maj(flux["id"], releve_le=maintenant, erreur=None, echecs=0)
@@ -585,8 +785,11 @@ def relever_un(flux: dict, sujets: list[dict], client: httpx.Client) -> int:
     except (httpx.HTTPError, FluxIllisible) as e:
         message = (f"le site répond {e.response.status_code}" if isinstance(e, httpx.HTTPStatusError)
                    else str(e) if isinstance(e, FluxIllisible) else _injoignable(e))
-        db.flux_maj(flux["id"], releve_le=maintenant, erreur=message, echecs=flux["echecs"] + 1)
-        return 0
+        reparation = _reparer(flux, e, client)
+        if reparation is None:
+            db.flux_maj(flux["id"], releve_le=maintenant, erreur=message, echecs=flux["echecs"] + 1)
+            return 0
+        r, infos, items = reparation
     premier = flux["releve_le"] is None
     for i in items:
         i["sujets"] = par_mots_cles(sujets, i)
@@ -599,6 +802,35 @@ def relever_un(flux: dict, sujets: list[dict], client: httpx.Client) -> int:
                 **({"titre": infos["titre"]} if infos["titre"] and not flux["titre"] else {}),
                 **({"site": infos["site"]} if infos["site"] and not flux["site"] else {}))
     return n
+
+
+def _changer_adresse(flux_id: int, adresse: str) -> bool:
+    """Nouvelle adresse d'un flux (retrouvée ou réparée) ; faux si tu suis déjà cette adresse dans un autre flux."""
+    if any(f["url"] == adresse and f["id"] != flux_id for f in db.flux_liste()):
+        return False
+    db.flux_maj(flux_id, url=adresse, etag=None, modifie=None)
+    return True
+
+
+def _reparer(flux: dict, erreur: Exception, client: httpx.Client):
+    """Flux disparu (404, page qui n'est plus un flux) : son site annonce peut-être sa nouvelle adresse. Essayé au
+    premier échec puis tous les 6 relevés (3 h), jamais pour une recherche Google ni un site injoignable.
+    → (réponse, infos, articles) avec la nouvelle adresse déjà enregistrée, ou None."""
+    if flux.get("sujet_id") or not flux.get("site") or flux["echecs"] % 6:
+        return None
+    if not (isinstance(erreur, FluxIllisible) or (isinstance(erreur, httpx.HTTPStatusError)
+                                                  and erreur.response.status_code in (404, 410, 403))):
+        return None
+    try:
+        adresse, infos, items = decouvrir(flux["site"], client)
+    except FluxIllisible:
+        return None
+    if adresse == flux["url"] or not _changer_adresse(flux["id"], adresse):
+        return None
+    log(f"flux « {flux['titre'] or flux['url']} » réparé : {flux['url']} → {adresse}")
+    for i in items:
+        i["cle"] = cle_article(i["lien"], i["titre"], flux["id"])
+    return httpx.Response(200, request=httpx.Request("GET", adresse)), infos, items
 
 
 def synchroniser_recherches(sujets: list[dict]):
@@ -1210,7 +1442,8 @@ def suivre_le_fil_admin():
     p = profil_defaut()
     mien = profil_du_fil()
     mien["sujets"] = [{**x, "notifier": True} for x in mien["sujets"]]
-    if p.get("depart") or _cle_fil(p) != _cle_fil(mien) or [x["notifier"] for x in p["flux"]] != [x["notifier"] for x in mien["flux"]]:
+    reglages_flux = lambda q: sorted((x["url"], x["notifier"], x.get("categorie", "")) for x in q["flux"])  # noqa: E731
+    if p.get("depart") or _cle_fil(p) != _cle_fil(mien) or reglages_flux(p) != reglages_flux(mien):
         definir_defaut()
         log("fil par défaut mis à jour (le fil de l'admin, en permanence)")
 
