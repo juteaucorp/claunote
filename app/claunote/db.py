@@ -2081,6 +2081,13 @@ def reserver_notifications(seulement: tuple[str, ...] | None = None):
                                 + " RETURNING *", params).fetchall(), key=lambda n: n["id"])
 
 
+def oublier_notifications(prefixe: str, raison: str) -> int:
+    """Retire de la file (« ignore ») les notifications pas encore parties dont la clé commence par `prefixe`."""
+    with connect() as c:
+        return c.execute("UPDATE notifications SET statut = 'ignore', erreur = %s "
+                         "WHERE statut = 'attente' AND starts_with(cle, %s)", (raison, prefixe)).rowcount
+
+
 def remettre_en_attente(ids: list[int]):
     """Notifications réservées mais pas envoyées (heures de silence de leur compte) : de nouveau dans la file."""
     if ids:

@@ -324,3 +324,12 @@ def test_comptes_sur_le_fil_admin_reprennent_ses_articles_et_ses_alertes(base, m
         assert "Cloud" in [s["nom"] for s in db.sujets()] and actualites.suit_l_admin()
     with db.pour_compte(perso):
         assert "Cloud" not in [s["nom"] for s in db.sujets()]
+
+
+def test_alerte_disque_en_file_retiree_quand_la_place_revient(base):
+    db.notifier("disque:attention:2026-11-24", "💽 Peu de place sur le disque", "4.8 Go libres")
+    db.notifier("jour:controle", "Contrôle ce matin", "Maths")
+    assert db.oublier_notifications("disque:", "disque de nouveau libre") == 1
+    with db.connect() as c:
+        statuts = {r["cle"]: r["statut"] for r in c.execute("SELECT cle, statut FROM notifications")}
+    assert statuts["disque:attention:2026-11-24"] == "ignore" and statuts["jour:controle"] == "attente"

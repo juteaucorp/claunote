@@ -3387,6 +3387,7 @@ def page_notifications(request: Request, message: str = ""):
         "edt": emploi_du_temps.resume(dt.datetime.now(pronote.PARIS),
                                       notifications._heure(notifications.preferences()["heure"])),
         "recentes": db.notifications_recentes(8), "cle": notifications.cle_publique(),
+        "attente": notifications.raison_attente(dt.datetime.now(pronote.PARIS)),
         "message": message, "adresse": adresse_https()})
 
 

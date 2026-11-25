@@ -191,6 +191,16 @@ def vider_file(maintenant: dt.datetime):
             _vider(file, compte_id)
 
 
+def raison_attente(maintenant: dt.datetime, p: dict | None = None, compte_id=_COMPTE) -> str:
+    """Pourquoi une notification est encore « en attente », en clair (page Notifications)."""
+    p = p or preferences(compte_id)
+    if en_silence(maintenant, p):
+        return f"à {p['silence_fin']} (silence)"
+    if _occupe(maintenant, None if compte_id is _COMPTE else compte_id, p):
+        return "après le cours"
+    return "dans un instant"
+
+
 def urgente(cle: str) -> bool:
     return any(cle.startswith(p) for p in URGENTES)
 

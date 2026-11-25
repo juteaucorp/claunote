@@ -69,12 +69,12 @@
 {% endif %}
 
 {% if recentes %}
-<h2>Dernières envoyées</h2>
+<h2>Dernières notifications</h2>
 <ul class="carte lignes">
   {% for n in recentes %}
   <li><div class="corps"><strong>{{ n.titre }}</strong><div class="doux">{{ n.corps }}</div>
     {% if n.statut == 'erreur' %}<div class="alerte">Échec : {{ n.erreur }}</div>{% endif %}</div>
-    <span class="fin doux">{% if n.statut == 'attente' %}en attente{% else %}{{ (n.envoye_le or n.cree_le)|paris }}{% endif %}</span></li>
+    <span class="fin doux">{% if n.statut == 'attente' %}part {{ attente }}{% else %}{{ (n.envoye_le or n.cree_le)|paris }}{% endif %}</span></li>
   {% endfor %}
 </ul>
 {% endif %}

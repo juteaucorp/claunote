@@ -93,6 +93,14 @@ def test_heures_de_silence():
     assert nt.en_silence(LUNDI.replace(hour=13), {**p, "silence_debut": "12:00", "silence_fin": "14:00"})
 
 
+def test_raison_d_attente_en_clair(base, monkeypatch):
+    monkeypatch.setattr(nt.emploi_du_temps, "occupation", lambda m, edt: (None, None))
+    assert nt.raison_attente(LUNDI.replace(hour=6, minute=44), nt.DEFAUT) == "à 07:30 (silence)"
+    assert nt.raison_attente(LUNDI, nt.DEFAUT) == "dans un instant"
+    monkeypatch.setattr(nt.emploi_du_temps, "occupation", lambda m, edt: ("cours", None))
+    assert nt.raison_attente(LUNDI, nt.DEFAUT) == "après le cours"
+
+
 def test_rappel_du_jour_par_priorite(base):
     jour = LUNDI.date()
     assert nt.rappel_du_jour(jour) is None
