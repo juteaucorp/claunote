@@ -425,6 +425,8 @@ ALTER TABLE articles ADD COLUMN IF NOT EXISTS recherche tsvector GENERATED ALWAY
     setweight(to_tsvector('french', coalesce(pourquoi, '') || ' ' || coalesce(notion, '')), 'B') ||
     setweight(to_tsvector('french', coalesce(extrait, '')), 'C')) STORED;
 CREATE INDEX IF NOT EXISTS articles_recherche ON articles USING gin (recherche);
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS titre_ia TEXT;   -- titre neutre et informatif réécrit par l'IA (sans racolage)
+CREATE INDEX IF NOT EXISTS articles_cree ON articles (cree_le DESC);
 -- Journal de sécurité (securite.py) : connexions, appareils, refus, alertes ; gardé 180 jours
 CREATE TABLE IF NOT EXISTS securite (
     id           SERIAL PRIMARY KEY,
@@ -2748,6 +2750,10 @@ def chercher_passages(requete: str, vecteur: list | None = None, niveau: str | N
 # Ce qui va dans « Pour toi » : un sujet suivi (jugé assez important par l'IA quand elle a trié), ou un flux
 # marqué « tout m'intéresse »
 PERTINENT = ("((cardinality(a.sujets) > 0 AND (a.tri <> 'ia' OR a.score >= %(seuil)s)) OR f.notifier)")
+# Nombre de sources différentes qui racontent la même information (sur 3 jours) : une histoire très reprise compte plus
+COUVERTURE = ("(CASE WHEN a.evenement IS NULL THEN 1 ELSE (SELECT count(DISTINCT a2.flux_id) FROM articles a2 "
+              "WHERE a2.evenement = a.evenement AND a2.publie_le > a.publie_le - interval '3 days' "
+              "AND a2.publie_le < a.publie_le + interval '3 days') END)")
 SEUIL_POUR_TOI = 0.5
 
 
@@ -2850,8 +2856,9 @@ def articles_trier(resultats: list[dict]):
     with connect() as c:
         for r in resultats:
             c.execute("UPDATE articles SET tri = %(tri)s, sujets = %(sujets)s, score = %(score)s, "
-                      "pourquoi = %(pourquoi)s, alerte = %(alerte)s, evenement = %(evenement)s, notion = %(notion)s "
-                      "WHERE id = %(id)s", {"alerte": False, "evenement": None, "notion": None, **r})
+                      "pourquoi = %(pourquoi)s, alerte = %(alerte)s, evenement = %(evenement)s, notion = %(notion)s, "
+                      "titre_ia = %(titre_ia)s WHERE id = %(id)s",
+                      {"alerte": False, "evenement": None, "notion": None, "titre_ia": None, **r})
 
 
 def articles_a_annoncer(jours_alertes: int = 2):
@@ -2896,7 +2903,7 @@ def verdicts_ia(cles: list[str], compte_id: int) -> dict[str, dict]:
         return {}
     with sans_compte(), connect() as c:
         return {r["cle"]: r for r in c.execute(
-            """SELECT DISTINCT ON (cle) cle, pourquoi, alerte, evenement, notion FROM articles
+            """SELECT DISTINCT ON (cle) cle, pourquoi, alerte, evenement, notion, titre_ia FROM articles
                WHERE cle = ANY(%s) AND tri = 'ia' AND compte_id <> %s ORDER BY cle, compte_id <> 1, id""",
             (list(cles), compte_id)).fetchall()}
 
@@ -2923,7 +2930,8 @@ def articles_pour_point(heures: int = 24, seuil: float = 0.6, limite: int = 14):
     """Les articles importants des dernières heures, pour « L'essentiel » (les alertes d'abord)."""
     with connect() as c:
         return c.execute(
-            f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source FROM articles a JOIN flux f ON f.id = a.flux_id
+            f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, {COUVERTURE} AS sources
+                FROM articles a JOIN flux f ON f.id = a.flux_id
                 WHERE a.publie_le > now() - make_interval(hours => %(heures)s)
                   AND ((a.tri = 'ia' AND (a.alerte OR (a.score >= %(seuil)s AND {PERTINENT})))
                        -- compte sans forfait : résumé repris de l'IA, rangé dans ses sujets par mots-clés
@@ -2940,21 +2948,22 @@ def articles_miroir(compte_id: int, depuis, jours: int = 14) -> int:
     with sans_compte(), connect() as c:
         return c.execute(
             """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, tri, sujets, score, pourquoi,
-                                     annonce, alerte, evenement, image, notion, media, media_url, duree)
+                                     annonce, alerte, evenement, image, notion, media, media_url, duree, titre_ia)
                SELECT fm.id, a.cle, a.lien, a.titre, a.extrait, a.publie_le, a.tri,
                       ARRAY(SELECT sm.id FROM sujets s JOIN sujets sm ON sm.nom = s.nom AND sm.compte_id = %(moi)s
                             WHERE s.id = ANY(a.sujets) ORDER BY sm.id),
                       a.score, a.pourquoi, %(depuis)s::timestamptz IS NULL OR a.cree_le < %(depuis)s,
-                      a.alerte, a.evenement, a.image, a.notion, a.media, a.media_url, a.duree
+                      a.alerte, a.evenement, a.image, a.notion, a.media, a.media_url, a.duree, a.titre_ia
                FROM articles a JOIN flux f ON f.id = a.flux_id AND f.compte_id = 1
                JOIN flux fm ON fm.compte_id = %(moi)s AND fm.url = f.url
                WHERE a.compte_id = 1 AND a.tri <> 'attente' AND a.publie_le > now() - make_interval(days => %(jours)s)
                ON CONFLICT (compte_id, cle) DO UPDATE SET tri = EXCLUDED.tri, sujets = EXCLUDED.sujets,
                    score = EXCLUDED.score, pourquoi = EXCLUDED.pourquoi, alerte = EXCLUDED.alerte,
-                   evenement = EXCLUDED.evenement, notion = EXCLUDED.notion
-               WHERE (articles.tri, articles.sujets, articles.score, articles.pourquoi, articles.alerte, articles.evenement)
+                   evenement = EXCLUDED.evenement, notion = EXCLUDED.notion, titre_ia = EXCLUDED.titre_ia
+               WHERE (articles.tri, articles.sujets, articles.score, articles.pourquoi, articles.alerte, articles.evenement,
+                      articles.titre_ia)
                      IS DISTINCT FROM (EXCLUDED.tri, EXCLUDED.sujets, EXCLUDED.score, EXCLUDED.pourquoi,
-                                       EXCLUDED.alerte, EXCLUDED.evenement)
+                                       EXCLUDED.alerte, EXCLUDED.evenement, EXCLUDED.titre_ia)
                RETURNING id""", {"moi": compte_id, "depuis": depuis, "jours": jours}).rowcount
 
 
@@ -2979,7 +2988,8 @@ def articles_par_ids(ids: list[int]):
         return []
     with connect() as c:
         return c.execute(
-            """SELECT a.id, a.titre, a.lien, a.lu, a.alerte, coalesce(nullif(f.titre, ''), f.site) AS source
+            """SELECT a.id, a.titre, a.titre_ia, a.lien, a.lu, a.alerte, a.cree_le, a.publie_le, a.notion, a.evenement,
+                      coalesce(nullif(f.titre, ''), f.site) AS source
                FROM articles a JOIN flux f ON f.id = a.flux_id WHERE a.id = ANY(%s)""", (ids,)).fetchall()
 
 
@@ -3028,7 +3038,8 @@ def articles(vue: str = "pour_toi", sujet_id: int | None = None, flux_id: int | 
              categorie: str | None = None, media: str | None = None, jours: int | None = None,
              non_lus: bool = False, tri: str = "recents") -> tuple[list, int]:
     """Articles de la page Actualités, les plus récents d'abord (ou les plus pertinents pour une recherche) :
-    (page, total). Recherche : mots racinisés en français (« failles » trouve « faille », "phrase exacte",
+    (page, total). tri « importance » (comme Techmeme) : jour par jour, les alertes, puis les histoires les plus
+    importantes et les plus reprises par tes sources, avant les autres. Recherche : mots racinisés en français (« failles » trouve « faille », "phrase exacte",
     -exclu, OU), et sinon chaque mot tel quel, sans accents (« securite » trouve « sécurité »)."""
     where, p = ["true"], {"seuil": SEUIL_POUR_TOI, "limite": limite, "decalage": decalage}
     q = (q or "").strip()[:200]
@@ -3067,6 +3078,12 @@ def articles(vue: str = "pour_toi", sujet_id: int | None = None, flux_id: int | 
     if flux_id:
         where.append("a.flux_id = %(flux)s")
         p["flux"] = flux_id
+    ordre = ""
+    if q and tri == "pertinence":
+        ordre = rang + " DESC, "
+    elif tri == "importance":
+        ordre = (f"(a.publie_le AT TIME ZONE 'Europe/Paris')::date DESC, a.alerte DESC, "
+                 f"coalesce(a.score, 0.55) + 0.05 * least({COUVERTURE} - 1, 4) DESC, ")
     with connect() as c:
         lignes = c.execute(
             f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, f.notifier AS flux_notifier,
@@ -3074,9 +3091,62 @@ def articles(vue: str = "pour_toi", sujet_id: int | None = None, flux_id: int | 
                        ARRAY(SELECT s.nom FROM sujets s WHERE s.id = ANY(a.sujets) ORDER BY s.nom) AS noms_sujets
                 FROM articles a JOIN flux f ON f.id = a.flux_id
                 WHERE {' AND '.join(where)}
-                ORDER BY {rang + ' DESC, ' if q and tri == 'pertinence' else ''}a.publie_le DESC, a.id DESC
+                ORDER BY {ordre}a.publie_le DESC, a.id DESC
                 LIMIT %(limite)s OFFSET %(decalage)s""", p).fetchall()
     return lignes, (lignes[0]["total"] if lignes else 0)
+
+
+def actualites_depuis(depuis, limite: int = 5) -> dict:
+    """Ce qui est arrivé dans « Pour toi » depuis ta dernière visite (comme Inoreader ou Feedly) : nouveaux
+    articles, alertes, histoires (même information = une seule), et les plus importantes (rattrapage)."""
+    p = {"seuil": SEUIL_POUR_TOI, "depuis": depuis, "limite": limite}
+    with connect() as c:
+        r = c.execute(
+            f"""SELECT count(*) AS nouveaux, count(DISTINCT coalesce(a.evenement, a.id::text)) FILTER (WHERE a.alerte) AS alertes,
+                       count(DISTINCT coalesce(a.evenement, a.id::text)) AS histoires,
+                       count(*) FILTER (WHERE NOT a.lu) AS non_lus
+                FROM articles a JOIN flux f ON f.id = a.flux_id
+                WHERE a.cree_le > %(depuis)s AND a.tri <> 'attente' AND {PERTINENT}""", p).fetchone()
+        tops = c.execute(
+            f"""SELECT * FROM (SELECT DISTINCT ON (coalesce(a.evenement, a.id::text)) a.id, a.evenement, a.titre, a.titre_ia, a.lien,
+                       a.pourquoi, a.alerte, a.score, a.lu, a.publie_le, coalesce(nullif(f.titre, ''), f.site) AS source,
+                       {COUVERTURE} AS sources
+                FROM articles a JOIN flux f ON f.id = a.flux_id
+                WHERE a.cree_le > %(depuis)s AND a.tri <> 'attente' AND {PERTINENT}
+                ORDER BY coalesce(a.evenement, a.id::text), a.alerte DESC, a.score DESC NULLS LAST, a.publie_le DESC) t
+                ORDER BY alerte DESC, coalesce(score, 0.55) + 0.05 * least(sources - 1, 4) DESC, publie_le DESC
+                LIMIT %(limite)s""", p).fetchall()
+    return {**r, "a_la_une": tops}
+
+
+def tendances(heures: int = 24, avant: int = 96, limite: int = 8) -> list[dict]:
+    """Notions qui montent (comme les tendances d'Inoreader ou de Google Actualités) : citées par au moins deux
+    articles des dernières heures, de sources différentes ; « nouveau » si on n'en parlait pas avant."""
+    with connect() as c:
+        return c.execute(
+            """SELECT min(a.notion) AS notion, count(*) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) AS n,
+                      count(DISTINCT a.flux_id) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) AS sources,
+                      count(*) FILTER (WHERE a.publie_le <= now() - make_interval(hours => %(h)s)) AS avant,
+                      bool_or(a.alerte AND a.publie_le > now() - make_interval(hours => %(h)s)) AS alerte
+               FROM articles a
+               WHERE a.notion IS NOT NULL AND a.tri <> 'attente' AND coalesce(a.score, 0.5) >= 0.3
+                 AND a.publie_le > now() - make_interval(hours => %(tout)s)
+               GROUP BY lower(a.notion)
+               HAVING count(*) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) >= 2
+                  AND count(DISTINCT a.flux_id) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) >= 2
+               ORDER BY bool_or(a.alerte AND a.publie_le > now() - make_interval(hours => %(h)s)) DESC,
+                        count(DISTINCT a.flux_id) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) DESC,
+                        count(*) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) DESC
+               LIMIT %(limite)s""", {"h": heures, "tout": heures + avant, "limite": limite}).fetchall()
+
+
+def histoire_lue(article_id: int, jours: int = 7) -> list[int]:
+    """L'article et tous ceux qui racontent la même information (même étiquette) : lus d'un coup."""
+    with connect() as c:
+        return [r["id"] for r in c.execute(
+            """UPDATE articles SET lu = true WHERE id = %(id)s OR (evenement IS NOT NULL AND evenement =
+                   (SELECT evenement FROM articles WHERE id = %(id)s) AND publie_le > now() - make_interval(days => %(j)s))
+               RETURNING id""", {"id": article_id, "j": jours}).fetchall()]
 
 
 def article(article_id: int):

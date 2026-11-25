@@ -154,6 +154,9 @@ Pour chaque article :
 - "sujets" : les codes des sujets qu'il concerne VRAIMENT (pas un simple mot en commun ; [] si aucun) ;
 - "score" : son importance pour lui, d'après ses sujets et sa formation, de 0 à 1 (0,9 : événement majeur ;
   0,6 : intéressant ; 0,3 : anecdotique ; 0 : hors sujet, pub, promo, bon plan, test de produit) ;
+- "titre" : un titre neutre et informatif en français, 12 mots au plus, qui dit le fait (« Fuite chez France
+  Travail : 43 millions de personnes touchées ») : pas de racolage, pas de question, pas de « vous ne devinerez
+  jamais » ; le titre d'origine s'il est déjà clair ; vide si hors sujet ;
 - "resume" : en français, style dépêche, 20 mots au plus : ce qui s'est passé, qui est touché, l'ampleur, et
   s'il y a quelque chose à faire (« Mettre à jour FortiOS en 7.4.5 »). Chiffres concrets, pas de « cet article »
   ni de formule creuse. Vide si hors sujet ;
@@ -168,18 +171,28 @@ Pour chaque article :
 - "notion" : la notion de cours que l'article illustre, en 1 à 4 mots, comme dans un cours de sa formation
   (« VLAN », « chiffrement TLS », « RGPD », « inflation », « photosynthèse ») ; "" si aucune.
 Réponds seulement en JSON, un objet par article, tous les articles :
-[{{"id": 12, "sujets": ["S1"], "score": 0.9, "resume": "...", "alerte": true, "evenement": "...", "notion": "..."}}]"""
+[{{"id": 12, "sujets": ["S1"], "score": 0.9, "titre": "...", "resume": "...", "alerte": true, "evenement": "...", "notion": "..."}}]"""
 
 PROMPT_POINT = """Tu fais « L'essentiel » de la veille d'un élève ou d'un étudiant : ce qu'il doit savoir de
-l'actualité des dernières 24 heures sur ses sujets, en 30 secondes.
-{formation}Sur l'entrée : les articles importants, un par ligne en JSON (id, source, titre, resume, alerte, notion).
-Écris de 3 à 5 points, du plus important au moins important :
-- un point = UNE information (regroupe les articles qui parlent de la même chose), 25 mots au plus, en français,
-  style dépêche : le fait, qui est touché, l'ampleur, et l'action à faire s'il y en a une ;
-- pas de titre, pas d'introduction, pas de « cet article », pas de point sans fait concret ;
-- "ids" : les articles dont vient le point (au moins un, uniquement ceux de l'entrée).
+l'actualité des dernières 24 heures sur ses sujets, en 30 secondes, d'un seul coup d'œil.
+{formation}Sur l'entrée : les articles importants, un par ligne en JSON (id, source, titre, resume, alerte, notion,
+sources = nombre de sites qui en parlent).
+{precedent}Écris :
+- "en_bref" : UNE phrase de 20 mots au plus, ce qu'il faut retenir de la journée s'il ne lit que ça (le fait le
+  plus important d'abord) ; si rien de marquant : « Journée calme : … » ;
+- "points" : de 3 à 5 points, du plus important au moins important (une alerte ou une info reprise par beaucoup
+  de sources passe devant). Un point = UNE information (regroupe les articles qui parlent de la même chose) :
+  - "titre" : 2 à 5 mots qui disent de quoi il s'agit (« Fuite France Travail », « Faille FortiOS ») ;
+  - "texte" : 25 mots au plus, en français, style dépêche : le fait, qui est touché, l'ampleur ; pas
+    d'introduction, pas de « cet article », pas de point sans fait concret ;
+  - "action" : ce qu'il doit faire, 10 mots au plus (« Mettre à jour FortiOS en 7.4.5 »), "" si rien ;
+  - "suite" : true si c'est la suite d'un point de l'essentiel précédent (du nouveau sur la même histoire) ;
+  - "ids" : les articles dont vient le point (au moins un, uniquement ceux de l'entrée) ;
+- "a_retenir" : si une de ces infos illustre bien une notion de cours de sa formation, {{"notion": "1 à 4 mots",
+  "texte": "20 mots au plus : le lien entre l'info et la notion, pour réviser"}} ; sinon null.
 Réponds seulement en JSON :
-{{"points": [{{"texte": "...", "ids": [12, 15]}}]}}"""
+{{"en_bref": "...", "points": [{{"titre": "...", "texte": "...", "action": "", "suite": false, "ids": [12, 15]}}],
+  "a_retenir": {{"notion": "...", "texte": "..."}}}}"""
 
 
 def formation_texte() -> str:
@@ -898,7 +911,9 @@ def lire_reponse(texte: str, ids: set[int], codes: dict[str, int]) -> dict[int, 
         alerte = d.get("alerte") is True and bool(sujets)
         hors_sujet = not sujets and score < 0.3
         notion = re.sub(r"\s+", " ", str(d.get("notion") or "")).strip(" .«»\"'")[:60]
+        titre = re.sub(r"\s+", " ", str(d.get("titre") or "")).strip(" «»\"'")[:140]
         resultats[i] = {"id": i, "tri": "ia", "sujets": sujets, "score": max(0.0, min(score, 1.0)),
+                        "titre_ia": None if hors_sujet else titre or None,
                         "pourquoi": str(d.get("resume") or d.get("pourquoi") or "").strip()[:220] or None,
                         "alerte": alerte, "evenement": None if hors_sujet else _etiquette(d.get("evenement")),
                         "notion": None if hors_sujet else notion or None}
@@ -911,9 +926,10 @@ def _sans_ia(a: dict, sujets: list[dict], verdict: dict | None = None) -> dict:
     """Rangé par mots-clés. `verdict` : ce que l'IA a dit du même article chez un autre compte (compte sans
     forfait) : son résumé et son alerte, si l'article tombe dans un de ses sujets."""
     r = {"id": a["id"], "tri": "mots_cles", "sujets": par_mots_cles(sujets, a), "score": None, "pourquoi": None,
-         "alerte": False, "evenement": None, "notion": None}
+         "alerte": False, "evenement": None, "notion": None, "titre_ia": None}
     if verdict:
         r.update(pourquoi=verdict["pourquoi"], evenement=verdict["evenement"], notion=verdict["notion"],
+                 titre_ia=verdict.get("titre_ia"),
                  alerte=bool(verdict["alerte"]) and bool(r["sujets"]))
     return r
 
@@ -1033,10 +1049,19 @@ def lire_point(texte: str, ids: set[int]) -> dict:
             continue
         cites = [int(i) for i in (p.get("ids") or []) if str(i).isdigit() and int(i) in ids]
         if cites:
-            points.append({"texte": re.sub(r"\s+", " ", str(p["texte"])).strip()[:240], "ids": cites[:4]})
+            points.append({"texte": _ligne(p["texte"], 240), "ids": cites[:6], "titre": _ligne(p.get("titre"), 60),
+                           "action": _ligne(p.get("action"), 100), "suite": p.get("suite") is True})
     if not points:
         raise agent.ErreurAgent("point du jour sans aucun point relié aux articles")
-    return {"points": points}
+    r = d.get("a_retenir")
+    a_retenir = None
+    if isinstance(r, dict) and _ligne(r.get("notion"), 60) and _ligne(r.get("texte"), 200):
+        a_retenir = {"notion": _ligne(r.get("notion"), 60).strip(" .«»"), "texte": _ligne(r.get("texte"), 200)}
+    return {"points": points, "en_bref": _ligne(d.get("en_bref"), 200), "a_retenir": a_retenir}
+
+
+def _ligne(texte, longueur: int) -> str:
+    return re.sub(r"\s+", " ", str(texte or "")).strip()[:longueur]
 
 
 POINT_AFFICHE = 36 * 3600   # au-delà, « L'essentiel » n'est plus montré (ni copié)
@@ -1070,12 +1095,13 @@ def copier_point_admin(maintenant: float | None = None) -> bool | None:
         return False
     cles = db.cles_articles(sorted({i for x in p["points"] for i in x["ids"]}))
     miens = db.ids_par_cles(list(cles.values()))
-    points = [{"texte": x["texte"], "ids": ids} for x in p["points"]
+    points = [{**x, "ids": ids} for x in p["points"]
               if (ids := [miens[cles[i]] for i in x["ids"] if cles.get(i) in miens])]
     if not points:
         return None
     db.etat_ecrire(cle("actualites_point"), json.dumps(
         {"points": points, "le": p["le"], "ids": sorted({i for x in points for i in x["ids"]}),
+         "en_bref": p.get("en_bref") or "", "a_retenir": p.get("a_retenir"),
          "modele": p.get("modele"), "source_le": p["le"], "copie": True}, ensure_ascii=False))
     log(f"« L'essentiel » de l'admin repris ({len(points)} points)")
     return True
@@ -1113,11 +1139,15 @@ def _faire_point(claude_ok, maintenant: float | None = None) -> bool:
         return False
     if not claude_ok():
         return False
-    entree = "\n".join(json.dumps({"id": a["id"], "source": a["source"], "titre": a["titre"],
+    entree = "\n".join(json.dumps({"id": a["id"], "source": a["source"], "titre": a.get("titre_ia") or a["titre"],
                                    "resume": a["pourquoi"] or a["extrait"][:200], "alerte": bool(a["alerte"]),
-                                   "notion": a.get("notion") or ""}, ensure_ascii=False) for a in candidats)
+                                   "notion": a.get("notion") or "", "sources": a.get("sources") or 1},
+                                  ensure_ascii=False) for a in candidats)
+    avant = [x.get("titre") or x["texte"] for x in (ancien.get("points") or [])
+             if maintenant - float(ancien.get("le") or 0) < POINT_AFFICHE]
+    precedent = ("L'essentiel précédent disait : " + " ; ".join(avant) + ".\n") if avant else ""
     try:
-        consigne = PROMPT_POINT.format(formation=formation_texte())
+        consigne = PROMPT_POINT.format(formation=formation_texte(), precedent=precedent)
         lu, modele = agent.demander("actualites_point", consigne, Path(tempfile.gettempdir()), entree=entree,
                                     timeout=300, lire=lambda t: lire_point(t, set(ids)))
     except agent.ErreurAgent as e:
@@ -1133,15 +1163,21 @@ def _faire_point(claude_ok, maintenant: float | None = None) -> bool:
 
 # --- Affichage : même info regroupée, lien avec les cours ---------------------------------
 
-def regrouper(liste: list[dict]) -> list[dict]:
-    """La même information chez plusieurs sites = une seule carte (la plus récente), les autres en « aussi chez »."""
+def regrouper(liste: list[dict], depuis: dt.datetime | None = None) -> list[dict]:
+    """La même information chez plusieurs sites = une seule carte (la première : la plus récente, ou la plus
+    importante en tri par importance), les autres en « aussi chez » ; « nouveau » : arrivé depuis ta visite."""
     cartes, par_evenement = [], {}
     for a in liste:
-        a = {**a, "aussi": [], "image_id": a["id"]}
+        a = {**a, "aussi": [], "image_id": a["id"], "ids": [a["id"]],
+             "nouveau": bool(depuis and a.get("cree_le") and a["cree_le"] > depuis)}
+        a["sources"] = 1
         cle = a.get("evenement")
         if cle and cle in par_evenement:
-            tete = par_evenement[cle]   # la plus récente (la liste est triée du plus récent au plus ancien)
+            tete = par_evenement[cle]
             tete["aussi"].append({"id": a["id"], "source": a["source"], "lien": a["lien"], "titre": a["titre"]})
+            tete["ids"].append(a["id"])
+            tete["sources"] = len({tete["source"], *(x["source"] for x in tete["aussi"])})
+            tete["nouveau"] = tete["nouveau"] or a["nouveau"]
             tete["lu"] = tete["lu"] and a["lu"]
             tete["alerte"] = bool(tete.get("alerte") or a.get("alerte"))
             tete["score"] = max(tete.get("score") or 0, a.get("score") or 0) if tete.get("tri") == "ia" else tete["score"]
@@ -1275,6 +1311,29 @@ def noter_lecture(maintenant: dt.datetime | None = None):
     db.etat_ecrire(cle("actualites_lectures"), json.dumps({j: v for j, v in h.items() if j > limite}))
 
 
+VISITE_PAUSE = 20 * 60   # secondes sans venir : la visite suivante est une nouvelle visite
+
+
+def visite(noter: bool = True, maintenant: float | None = None) -> dt.datetime | None:
+    """L'heure de ta visite précédente (avant celle-ci), pour « Depuis ta visite » et les pastilles « Nouveau ».
+    Plusieurs pages vues à moins de 20 minutes d'écart = la même visite : ce qui était nouveau le reste.
+    noter=False (rafraîchissement automatique de la page) : rien n'est changé."""
+    maintenant = maintenant or time.time()
+    try:
+        v = json.loads(db.etat_valeur(cle("actualites_visite")) or "{}")
+    except ValueError:
+        v = {}
+    derniere, precedente = float(v.get("derniere") or 0), v.get("precedente")
+    if noter:
+        if derniere and maintenant - derniere > VISITE_PAUSE:
+            precedente = derniere
+        try:
+            db.etat_ecrire(cle("actualites_visite"), json.dumps({"derniere": maintenant, "precedente": precedente}))
+        except Exception as e:   # « Voir en tant que » (base en lecture seule), panne : la page s'affiche quand même
+            log(f"visite non notée : {e}")
+    return dt.datetime.fromtimestamp(float(precedente), dt.timezone.utc) if precedente else None
+
+
 def heure_quotidienne() -> tuple[dt.time | None, str]:
     """(heure de la notification du jour, pourquoi) ; None : réglée sur « non »."""
     choix = reglages().get("quotidien") or "auto"
@@ -1314,7 +1373,7 @@ def quotidien(maintenant: dt.datetime | None = None) -> bool:
     frais = p.get("points") and m.timestamp() - float(p.get("le") or 0) < 20 * 3600
     if frais:
         titre = f"📰 L'essentiel : {len(p['points'])} info{'s' if len(p['points']) > 1 else ''} du jour"
-        corps = " · ".join(x["texte"] for x in p["points"][:2])
+        corps = p.get("en_bref") or " · ".join(x["texte"] for x in p["points"][:2])
     else:
         n = db.nb_actualites_nouvelles()
         if not n:
