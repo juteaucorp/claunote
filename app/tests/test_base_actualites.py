@@ -346,3 +346,64 @@ def test_test_ecran_verrouille_part_une_minute_plus_tard(base):
         c.execute("UPDATE notifications SET cree_le = now() - interval '1 second' WHERE cle = 'test-verrouille:1'")
     assert [n["cle"] for n in db.reserver_notifications()] == ["test-verrouille:1"]
     assert notifications.urgente("test-verrouille:1") and notifications.nuit("test-verrouille:1")
+
+
+# --- Recherche dans les Actualités, catégories et podcasts sur une vraie base --------------------------
+
+def _articles_recherche():
+    secu = db.flux_ajouter("https://secu.ex/feed", "Secu", "secu.ex", categorie="Sécurité")
+    pod = db.flux_ajouter("https://pod.ex/feed", "Tech Café", "pod.ex", categorie="Podcast")
+    maintenant = dt.datetime.now(dt.timezone.utc)
+    db.articles_ajouter(secu, [
+        {"cle": "a", "lien": "https://secu.ex/a", "titre": "Des failles critiques chez Fortinet", "extrait": "FortiOS",
+         "publie_le": maintenant},
+        {"cle": "b", "lien": "https://secu.ex/b", "titre": "La sécurité de Windows Server", "extrait": "Active Directory",
+         "publie_le": maintenant - dt.timedelta(days=10)},
+        {"cle": "c", "lien": "https://secu.ex/c", "titre": "Remise de 50% sur un routeur", "extrait": "",
+         "publie_le": maintenant}], annonce=True)
+    db.articles_ajouter(pod, [{"cle": "d", "lien": "https://pod.ex/d", "titre": "Épisode : la faille Windows du mois",
+                               "extrait": "", "publie_le": maintenant, "media": "audio",
+                               "media_url": "https://pod.ex/d.mp3", "duree": 1800}], annonce=True)
+
+
+def _titres(**k):
+    return sorted(a["titre"] for a in db.articles("tout", **k)[0])
+
+
+def test_recherche_dans_les_actualites(base):
+    _articles_recherche()
+    # racine française (« faille » trouve « failles ») et sans accents (« securite » trouve « sécurité »)
+    assert _titres(q="faille") == ["Des failles critiques chez Fortinet", "Épisode : la faille Windows du mois"]
+    assert _titres(q="securite") == ["La sécurité de Windows Server"]
+    assert _titres(q="windows -faille") == ["La sécurité de Windows Server"]
+    assert _titres(q='"active directory"') == ["La sécurité de Windows Server"]
+    assert _titres(q="50%") == ["Remise de 50% sur un routeur"]
+    assert _titres(q="faille", categorie="Podcast") == ["Épisode : la faille Windows du mois"]
+    assert _titres(media="audio") == ["Épisode : la faille Windows du mois"]
+    assert _titres(q="windows", jours=7) == ["Épisode : la faille Windows du mois"]
+    assert len(_titres(q="windows", non_lus=True)) == 2
+    a = db.articles("tout", q="faille")[0]
+    db.article_maj(a[0]["id"], lu=True)
+    assert len(_titres(q="faille", non_lus=True)) == 1
+    assert db.articles("tout", q="fortinet", tri="pertinence")[1] == 1
+    assert _titres(q="tech café") == ["Épisode : la faille Windows du mois"]   # le nom de la source compte aussi
+    ep = db.articles("tout", media="audio")[0][0]
+    assert ep["media_url"] == "https://pod.ex/d.mp3" and ep["duree"] == 1800 and ep["categorie"] == "Podcast"
+
+
+def test_categories_suivies_par_le_fil_par_defaut(base):
+    invite = db.creer_compte("camille", "h", "invite", ["actualites"])
+    db.flux_ajouter("https://secu.ex/feed", "Secu", "secu.ex", categorie="Sécurité")
+    actualites.definir_defaut()
+    with db.pour_compte(invite):
+        actualites.appliquer_defaut()
+        assert [(f["url"], f["categorie"]) for f in db.flux_liste()] == [("https://secu.ex/feed", "Sécurité")]
+    # L'admin range la source ailleurs : le fil par défaut (en permanence) et ceux qui le suivent aussi
+    db.flux_maj(db.flux_liste()[0]["id"], categorie="Cyber")
+    actualites.suivre_le_fil_admin()
+    with db.pour_compte(invite):
+        actualites.initialiser()
+        assert db.flux_liste()[0]["categorie"] == "Cyber"
+    # Sélection de départ : sa version change avec ses sources (les comptes qui la suivent reçoivent les nouvelles)
+    actualites.definir_defaut(depuis_mon_fil=False)
+    assert actualites.profil_defaut()["version"].endswith(":" + actualites._empreinte_depart())

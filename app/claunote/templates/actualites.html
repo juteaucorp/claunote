@@ -12,6 +12,49 @@
 </div>
 <p id="retour-releve" class="doux"></p>
 
+<form class="recherche-actu" method="get" action="/actualites" role="search">
+  {% if vue == 'favoris' %}<input type="hidden" name="vue" value="favoris">{% endif %}
+  <div class="champ-recherche">
+    {{ icone('recherche', 18) }}
+    <input type="search" name="q" value="{{ recherche.q }}" placeholder="Rechercher un article" aria-label="Rechercher dans tes actualités" enterkeyhint="search" autocomplete="off">
+    <button class="principal">Chercher</button>
+  </div>
+  {% set n_filtres = [recherche.categorie, recherche.type, recherche.periode, recherche.non_lus, flux]|select|list|length %}
+  <details class="filtres" {{ 'open' if recherche.type or recherche.periode or recherche.non_lus }}>
+    <summary>Filtres{% if n_filtres %} <span class="badge">{{ n_filtres }}</span>{% endif %}</summary>
+    <div class="grille-filtres">
+      <label>Catégorie
+        <select name="categorie"><option value="">Toutes</option>
+          {% for c in categories %}<option value="{{ c.nom }}" {{ 'selected' if recherche.categorie == c.nom }}>{{ c.nom }}</option>{% endfor %}
+        </select></label>
+      <label>Source
+        <select name="flux"><option value="">Toutes</option>
+          {% for nom, liste in flux_liste|rejectattr('sujet_id')|groupby('categorie', default='') %}
+          <optgroup label="{{ nom or 'Sans catégorie' }}">
+            {% for f in liste %}<option value="{{ f.id }}" {{ 'selected' if flux == f.id }}>{{ f.titre or f.url }}</option>{% endfor %}
+          </optgroup>
+          {% endfor %}
+        </select></label>
+      <label>Type
+        <select name="type"><option value="">Tout</option>
+          {% for cle, (_, libelle) in types.items() %}<option value="{{ cle }}" {{ 'selected' if recherche.type == cle }}>{{ libelle }}</option>{% endfor %}
+        </select></label>
+      <label>Période
+        <select name="periode"><option value="">Toujours</option>
+          {% for cle, (_, libelle) in periodes.items() %}<option value="{{ cle }}" {{ 'selected' if recherche.periode == cle }}>{{ libelle }}</option>{% endfor %}
+        </select></label>
+      <label>Ordre
+        <select name="tri"><option value="">Plus récents</option>
+          <option value="pertinence" {{ 'selected' if recherche.tri == 'pertinence' }}>Plus pertinents (recherche)</option>
+        </select></label>
+      <label class="case-non-lus"><input type="checkbox" name="non_lus" value="1" {{ 'checked' if recherche.non_lus }}> Non lus seulement</label>
+    </div>
+    <p class="astuces doux">Astuces : <code>"phrase exacte"</code>, <code>-mot</code> pour l'exclure, <code>ou</code> entre deux mots.
+      « faille » trouve aussi « failles », et les accents ne comptent pas.</p>
+    <div class="actions-filtres"><button class="principal">Appliquer</button>{% if filtres or flux %}<a class="bouton" href="/actualites?vue=tout">Effacer</a>{% endif %}</div>
+  </details>
+</form>
+
 <nav class="onglets-page" aria-label="Filtrer">
   {% for cle, libelle in vues.items() %}
   <a href="/actualites?vue={{ cle }}" class="{{ 'actif' if vue == cle and not sujet and not flux }}">{{ libelle }}{% if cle == 'pour_toi' and nb_actualites() %}<span class="badge">{{ nb_actualites() }}</span>{% endif %}</a>
@@ -21,7 +64,18 @@
   {% endfor %}
 </nav>
 
-{% if flux_nom %}
+{% if categories %}
+<nav class="onglets-page categories" aria-label="Catégories">
+  {% for c in categories %}
+  <a href="/actualites?categorie={{ c.nom|urlencode }}" class="{{ 'actif' if recherche.categorie == c.nom }}">{{ c.nom }}{% if c.non_lus %}<span class="compte">{{ c.non_lus }}</span>{% endif %}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+{% if filtres %}
+<p class="filtre resultats"><strong>{{ total }}</strong> résultat{{ 's' if total > 1 }}{% if recherche.q %} pour « {{ recherche.q }} »{% endif %}{% if flux_nom %} dans <strong>{{ flux_nom }}</strong>{% endif %}{% if recherche.categorie %} · {{ recherche.categorie }}{% endif %}
+  · <a href="/actualites?vue=tout">effacer</a></p>
+{% elif flux_nom %}
 <p class="filtre">Flux : <strong>{{ flux_nom }}</strong> · <a href="/actualites?vue=tout">voir tous les flux</a></p>
 {% endif %}
 
@@ -41,7 +95,7 @@
   </ol>
 </section>
 {% endif %}
-{% if groupes and vue != 'favoris' %}
+{% if groupes and vue != 'favoris' and not filtres and not flux and not sujet %}
 <form method="post" action="/actualites/tout-lu" class="tout-lu"><input type="hidden" name="vue" value="{{ vue }}">
   <button class="petit">{{ icone('check', 18) }}Tout marquer comme lu</button></form>
 {% endif %}
@@ -58,6 +112,9 @@
   {% if en_attente %}
   <p><strong>Premier relevé en cours…</strong></p>
   <p class="doux">Les articles arrivent d'ici une minute.</p>
+  {% elif filtres %}
+  <p><strong>Rien trouvé.</strong></p>
+  <p class="doux">Essaie un autre mot, moins de filtres, ou une période plus longue. <a href="/actualites?vue=tout">Tout effacer</a></p>
   {% elif vue == 'favoris' %}
   <p><strong>Aucun favori.</strong></p>
   <p class="doux">Touche l'étoile d'un article pour le garder ici (il n'est jamais effacé).</p>
@@ -80,13 +137,16 @@
       <div class="meta doux">
         {% if not a.lu %}<span class="point" aria-label="non lu"></span>{% endif %}
         <span class="source">{{ a.source }}</span> · {{ a.publie_le.astimezone(paris).strftime('%H:%M') }}
+        {% if a.media == 'audio' %}<span class="genre">🎙 Podcast{% if a.duree %} · {{ a.duree|duree }}{% endif %}</span>
+        {% elif a.media == 'video' %}<span class="genre">▶ Vidéo</span>{% endif %}
         {% if a.alerte %}<span class="important alerte-actu">Alerte</span>
         {% elif a.tri == 'ia' and a.score is not none and a.score >= 0.75 %}<span class="important">Important</span>{% endif %}
       </div>
-      {% if a.lien %}<a class="titre" href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}">{{ a.titre }}</a>
-      {% else %}<span class="titre">{{ a.titre }}</span>{% endif %}
-      {% if a.pourquoi %}<p class="pourquoi">{{ a.pourquoi }}</p>
-      {% elif a.extrait and a.extrait != a.titre %}<p class="extrait doux">{{ a.extrait }}</p>{% endif %}
+      {% if a.lien %}<a class="titre" href="{{ a.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ a.id }}">{{ a.titre|marquer(recherche.q) }}</a>
+      {% else %}<span class="titre">{{ a.titre|marquer(recherche.q) }}</span>{% endif %}
+      {% if a.pourquoi %}<p class="pourquoi">{{ a.pourquoi|marquer(recherche.q) }}</p>
+      {% elif a.extrait and a.extrait != a.titre %}<p class="extrait doux">{{ a.extrait|marquer(recherche.q) }}</p>{% endif %}
+      {% if a.media == 'audio' and a.media_url %}<button type="button" class="petit ecouter" data-audio="{{ a.media_url }}" data-lu-id="{{ a.id }}">▶ Écouter</button>{% endif %}
       {% if a.aussi %}<p class="aussi doux">Aussi chez {% for x in a.aussi[:4] %}{% if x.lien %}<a href="{{ x.lien }}" target="_blank" rel="noopener noreferrer" data-lu="{{ x.id }}" title="{{ x.titre }}">{{ x.source }}</a>{% else %}{{ x.source }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if a.aussi|length > 4 %} et {{ a.aussi|length - 4 }} autre{{ 's' if a.aussi|length > 5 }}{% endif %}</p>{% endif %}
       {% set c = cours.get(a.notion) if a.notion else none %}
       {% if a.noms_sujets or a.notion %}<div class="sujets">
@@ -164,6 +224,32 @@
     font-size: .75rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--accent); }
   .actus .sujets a.notion:hover { background: var(--accent-pale); }
   .actus .sujets span.notion { border-color: var(--bord); color: var(--doux); }
+  .recherche-actu { display: block; margin: 6px 0 4px; }
+  .recherche-actu .filtres { display: block; }
+  .champ-recherche { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 12px; border: 1px solid var(--bord); border-radius: 14px; background: var(--carte); }
+  .champ-recherche:focus-within { border-color: var(--accent); }
+  .champ-recherche > svg { flex: none; color: var(--doux); }
+  .champ-recherche input { flex: 1; min-width: 0; border: 0; background: none; padding: 8px 0; outline: none; box-shadow: none; font-size: 1rem; }
+  .champ-recherche button { flex: none; }
+  .filtres { margin-top: 6px; }
+  .filtres summary { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--doux); font-size: .92rem; padding: 4px 2px; }
+  .filtres summary .badge { margin: 0; }
+  .grille-filtres { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 8px; }
+  .grille-filtres label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; font-weight: 500; }
+  .grille-filtres select { width: 100%; }
+  .grille-filtres .case-non-lus { flex-direction: row; align-items: center; gap: 8px; align-self: end; padding-bottom: 8px; }
+  .astuces { font-size: .8rem; margin: 8px 0; }
+  .astuces code { font-size: .78rem; padding: 0 4px; border-radius: 4px; background: var(--fond-doux, rgba(0,0,0,.05)); }
+  .actions-filtres { display: flex; gap: 8px; flex-wrap: wrap; }
+  .onglets-page.categories { margin-top: -6px; }
+  .onglets-page.categories a { font-size: .85rem; padding: 5px 12px; }
+  .onglets-page .compte { font-size: .75rem; color: var(--doux); font-weight: 600; }
+  .onglets-page a.actif .compte { color: inherit; }
+  .resultats { font-size: .95rem; }
+  .actus mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+  .actus .genre { padding: 0 8px; border-radius: 999px; border: 1px solid var(--bord); font-size: .75rem; line-height: 20px; }
+  .actus .ecouter { margin-top: 6px; }
+  .actus audio { display: block; width: 100%; margin-top: 6px; }
   .actus .vignette { flex: none; width: 88px; height: 88px; object-fit: cover; border-radius: 10px; background: var(--bord); margin-top: 2px; }
   @media (max-width: 420px) { .actus .vignette { width: 64px; height: 64px; } }
 </style>
@@ -172,6 +258,16 @@
   document.addEventListener("error", (e) => {
     if (e.target.classList && e.target.classList.contains("vignette")) e.target.remove();
   }, true);
+  // Podcast : le lecteur n'est créé qu'au clic (rien n'est chargé depuis le site du podcast avant)
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest("button[data-audio]");
+    if (!b) return;
+    const audio = document.createElement("audio");
+    audio.controls = true; audio.preload = "auto"; audio.src = b.dataset.audio;
+    b.replaceWith(audio);
+    audio.play().catch(() => {});
+    navigator.sendBeacon(`/actualites/${b.dataset.luId}/lu`);
+  });
   // Article ouvert = lu (sans attendre, même si l'onglet change aussitôt)
   document.addEventListener("click", (e) => {
     const lien = e.target.closest && e.target.closest("a[data-lu]");

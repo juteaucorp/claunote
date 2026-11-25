@@ -288,10 +288,22 @@ def test_passage_en_sisr_garde_les_sujets_modifies(monkeypatch):
     monkeypatch.setattr(db, "sujet_ajouter", lambda nom, d, m: ajoutes.append(nom))
     monkeypatch.setattr(db, "articles_retrier", lambda: 0)
     monkeypatch.setattr(db, "sujet_maj", lambda i, **k: pytest.fail("descriptions déjà modifiées : gardées"))
-    flux = []
-    monkeypatch.setattr(db, "flux_ajouter", lambda url, titre, site: flux.append(titre))
+    flux, suivis = [], [{"id": 9, "url": "https://korben.info/feed/", "site": "https://korben.info", "sujet_id": None,
+                         "categorie": ""}]
+
+    def flux_ajouter(url, titre, site, categorie=""):
+        flux.append(titre)
+        suivis.append({"id": len(suivis) + 10, "url": url, "site": site, "sujet_id": None, "categorie": categorie})
+    monkeypatch.setattr(db, "flux_ajouter", flux_ajouter)
+    monkeypatch.setattr(db, "flux_liste", lambda: suivis)
+    ranges = {}
+    monkeypatch.setattr(db, "flux_maj", lambda i, **k: ranges.update({i: k["categorie"]}))
     ac.initialiser()
-    assert flux == ["Numerama", "01net", "Clubic"]   # nouveaux flux proposés une fois aux installations existantes
+    # nouveaux flux proposés une fois aux installations existantes ; un site déjà suivi (Korben) n'est pas doublé
+    assert flux[:3] == ["Numerama", "01net", "Clubic"]
+    assert "BleepingComputer" in flux and "Tech Café" in flux and "NAS Compares" in flux
+    assert "Korben" not in flux and flux.count("Numerama") == 1 and "Le Monde Informatique" not in flux
+    assert ranges == {9: "Tech généraliste"}   # les sources déjà suivies rangées dans leur catégorie
     assert retires == [2]   # « Réseaux et systèmes » a été modifié : gardé
     assert ajoutes == ["Cybersécurité", "Réseaux", "Systèmes et virtualisation"]
     ac.initialiser()        # une seule fois
@@ -645,3 +657,147 @@ def test_admin_coupe_le_fil_par_defaut_permanent(client, monkeypatch):
     assert client.etat["actualites_defaut_permanent"] == "non" and not ac.defaut_en_permanence()
     client.post("/actualites/defaut/permanent", data={"permanent": "true"}, follow_redirects=False)
     assert ac.defaut_en_permanence() and not json.loads(client.etat["actualites_defaut"])["depart"]
+
+
+# --- Sources de ton lecteur RSS : catégories, podcasts, YouTube, recherche ------------------------------
+
+PODCAST = """<?xml version="1.0"?><rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<channel><title>Tech Café</title><link>https://techcafe.fr</link>
+<item><title>Épisode 400 : Windows 12</title><link>https://techcafe.fr/400</link>
+  <enclosure url="https://cdn.ex/400.mp3" type="audio/mpeg" length="1"/><itunes:duration>1:02:03</itunes:duration></item>
+</channel></rss>"""
+YOUTUBE = """<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015"
+ xmlns:media="http://search.yahoo.com/mrss/"><title>Tech2Tech</title><link rel="alternate" href="https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv"/>
+<entry><yt:videoId>xyz</yt:videoId><title>Installer Proxmox 9</title><link rel="alternate" href="https://www.youtube.com/watch?v=xyz"/>
+<published>2026-11-20T10:00:00+00:00</published><media:group><media:thumbnail url="https://i.ytimg.com/vi/xyz/hq.jpg"/></media:group></entry>
+</feed>"""
+
+
+def test_episodes_de_podcast_et_videos_youtube():
+    _, items = ac.lire_flux(PODCAST.encode())
+    assert items[0]["media"] == "audio" and items[0]["media_url"] == "https://cdn.ex/400.mp3" and items[0]["duree"] == 3723
+    _, items = ac.lire_flux(YOUTUBE.encode())
+    assert items[0]["media"] == "video" and items[0]["image"] == "https://i.ytimg.com/vi/xyz/hq.jpg"
+    _, items = ac.lire_flux(RSS.encode())
+    assert items[0]["media"] == ""
+    assert ac.duree("59:07") == 3547 and ac.duree("3600") == 3600 and ac.duree("n'importe") is None
+    assert main._duree_txt(3723) == "1 h 02" and main._duree_txt(1500) == "25 min"
+
+
+def test_trouver_un_podcast_ou_une_chaine_youtube():
+    vus = []
+
+    def repondre(r):
+        vus.append(str(r.url))
+        if r.url.host == "itunes.apple.com" and r.url.path == "/lookup":
+            return httpx.Response(200, json={"results": [{"collectionName": "Tech Café", "feedUrl": "https://feeds.ex/tc2"}]})
+        if r.url.host == "itunes.apple.com":
+            return httpx.Response(200, json={"results": [
+                {"collectionName": "Autre chose", "feedUrl": "https://autre.ex/feed"},
+                {"collectionName": "Tech Café", "feedUrl": "https://feeds.ex/techcafe"}]})
+        if r.url.host == "feeds.ex":
+            return httpx.Response(200, content=PODCAST.encode())
+        if r.url.path == "/feeds/videos.xml":
+            return httpx.Response(200, content=YOUTUBE.encode())
+        if r.url.host == "www.youtube.com":
+            assert "SOCS=CAI" in r.headers.get("cookie", "")   # sans la page de consentement
+            return httpx.Response(200, text='<html>{"externalId":"UCabcdefghijklmnopqrstuv"}</html>')
+        return httpx.Response(404)
+    c = httpx.Client(transport=httpx.MockTransport(repondre))
+    url, infos, items = ac.decouvrir("podcast:Tech Cafe", c)   # sans accent : retrouvé quand même
+    assert url == "https://feeds.ex/techcafe" and items[0]["media"] == "audio"
+    url, infos, items = ac.decouvrir("https://podcasts.apple.com/fr/podcast/tech-cafe/id123456", c)
+    assert url == "https://feeds.ex/tc2" and "lookup" in vus[-2] and "id=123456" in vus[-2]
+    url, infos, items = ac.decouvrir("youtube.com/@Tech2Tech", c)
+    assert url == ac.YOUTUBE_FLUX.format("UCabcdefghijklmnopqrstuv") and items[0]["media"] == "video"
+    url, *_ = ac.decouvrir("youtube:Tech2Tech Mikaël", c)
+    assert "results?search_query=Tech2Tech" in vus[-2] and url.endswith("UCabcdefghijklmnopqrstuv")
+    url, *_ = ac.decouvrir("https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv", c)
+    assert url.endswith("UCabcdefghijklmnopqrstuv")
+
+
+def test_releve_d_un_podcast_par_son_nom_puis_reparation(monkeypatch):
+    maj, ajouts = {}, []
+    monkeypatch.setattr(db, "flux_maj", lambda i, **k: maj.update(k))
+    monkeypatch.setattr(db, "flux_liste", lambda: [])
+    monkeypatch.setattr(db, "articles_ajouter", lambda f, items, annonce: ajouts.extend(items) or len(items))
+
+    def repondre(r):
+        if r.url.host == "itunes.apple.com":
+            return httpx.Response(200, json={"results": [{"collectionName": "Tech Café", "feedUrl": "https://feeds.ex/tc"}]})
+        if r.url.host == "feeds.ex":
+            return httpx.Response(200, content=PODCAST.encode())
+        if r.url.path == "/ancien-flux":
+            return httpx.Response(404)
+        if r.url.path == "/nouveau-flux":
+            return httpx.Response(200, content=RSS.encode())
+        return httpx.Response(200, text='<link rel="alternate" type="application/rss+xml" href="/nouveau-flux">')
+    c = httpx.Client(transport=httpx.MockTransport(repondre))
+    flux = {"id": 4, "url": "podcast:Tech Café", "etag": None, "modifie": None, "releve_le": None, "echecs": 0,
+            "titre": "Tech Café", "site": "", "sujet_id": None}
+    assert ac.relever_un(flux, SUJETS, c) == 1
+    assert maj["url"] == "https://feeds.ex/tc" and ajouts[0]["media"] == "audio" and maj["erreur"] is None
+    # Le site a changé l'adresse de son flux : retrouvée sur sa page d'accueil, sans erreur
+    maj.clear(), ajouts.clear()
+    flux = {**flux, "url": "https://ex.fr/ancien-flux", "site": "https://ex.fr/", "titre": "Ex"}
+    assert ac.relever_un(flux, SUJETS, c) == 2
+    assert maj["url"] == "https://ex.fr/nouveau-flux" and maj["erreur"] is None and maj["echecs"] == 0
+    # Pas plus d'une tentative toutes les 6 erreurs
+    maj.clear()
+    assert ac.relever_un({**flux, "echecs": 1}, SUJETS, c) == 0 and maj["erreur"] == "le site répond 404"
+
+
+def test_recherche_motifs_et_surlignage():
+    assert db.motifs_recherche('Faille "Active Directory" -windows ou sécurité') == (
+        ["%faille%", "%active directory%", "%securite%"], ["%windows%"])
+    assert db.motifs_recherche("100%_x")[0] == ["%100\\%\\_x%"]
+    assert str(main.marquer("La <b>Sécurité</b> des failles", "securite faille")) == \
+        "La &lt;b&gt;<mark>Sécurité</mark>&lt;/b&gt; des <mark>faille</mark>s"
+    assert str(main.marquer("<i>x</i>", "")) == "&lt;i&gt;x&lt;/i&gt;"
+
+
+def test_page_recherche_filtres_et_categories(client, monkeypatch):
+    a = {**article(1, "Faille critique Fortinet", tri="ia", sujets=[], score=0.9, pourquoi="Mettre à jour FortiOS"),
+         "lu": False, "favori": False, "noms_sujets": [], "total": 1, "media": "audio", "media_url": "https://cdn.ex/1.mp3",
+         "duree": 1500}
+    appels = []
+    monkeypatch.setattr(db, "articles", lambda *x, **k: appels.append((x, k)) or ([a], 1))
+    monkeypatch.setattr(db, "sujets", lambda: [])
+    monkeypatch.setattr(db, "flux_liste", lambda: [
+        {"id": 1, "titre": "Tech Café", "url": "https://feeds.ex/tc", "releve_le": MAINTENANT, "sujet": None, "sujet_id": None,
+         "notifier": False, "n": 3, "non_lus": 2, "dernier": MAINTENANT, "erreur": None, "echecs": 0, "site": "",
+         "categorie": "Podcast", "media": "audio"},
+        {"id": 2, "titre": "IT-Connect", "url": "https://www.it-connect.fr/feed/", "releve_le": MAINTENANT, "sujet": None,
+         "sujet_id": None, "notifier": False, "n": 5, "non_lus": 1, "dernier": MAINTENANT, "erreur": None, "echecs": 0,
+         "site": "", "categorie": "IT", "media": ""}])
+    r = client.get("/actualites?q=fortinet&categorie=Podcast&type=audio&periode=7j&non_lus=1&tri=pertinence")
+    assert r.status_code == 200
+    (vue, *_), k = appels[-1]
+    assert vue == "tout" and k == {"q": "fortinet", "categorie": "Podcast", "media": "audio", "jours": 7, "non_lus": True,
+                                   "tri": "pertinence"}
+    assert "<mark>Fortinet</mark>" in r.text and "1</strong> résultat pour « fortinet »" in r.text
+    assert 'data-audio="https://cdn.ex/1.mp3"' in r.text and "25 min" in r.text
+    assert 'href="/actualites?categorie=Podcast"' in r.text and "L'essentiel" not in r.text
+    r = client.get("/actualites")
+    (vue, *_), k = appels[-1]
+    assert vue == "pour_toi" and k["q"] == "" and k["categorie"] is None
+    r = client.get("/actualites/sources")
+    assert r.status_code == 200
+    assert r.text.index(">IT<") < r.text.index(">Podcast<") and "🎙 Tech Café" in r.text
+
+
+def test_ranger_une_source_dans_une_categorie(client, monkeypatch):
+    maj = {}
+    monkeypatch.setattr(db, "flux_maj", lambda i, **k: maj.update({i: k}))
+    r = client.post("/actualites/flux/3/categorie", data={"categorie": "  Sécurité   réseau "}, follow_redirects=False)
+    assert r.status_code == 303 and maj == {3: {"categorie": "Sécurité réseau"}}
+
+
+def test_selection_de_depart_rangee_par_categories():
+    p = ac._depart()
+    cats = {f["titre"]: f["categorie"] for f in p["flux"]}
+    assert cats["BleepingComputer"] == "Sécurité" and cats["4sysops"] == "IT" and cats["Tech Café"] == "Podcast"
+    assert cats["Tech2Tech (YouTube)"] == "YouTube" and cats["NAS Compares"] == "NAS" and cats["Linuxtricks"] == "Linux"
+    assert len({f["url"] for f in p["flux"]}) == len(p["flux"]) and all(f["categorie"] for f in p["flux"])
+    assert ac.categorie_connue("https://www.it-connect.fr/feed") == "IT"
+    assert ac.categorie_connue("https://inconnu.ex/feed") == ""

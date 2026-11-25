@@ -57,36 +57,54 @@
   </form>
 </details>
 
-<h2 id="flux">Flux RSS</h2>
+<h2 id="flux">Sources</h2>
 <form method="post" action="/actualites/flux" class="carte ajout-flux">
-  <label>Adresse d'un site ou de son flux RSS
+  <label>Site, flux RSS, chaîne YouTube ou podcast
     <input name="url" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" required
-      placeholder="ex. www.it-connect.fr ou https://site.fr/feed" value="{{ saisie.url or '' }}"></label>
-  <label class="case"><input type="checkbox" name="notifier" value="true"> Me notifier de chaque nouveauté de ce flux, même hors de mes sujets</label>
+      placeholder="ex. www.it-connect.fr, youtube.com/@chaine, podcast:Tech Café" value="{{ saisie.url or '' }}"></label>
+  <p class="doux aide-ajout">Un <strong>podcast</strong> : son lien Apple Podcasts, son flux, ou <code>podcast:</code> suivi de son nom.
+    Une <strong>chaîne YouTube</strong> : son lien (youtube.com/@…) ou <code>youtube:</code> suivi de son nom.</p>
+  <label>Catégorie <span class="doux">(facultatif : rangée toute seule si le site est connu)</span>
+    <input name="categorie" list="categories-flux" maxlength="40" placeholder="ex. Sécurité, IT, Podcast" value="{{ saisie.categorie or '' }}"></label>
+  <label class="case"><input type="checkbox" name="notifier" value="true"> Me notifier de chaque nouveauté de cette source, même hors de mes sujets</label>
   <div class="actions"><button class="principal">{{ icone('nouveau', 18) }}Ajouter</button></div>
 </form>
+<datalist id="categories-flux">{% for c in noms_categories %}<option value="{{ c }}">{% endfor %}</datalist>
+{% for nom, liste in dossiers.items() %}
+<details class="dossier" open>
+  <summary><span class="nom-dossier">{{ nom }}</span>
+    <span class="doux">{{ liste|length }} source{{ 's' if liste|length > 1 }}{% set nl = liste|map(attribute='non_lus', default=0)|sum %}{% if nl %} · <strong>{{ nl }}</strong> non lu{{ 's' if nl > 1 }}{% endif %}</span></summary>
+  <ul class="carte lignes flux">
+    {% for f in liste %}
+    <li id="f{{ f.id }}">
+      <div class="corps"><a href="/actualites?flux={{ f.id }}"><strong>{% if f.media == 'audio' %}🎙 {% elif f.media == 'video' %}▶ {% endif %}{{ f.titre or f.url }}</strong></a>
+        <div class="doux">{% if f.sujet %}recherche du sujet « {{ f.sujet }} » · {% endif %}{{ f.n }} article{{ 's' if f.n > 1 }}{% if f.non_lus %} · {{ f.non_lus }} non lu{{ 's' if f.non_lus > 1 }}{% endif %}{% if f.dernier %} · dernier le {{ f.dernier.astimezone(paris).strftime('%d/%m') }}{% endif %}
+          {% if f.releve_le %} · relevé {{ f.releve_le.astimezone(paris).strftime('%d/%m %H:%M') }}{% else %} · premier relevé en attente{% endif %}</div>
+        {% if f.erreur %}<div class="alerte">{{ f.erreur }}{% if f.echecs > 1 %} ({{ f.echecs }} fois de suite){% endif %}</div>{% endif %}
+        {% if not f.sujet %}
+        <form method="post" action="/actualites/flux/{{ f.id }}/categorie" class="categorie-flux">
+          <input name="categorie" list="categories-flux" maxlength="40" value="{{ f.categorie }}" placeholder="Catégorie"
+            aria-label="Catégorie de {{ f.titre or f.url }}" onchange="this.form.submit()">
+          <noscript><button class="petit">OK</button></noscript></form>
+        {% endif %}
+      </div>
+      {% if not f.sujet %}
+      <div class="fin outils-flux">
+        <form method="post" action="/actualites/flux/{{ f.id }}/notifier" class="reglages" title="Me notifier de chaque nouveauté de cette source">
+          <input type="checkbox" name="notifier" value="true" {{ 'checked' if f.notifier }} onchange="this.form.submit()" aria-label="Notifier chaque nouveauté de {{ f.titre or f.url }}">
+          <noscript><button class="petit">OK</button></noscript></form>
+        <form method="post" action="/actualites/flux/{{ f.id }}/supprimer" onsubmit="return confirm('Retirer cette source et tous ses articles ?')">
+          <button class="bouton-icone" title="Retirer cette source" aria-label="Retirer {{ f.titre or f.url }}">{{ icone('corbeille', 18) }}</button></form>
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endfor %}
 {% if flux_liste %}
-<ul class="carte lignes flux">
-  {% for f in flux_liste %}
-  <li>
-    <div class="corps"><a href="/actualites?flux={{ f.id }}"><strong>{{ f.titre or f.url }}</strong></a>
-      <div class="doux">{% if f.sujet %}recherche du sujet « {{ f.sujet }} » · {% endif %}{{ f.n }} article{{ 's' if f.n > 1 }}{% if f.dernier %} · dernier le {{ f.dernier.astimezone(paris).strftime('%d/%m') }}{% endif %}
-        {% if f.releve_le %} · relevé {{ f.releve_le.astimezone(paris).strftime('%d/%m %H:%M') }}{% else %} · premier relevé en attente{% endif %}</div>
-      {% if f.erreur %}<div class="alerte">{{ f.erreur }}{% if f.echecs > 1 %} ({{ f.echecs }} fois de suite){% endif %}</div>{% endif %}
-    </div>
-    {% if not f.sujet %}
-    <div class="fin outils-flux">
-      <form method="post" action="/actualites/flux/{{ f.id }}/notifier" class="reglages" title="Me notifier de chaque nouveauté de ce flux">
-        <input type="checkbox" name="notifier" value="true" {{ 'checked' if f.notifier }} onchange="this.form.submit()" aria-label="Notifier chaque nouveauté de {{ f.titre or f.url }}">
-        <noscript><button class="petit">OK</button></noscript></form>
-      <form method="post" action="/actualites/flux/{{ f.id }}/supprimer" onsubmit="return confirm('Retirer ce flux et tous ses articles ?')">
-        <button class="bouton-icone" title="Retirer ce flux" aria-label="Retirer {{ f.titre or f.url }}">{{ icone('corbeille', 18) }}</button></form>
-    </div>
-    {% endif %}
-  </li>
-  {% endfor %}
-</ul>
-<p class="doux">Interrupteur : {{ icone('cloche', 14) }} chaque nouveauté de ce flux sonne, même hors de tes sujets (ex. les alertes CERT-FR).</p>
+<p class="doux">Interrupteur : {{ icone('cloche', 14) }} chaque nouveauté de cette source sonne, même hors de tes sujets (ex. les alertes CERT-FR).
+  Une source qui ne répond plus est recherchée sur son site et se répare toute seule quand c'est possible.</p>
 {% endif %}
 
 <h2 id="reglages">Réglages</h2>
@@ -171,6 +189,17 @@
   .outils-flux { display: flex; align-items: center; gap: 10px; }
   .outils-flux form { margin: 0; }
   .flux .corps a { text-decoration: none; color: var(--texte); }
+  .dossier { margin: 14px 0 0; }
+  .dossier > summary { cursor: pointer; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 4px 2px 8px; list-style: none; }
+  .dossier > summary::-webkit-details-marker { display: none; }
+  .dossier > summary::before { content: "›"; display: inline-block; transition: transform .15s; color: var(--doux); font-weight: 700; }
+  .dossier[open] > summary::before { transform: rotate(90deg); }
+  .nom-dossier { font-weight: 650; font-size: 1.05rem; }
+  .dossier .flux { margin-top: 0; }
+  .categorie-flux { margin: 6px 0 0; }
+  .categorie-flux input { width: 180px; max-width: 100%; padding: 4px 8px; font-size: .85rem; min-height: 0; }
+  .aide-ajout { margin: -4px 0 0; font-size: .85rem; }
+  .aide-ajout code { font-size: .8rem; }
   button.danger { color: var(--alerte); display: inline-flex; align-items: center; gap: 6px; }
   .actions button { display: inline-flex; align-items: center; gap: 6px; }
   .interrupteur.quotidien { flex-direction: column; align-items: stretch; gap: 8px; }

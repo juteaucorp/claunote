@@ -2,6 +2,7 @@
 import atexit
 import contextvars
 import os
+import re
 import secrets
 import threading
 import time
@@ -414,6 +415,16 @@ ALTER TABLE articles ADD COLUMN IF NOT EXISTS evenement TEXT;  -- même informat
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS image TEXT NOT NULL DEFAULT '';  -- illustration donnée par le flux
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS notion TEXT;     -- notion du BTS qu'il illustre (IA) : lien vers le cours
 CREATE INDEX IF NOT EXISTS articles_evenement ON articles (evenement, publie_le DESC) WHERE evenement IS NOT NULL;
+ALTER TABLE flux ADD COLUMN IF NOT EXISTS categorie TEXT NOT NULL DEFAULT '';  -- dossier (Sécurité, Podcast…) choisi par toi
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS media TEXT NOT NULL DEFAULT '';     -- '' article, 'audio' épisode de podcast, 'video' YouTube
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS media_url TEXT NOT NULL DEFAULT ''; -- fichier audio de l'épisode
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS duree INT;                          -- secondes (podcast)
+-- Recherche dans les Actualités : mots racinisés (français), titre d'abord, puis résumé de l'IA et notion, puis extrait
+ALTER TABLE articles ADD COLUMN IF NOT EXISTS recherche tsvector GENERATED ALWAYS AS (
+    setweight(to_tsvector('french', coalesce(titre, '')), 'A') ||
+    setweight(to_tsvector('french', coalesce(pourquoi, '') || ' ' || coalesce(notion, '')), 'B') ||
+    setweight(to_tsvector('french', coalesce(extrait, '')), 'C')) STORED;
+CREATE INDEX IF NOT EXISTS articles_recherche ON articles USING gin (recherche);
 -- Journal de sécurité (securite.py) : connexions, appareils, refus, alertes ; gardé 180 jours
 CREATE TABLE IF NOT EXISTS securite (
     id           SERIAL PRIMARY KEY,
@@ -2774,23 +2785,26 @@ def flux_liste():
     with connect() as c:
         return c.execute(
             """SELECT f.*, s.nom AS sujet, (SELECT count(*) FROM articles a WHERE a.flux_id = f.id) AS n,
-                      (SELECT max(publie_le) FROM articles a WHERE a.flux_id = f.id) AS dernier
+                      (SELECT count(*) FROM articles a WHERE a.flux_id = f.id AND NOT a.lu) AS non_lus,
+                      (SELECT max(publie_le) FROM articles a WHERE a.flux_id = f.id) AS dernier,
+                      (SELECT a.media FROM articles a WHERE a.flux_id = f.id ORDER BY a.publie_le DESC LIMIT 1) AS media
                FROM flux f LEFT JOIN sujets s ON s.id = f.sujet_id
                ORDER BY f.sujet_id IS NOT NULL, lower(coalesce(nullif(f.titre, ''), f.url))""").fetchall()
 
 
 def flux_ajouter(url: str, titre: str = "", site: str = "", sujet_id: int | None = None,
-                 notifier: bool = False) -> int:
+                 notifier: bool = False, categorie: str = "") -> int:
     with connect() as c:
         return c.execute(
-            """INSERT INTO flux (url, titre, site, sujet_id, notifier) VALUES (%s, %s, %s, %s, %s)
-               ON CONFLICT (compte_id, url) DO UPDATE SET titre = coalesce(nullif(EXCLUDED.titre, ''), flux.titre)
-               RETURNING id""", (url, titre, site, sujet_id, notifier)).fetchone()["id"]
+            """INSERT INTO flux (url, titre, site, sujet_id, notifier, categorie) VALUES (%s, %s, %s, %s, %s, %s)
+               ON CONFLICT (compte_id, url) DO UPDATE SET titre = coalesce(nullif(EXCLUDED.titre, ''), flux.titre),
+                   categorie = coalesce(nullif(flux.categorie, ''), EXCLUDED.categorie)
+               RETURNING id""", (url, titre, site, sujet_id, notifier, categorie)).fetchone()["id"]
 
 
 def flux_maj(flux_id: int, **champs):
     champs = {k: v for k, v in champs.items()
-              if k in {"titre", "site", "notifier", "etag", "modifie", "releve_le", "erreur", "echecs", "url"}}
+              if k in {"titre", "site", "notifier", "etag", "modifie", "releve_le", "erreur", "echecs", "url", "categorie"}}
     if champs:
         with connect() as c:
             c.execute(f"UPDATE flux SET {', '.join(f'{k} = %s' for k in champs)} WHERE id = %s",
@@ -2813,11 +2827,13 @@ def articles_ajouter(flux_id: int, items: list[dict], annonce: bool) -> int:
     with connect() as c:
         for i in items:
             r = c.execute(
-                """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, sujets, tri, annonce, image)
+                """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, sujets, tri, annonce, image,
+                                       media, media_url, duree)
                    VALUES (%(flux)s, %(cle)s, %(lien)s, %(titre)s, %(extrait)s, %(publie_le)s, %(sujets)s,
-                           %(tri)s, %(annonce)s, %(image)s)
+                           %(tri)s, %(annonce)s, %(image)s, %(media)s, %(media_url)s, %(duree)s)
                    ON CONFLICT (compte_id, cle) DO NOTHING RETURNING id""",
-                {"flux": flux_id, "annonce": annonce, "tri": "attente", "sujets": [], "image": "", **i}).fetchone()
+                {"flux": flux_id, "annonce": annonce, "tri": "attente", "sujets": [], "image": "", "media": "",
+                 "media_url": "", "duree": None, **i}).fetchone()
             n += r is not None
     return n
 
@@ -2924,12 +2940,12 @@ def articles_miroir(compte_id: int, depuis, jours: int = 14) -> int:
     with sans_compte(), connect() as c:
         return c.execute(
             """INSERT INTO articles (flux_id, cle, lien, titre, extrait, publie_le, tri, sujets, score, pourquoi,
-                                     annonce, alerte, evenement, image, notion)
+                                     annonce, alerte, evenement, image, notion, media, media_url, duree)
                SELECT fm.id, a.cle, a.lien, a.titre, a.extrait, a.publie_le, a.tri,
                       ARRAY(SELECT sm.id FROM sujets s JOIN sujets sm ON sm.nom = s.nom AND sm.compte_id = %(moi)s
                             WHERE s.id = ANY(a.sujets) ORDER BY sm.id),
                       a.score, a.pourquoi, %(depuis)s::timestamptz IS NULL OR a.cree_le < %(depuis)s,
-                      a.alerte, a.evenement, a.image, a.notion
+                      a.alerte, a.evenement, a.image, a.notion, a.media, a.media_url, a.duree
                FROM articles a JOIN flux f ON f.id = a.flux_id AND f.compte_id = 1
                JOIN flux fm ON fm.compte_id = %(moi)s AND fm.url = f.url
                WHERE a.compte_id = 1 AND a.tri <> 'attente' AND a.publie_le > now() - make_interval(days => %(jours)s)
@@ -2985,10 +3001,59 @@ def articles_nettoyer(jours: int = 120):
         c.execute("DELETE FROM articles WHERE NOT favori AND publie_le < now() - make_interval(days => %s)", (jours,))
 
 
+ACCENTS = ("àâäáãåçéèêëíìîïñóòôöõúùûüýÿœæ", "aaaaaaceeeeiiiinooooouuuuyyoa")
+
+
+def _motif(mot: str) -> str:
+    """Un mot cherché → motif LIKE sans accents ni casse (%, _ et \\ pris tels quels)."""
+    mot = mot.strip('"').lower().translate(str.maketrans(*ACCENTS))
+    return "%" + re.sub(r"[%_\\]", lambda x: "\\" + x.group(0), mot) + "%"
+
+
+def motifs_recherche(q: str) -> tuple[list[str], list[str]]:
+    """(mots qui doivent y être, mots exclus par « -mot »), en motifs LIKE."""
+    voulus, exclus = [], []
+    for m in re.findall(r'-?"[^"]+"|-?\S+', q or ""):
+        if m.lower() in {"or", "ou"}:
+            continue
+        cible = exclus if m.startswith("-") else voulus
+        m = m.lstrip("-")
+        if len(m.strip('"')) >= 2:
+            cible.append(_motif(m))
+    return voulus[:8], exclus[:8]
+
+
 def articles(vue: str = "pour_toi", sujet_id: int | None = None, flux_id: int | None = None,
-             limite: int = 30, decalage: int = 0, non_lus_jours: int | None = None) -> tuple[list, int]:
-    """Articles de la page Actualités, les plus récents d'abord : (page, total)."""
+             limite: int = 30, decalage: int = 0, non_lus_jours: int | None = None, q: str = "",
+             categorie: str | None = None, media: str | None = None, jours: int | None = None,
+             non_lus: bool = False, tri: str = "recents") -> tuple[list, int]:
+    """Articles de la page Actualités, les plus récents d'abord (ou les plus pertinents pour une recherche) :
+    (page, total). Recherche : mots racinisés en français (« failles » trouve « faille », "phrase exacte",
+    -exclu, OU), et sinon chaque mot tel quel, sans accents (« securite » trouve « sécurité »)."""
     where, p = ["true"], {"seuil": SEUIL_POUR_TOI, "limite": limite, "decalage": decalage}
+    q = (q or "").strip()[:200]
+    rang = "0"
+    if q:
+        p["q"] = q
+        p["motifs"], p["exclus"] = motifs_recherche(q)
+        texte = ("translate(lower(a.titre || ' ' || a.extrait || ' ' || coalesce(a.pourquoi, '') || ' ' || "
+                 f"coalesce(a.notion, '') || ' ' || coalesce(f.titre, '')), '{ACCENTS[0]}', '{ACCENTS[1]}')")
+        where.append("(a.recherche @@ websearch_to_tsquery('french', %(q)s)"
+                     + (f" OR ({texte} LIKE ALL(%(motifs)s::text[]))" if p["motifs"] else "") + ")")
+        if p["exclus"]:
+            where.append(f"NOT ({texte} LIKE ANY(%(exclus)s::text[]))")
+        rang = "ts_rank(a.recherche, websearch_to_tsquery('french', %(q)s))"
+    if categorie is not None:
+        where.append("f.categorie = %(categorie)s")
+        p["categorie"] = categorie
+    if media is not None:
+        where.append("a.media = %(media)s")
+        p["media"] = media
+    if jours:
+        where.append("a.publie_le > now() - make_interval(days => %(depuis)s)")
+        p["depuis"] = jours
+    if non_lus:
+        where.append("NOT a.lu")
     if vue == "favoris":
         where.append("a.favori")
     elif vue == "pour_toi":
@@ -3005,10 +3070,11 @@ def articles(vue: str = "pour_toi", sujet_id: int | None = None, flux_id: int | 
     with connect() as c:
         lignes = c.execute(
             f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, f.notifier AS flux_notifier,
-                       count(*) OVER () AS total,
+                       f.categorie, count(*) OVER () AS total,
                        ARRAY(SELECT s.nom FROM sujets s WHERE s.id = ANY(a.sujets) ORDER BY s.nom) AS noms_sujets
                 FROM articles a JOIN flux f ON f.id = a.flux_id
-                WHERE {' AND '.join(where)} ORDER BY a.publie_le DESC, a.id DESC
+                WHERE {' AND '.join(where)}
+                ORDER BY {rang + ' DESC, ' if q and tri == 'pertinence' else ''}a.publie_le DESC, a.id DESC
                 LIMIT %(limite)s OFFSET %(decalage)s""", p).fetchall()
     return lignes, (lignes[0]["total"] if lignes else 0)
 
