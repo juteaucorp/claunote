@@ -2030,7 +2030,7 @@ def nb_appareils_par_compte() -> dict[int, int]:
             "SELECT compte_id, count(*) AS n FROM abonnements_push WHERE compte_id IS NOT NULL GROUP BY compte_id")}
 
 
-def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str = "attente") -> bool:
+def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str = "attente", dans: int = 0) -> bool:
     """Met une notification dans la file ; faux si cette clé a déjà servi.
 
     Garde-fou anti-doublon : le même titre avec le même texte déjà parti (ou en file) depuis moins
@@ -2038,8 +2038,8 @@ def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str 
     """
     with connect() as c:
         return c.execute(
-            """INSERT INTO notifications (cle, titre, corps, url, statut)
-               SELECT %(cle)s, %(titre)s, %(corps)s, %(url)s,
+            """INSERT INTO notifications (cle, titre, corps, url, cree_le, statut)
+               SELECT %(cle)s, %(titre)s, %(corps)s, %(url)s, now() + make_interval(secs => %(dans)s),
                       CASE WHEN %(statut)s = 'attente' AND EXISTS (
                              SELECT 1 FROM notifications WHERE titre = %(titre)s AND corps = %(corps)s
                               AND compte_id IS NOT DISTINCT FROM claunote_compte()
@@ -2047,7 +2047,7 @@ def notifier(cle: str, titre: str, corps: str = "", url: str = "/", statut: str 
                               AND cree_le > now() - interval '20 hours')
                            THEN 'ignore' ELSE %(statut)s END
                ON CONFLICT (cle) DO NOTHING RETURNING id""",
-            {"cle": cle, "titre": titre, "corps": corps, "url": url, "statut": statut}).fetchone() is not None
+            {"cle": cle, "titre": titre, "corps": corps, "url": url, "statut": statut, "dans": dans}).fetchone() is not None
 
 
 def notification_directe(cle: str, titre: str, corps: str, url: str) -> int | None:
@@ -2077,7 +2077,9 @@ def reserver_notifications(seulement: tuple[str, ...] | None = None):
         if seulement is not None:
             # Préfixes terminés par « : » (« jour: ») : comparés au début de la clé
             filtre, params = " AND split_part(cle, ':', 1) || ':' = ANY(%s)", (list(seulement),)
-        return sorted(c.execute("UPDATE notifications SET statut = 'envoi' WHERE statut = 'attente'" + filtre
+        # cree_le dans le futur : notification programmée (test « écran verrouillé »), pas encore à envoyer
+        return sorted(c.execute("UPDATE notifications SET statut = 'envoi' WHERE statut = 'attente' AND cree_le <= now()"
+                                + filtre
                                 + " RETURNING *", params).fetchall(), key=lambda n: n["id"])
 
 

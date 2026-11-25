@@ -336,3 +336,13 @@ def test_alerte_disque_en_file_retiree_quand_la_place_revient(base):
     with db.connect() as c:
         statuts = {r["cle"]: r["statut"] for r in c.execute("SELECT cle, statut FROM notifications")}
     assert statuts["disque:attention:2026-11-24"] == "ignore" and statuts["jour:controle"] == "attente"
+
+
+def test_test_ecran_verrouille_part_une_minute_plus_tard(base):
+    db.notifier("test-verrouille:1", "🔒 Test écran verrouillé", "x", "/notifications", dans=60)
+    db.notifier("revision:9", "Fiche prête", "y")
+    assert [n["cle"] for n in db.reserver_notifications()] == ["revision:9"]   # le test attend sa minute
+    with db.connect() as c:
+        c.execute("UPDATE notifications SET cree_le = now() - interval '1 second' WHERE cle = 'test-verrouille:1'")
+    assert [n["cle"] for n in db.reserver_notifications()] == ["test-verrouille:1"]
+    assert notifications.urgente("test-verrouille:1") and notifications.nuit("test-verrouille:1")

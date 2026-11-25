@@ -35,7 +35,7 @@ import httpx
 
 from claunote import (actualites, agent, cloudflare, coherence, comptes, db, decoupage, demandes_ia, disque, emploi_du_temps, formations, importation, index, lecture, local, modeles,
                       notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
-                      stockage_local)
+                      stockage_local, version)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
                             SansForfait, analyser)
 from claunote.kdrive import KDrive, KDriveIndisponible
@@ -159,7 +159,7 @@ def publier():
         "vu": _iso(time.time()), "demarre": ETAT["demarre"], "arret": ARRET.is_set(), "activite": ETAT["activite"],
         "en_cours": ETAT["en_cours"], "pause": PAUSE.is_set(), "local": ETAT["local"],
         "claude": CLAUDE.publier(), "kdrive": KDRIVE.publier(), "modeles": modeles.indisponibles(), "sonde": SONDE,
-        "processeur": ressources.publier()}))
+        "processeur": ressources.publier(), "code": version.code()}))
 
 
 def activite(texte: str | None):

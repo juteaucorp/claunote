@@ -30,7 +30,7 @@ from starlette.datastructures import FormData, UploadFile as FichierRecu
 from claunote import (actualites, agent, anki, apercu, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, profil, question, raccourci, rangement, reglages, ressources, revision, schemas, securite, sensible,
-                      stockage_local, turnstile)
+                      stockage_local, turnstile, version)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -3496,6 +3496,7 @@ def page_notifications(request: Request, message: str = ""):
                                       notifications._heure(notifications.preferences()["heure"])),
         "recentes": db.notifications_recentes(8), "cle": notifications.cle_publique(),
         "attente": notifications.raison_attente(dt.datetime.now(pronote.PARIS)),
+        "worker_a_jour": version.worker_a_jour(etat_service()),
         "message": message, "adresse": adresse_https()})
 
 
@@ -3532,6 +3533,21 @@ def tester_notification():
     if erreurs and not envoyes:
         return f"Échec de l'envoi : {html.escape(erreurs[0])}. La VM a-t-elle accès à Internet ?"
     return f"Envoyée sur {envoyes} appareil{'s' if envoyes > 1 else ''}."
+
+
+@app.post("/notifications/test-verrouille", response_class=HTMLResponse)
+def tester_ecran_verrouille():
+    """Test envoyé par le worker dans 1 min, comme une alerte : on verrouille l'iPhone et on regarde s'il arrive.
+    « Envoyer un test » part du site pendant que le téléphone est réveillé : il arrive toujours, ça ne prouve rien
+    pour une alerte qui part quand le téléphone dort."""
+    if not db.abonnements():
+        return "Aucun appareil abonné : active d'abord les notifications sur ton iPhone."
+    maintenant = dt.datetime.now(pronote.PARIS)
+    db.notifier(f"test-verrouille:{maintenant:%Y%m%d%H%M%S}", "🔒 Test écran verrouillé",
+                f"Programmé à {maintenant:%H:%M:%S}, parti une minute plus tard comme une alerte.", "/notifications",
+                dans=60)
+    return ("Programmé : <strong>verrouille ton iPhone maintenant</strong>. Il part dans 1 min par le même chemin "
+            "que les alertes. S'il n'arrive pas avant que tu rallumes l'écran, c'est l'iPhone qui le retient.")
 
 
 @app.post("/notifications/reglages")

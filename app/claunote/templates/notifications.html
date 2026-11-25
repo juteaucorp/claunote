@@ -6,6 +6,11 @@
 {{ onglets('reglages', 'notifications') }}
 <h1>Notifications</h1>
 {% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
+{% if worker_a_jour is false %}
+<div class="carte alerte"><strong>Le worker n'est pas à jour.</strong> C'est lui qui envoie les notifications
+  (sauf « Envoyer un test », qui part du site) : avec l'ancien code, elles peuvent arriver en retard.
+  Mets-le à jour : Réglages → Serveur → Mise à jour, ou <code>docker compose up -d --build worker</code>.</div>
+{% endif %}
 
 <div class="carte" id="cet-appareil">
   <div class="ligne-etat">{{ icone('cloche') }}<div class="corps"><strong>Sur cet appareil</strong>
@@ -13,6 +18,7 @@
   <div class="actions" style="margin-top: 12px">
     <button class="principal" id="activer" hidden>Activer les notifications</button>
     <button id="tester" hidden hx-post="/notifications/test" hx-target="#retour-test">Envoyer un test</button>
+    <button id="tester-verrouille" hidden hx-post="/notifications/test-verrouille" hx-target="#retour-test">Test écran verrouillé</button>
     <button id="desactiver" hidden>Désactiver ici</button>
     <a class="bouton" id="aide" href="/installer" hidden>{{ icone('telephone', 18) }}Installer sur l'iPhone</a>
   </div>
@@ -104,7 +110,7 @@
   const $ = (id) => document.getElementById(id);
   const etat = (texte, boutons) => {
     $("etat-push").textContent = texte;
-    for (const b of ["activer", "tester", "desactiver", "aide"]) $(b).hidden = !boutons.includes(b);
+    for (const b of ["activer", "tester", "tester-verrouille", "desactiver", "aide"]) $(b).hidden = !boutons.includes(b);
   };
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const installee = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
@@ -130,7 +136,7 @@
     const abo = await reg.pushManager.getSubscription();
     if (abo) {
       await envoyer("/notifications/abonnement", { ...abo.toJSON(), appareil: nomAppareil() });  // garde le serveur à jour
-      return etat("Activées ✓", ["tester", "desactiver"]);
+      return etat("Activées ✓", ["tester", "tester-verrouille", "desactiver"]);
     }
     etat("Désactivées.", ["activer"]);
   }
