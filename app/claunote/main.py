@@ -3430,7 +3430,8 @@ def tester_notification():
 def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("22:00"),
                          silence_fin: str = Form("07:30"), rappel: bool = Form(False), pronote_: bool = Form(False,
                          alias="pronote"), revisions: bool = Form(False),
-                         actualites_: bool = Form(False, alias="actualites"), edt: bool = Form(False)):
+                         actualites_: bool = Form(False, alias="actualites"), edt: bool = Form(False),
+                         alertes_nuit: bool = Form(False)):
     for h in (heure, silence_debut, silence_fin):
         try:
             dt.time.fromisoformat(h)
@@ -3439,7 +3440,8 @@ def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("
     notifications.enregistrer_preferences({**notifications.preferences(), "heure": heure, "silence_debut": silence_debut,
                                            "silence_fin": silence_fin, "rappel": rappel,
                                            "pronote": pronote_, "revisions": revisions,
-                                           "actualites": actualites_, "edt": edt})
+                                           "actualites": actualites_, "edt": edt,
+                                           "alertes_nuit": alertes_nuit})
     return RedirectResponse("/notifications?message=Réglages+enregistrés", status_code=303)
 
 
