@@ -30,7 +30,7 @@ from starlette.datastructures import FormData, UploadFile as FichierRecu
 from claunote import (actualites, agent, anki, apercu, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
                       pronote, profil, question, raccourci, rangement, reglages, ressources, revision, schemas, securite, sensible,
-                      stockage_local, turnstile)
+                      stockage_local, turnstile, version)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
 
@@ -3496,6 +3496,7 @@ def page_notifications(request: Request, message: str = ""):
                                       notifications._heure(notifications.preferences()["heure"])),
         "recentes": db.notifications_recentes(8), "cle": notifications.cle_publique(),
         "attente": notifications.raison_attente(dt.datetime.now(pronote.PARIS)),
+        "worker_a_jour": version.worker_a_jour(etat_service()),
         "message": message, "adresse": adresse_https()})
 
 

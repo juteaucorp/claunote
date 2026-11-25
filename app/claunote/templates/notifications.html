@@ -6,6 +6,11 @@
 {{ onglets('reglages', 'notifications') }}
 <h1>Notifications</h1>
 {% if message %}<p class="carte" style="color: var(--ok)">{{ message }}</p>{% endif %}
+{% if worker_a_jour is false %}
+<div class="carte alerte"><strong>Le worker n'est pas à jour.</strong> C'est lui qui envoie les notifications
+  (sauf « Envoyer un test », qui part du site) : avec l'ancien code, elles peuvent arriver en retard.
+  Mets-le à jour : Réglages → Serveur → Mise à jour, ou <code>docker compose up -d --build worker</code>.</div>
+{% endif %}
 
 <div class="carte" id="cet-appareil">
   <div class="ligne-etat">{{ icone('cloche') }}<div class="corps"><strong>Sur cet appareil</strong>
