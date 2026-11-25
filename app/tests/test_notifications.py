@@ -312,3 +312,22 @@ def test_silence_d_un_invite_respecte(base, monkeypatch):
     base.file["b"]["compte_id"] = 2
     nt.vider_file(LUNDI.replace(hour=9))
     assert base.file["a"]["statut"] == "envoye" and remis == [base.file["b"]["id"]]
+
+
+def test_alerte_actualite_traverse_le_silence(base, monkeypatch):
+    remis, envoyes = [], []
+    monkeypatch.setattr(db, "remettre_en_attente", remis.extend)
+    monkeypatch.setattr(nt, "envoyer_a_tous", lambda titre, *a, **k: envoyes.append(titre) or (1, []))
+    base.notifier("actu-alerte:cve-2026-1", "🚨 Faille exploitée", "x", "/actualites")
+    base.notifier("actu-jour:2026-10-27", "📰 L'essentiel", "y", "/actualites")
+    base.notifier("disque:attention:2026-10-27", "💽 Peu de place", "z", "/etat")
+    nuit = LUNDI.replace(hour=3)
+    nt.vider_file(nuit)
+    assert envoyes == ["🚨 Faille exploitée"] and base.file["actu-alerte:cve-2026-1"]["statut"] == "envoye"
+    assert sorted(remis) == sorted([base.file["actu-jour:2026-10-27"]["id"], base.file["disque:attention:2026-10-27"]["id"]])
+    # Réglage coupé : l'alerte attend le matin comme le reste
+    base.etat["notifications"] = json.dumps({"alertes_nuit": False})
+    base.notifier("actu-alerte:cve-2026-2", "🚨 Autre faille", "w", "/actualites")
+    remis.clear()
+    nt.vider_file(nuit)
+    assert base.file["actu-alerte:cve-2026-2"]["id"] in remis and envoyes == ["🚨 Faille exploitée"]

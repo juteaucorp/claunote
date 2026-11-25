@@ -16,7 +16,8 @@ en plus, même titre + même texte en moins de 20 h = pas renvoyé, et plus de 3
 - tout de suite : révision prête, nouveau contrôle annoncé sur Pronote, documents des profs,
   cours de la semaine modifié (salle, prof, annulé…) et nouvelle note (alertes.py, vérifié toutes les 15 min
   en journée), actualités importantes des sujets suivis (actualites.py).
-Rien ne part pendant les heures de silence : la file attend le matin.
+Rien ne part pendant les heures de silence : la file attend le matin, sauf les alertes 🚨 Actualités
+(réglage « Alertes graves même la nuit », activé par défaut).
 Calé sur l'emploi du temps Pronote (emploi_du_temps.py) : rien ne sonne pendant un cours ni au travail
 (heures « Dispensé » en alternance), la file attend la pause, midi ou la fin de journée ; le rappel du jour
 part à la sortie des cours. Seules les urgentes passent quand même : le matin d'un contrôle, un cours modifié,
@@ -46,9 +47,11 @@ INTERVALLE = 30         # secondes entre deux tours de la boucle
 MAX_PAR_TOUR = 3        # au-delà, les notifications du tour partent en un seul résumé
 DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
           "rappel": True, "pronote": True, "revisions": True, "actualites": True, "securite": True,
-          "edt": True}
+          "edt": True, "alertes_nuit": True}
 # Partent même en cours ou au travail : elles n'ont plus de sens plus tard
-URGENTES = ("jour:", "edt:", "actu-alerte:", "disque:")   # edt: un cours de la semaine modifié (alertes.py)
+URGENTES = ("jour:", "edt:", "actu-alerte:", "disque:")
+# Passent même pendant le silence de nuit (réglage « alertes_nuit », activé par défaut) : les alertes 🚨 Actualités
+NUIT = ("actu-alerte:",)   # edt: un cours de la semaine modifié (alertes.py)
 PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
          "examen": "Épreuve blanche prête"}
 JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
@@ -182,7 +185,11 @@ def vider_file(maintenant: dt.datetime):
     for compte_id, file in par_compte.items():
         p = preferences(None if compte_id in (None, 1) else compte_id)
         if en_silence(maintenant, p):
-            db.remettre_en_attente([n["id"] for n in file])   # ses heures de silence à lui : elles attendent
+            # Ses heures de silence à lui : elles attendent, sauf les alertes 🚨 s'il les veut aussi la nuit
+            passe = [n for n in file if p.get("alertes_nuit", True) and nuit(n["cle"])]
+            db.remettre_en_attente([n["id"] for n in file if n not in passe])
+            if passe:
+                _vider(passe, compte_id)
             continue
         if _occupe(maintenant, compte_id, p):   # en cours ou au travail : seules les urgentes partent
             db.remettre_en_attente([n["id"] for n in file if not urgente(n["cle"])])
@@ -199,6 +206,10 @@ def raison_attente(maintenant: dt.datetime, p: dict | None = None, compte_id=_CO
     if _occupe(maintenant, None if compte_id is _COMPTE else compte_id, p):
         return "après le cours"
     return "dans un instant"
+
+
+def nuit(cle: str) -> bool:
+    return any(cle.startswith(p) for p in NUIT)
 
 
 def urgente(cle: str) -> bool:
