@@ -3535,6 +3535,21 @@ def tester_notification():
     return f"Envoyée sur {envoyes} appareil{'s' if envoyes > 1 else ''}."
 
 
+@app.post("/notifications/test-verrouille", response_class=HTMLResponse)
+def tester_ecran_verrouille():
+    """Test envoyé par le worker dans 1 min, comme une alerte : on verrouille l'iPhone et on regarde s'il arrive.
+    « Envoyer un test » part du site pendant que le téléphone est réveillé : il arrive toujours, ça ne prouve rien
+    pour une alerte qui part quand le téléphone dort."""
+    if not db.abonnements():
+        return "Aucun appareil abonné : active d'abord les notifications sur ton iPhone."
+    maintenant = dt.datetime.now(pronote.PARIS)
+    db.notifier(f"test-verrouille:{maintenant:%Y%m%d%H%M%S}", "🔒 Test écran verrouillé",
+                f"Programmé à {maintenant:%H:%M:%S}, parti une minute plus tard comme une alerte.", "/notifications",
+                dans=60)
+    return ("Programmé : <strong>verrouille ton iPhone maintenant</strong>. Il part dans 1 min par le même chemin "
+            "que les alertes. S'il n'arrive pas avant que tu rallumes l'écran, c'est l'iPhone qui le retient.")
+
+
 @app.post("/notifications/reglages")
 def regler_notifications(heure: str = Form("18:00"), silence_debut: str = Form("22:00"),
                          silence_fin: str = Form("07:30"), rappel: bool = Form(False), pronote_: bool = Form(False,

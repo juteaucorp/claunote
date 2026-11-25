@@ -49,9 +49,9 @@ DEFAUT = {"heure": "18:00", "silence_debut": "22:00", "silence_fin": "07:30",
           "rappel": True, "pronote": True, "revisions": True, "actualites": True, "securite": True,
           "edt": True, "alertes_nuit": True}
 # Partent même en cours ou au travail : elles n'ont plus de sens plus tard
-URGENTES = ("jour:", "edt:", "actu-alerte:", "disque:")
+URGENTES = ("jour:", "edt:", "actu-alerte:", "disque:", "test-verrouille:")
 # Passent même pendant le silence de nuit (réglage « alertes_nuit », activé par défaut) : les alertes 🚨 Actualités
-NUIT = ("actu-alerte:",)   # edt: un cours de la semaine modifié (alertes.py)
+NUIT = ("actu-alerte:", "test-verrouille:")   # le test « écran verrouillé » : demandé exprès, il part   # edt: un cours de la semaine modifié (alertes.py)
 PRETE = {"fiche": "Fiche prête", "quiz": "Quiz prêt", "cartes": "Flashcards prêtes", "plan": "Plan de révision prêt",
          "examen": "Épreuve blanche prête"}
 JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
