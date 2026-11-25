@@ -27,6 +27,7 @@
   <p class="boutons">
     <button type="button" class="principal photo" onclick="document.getElementById('photo').click()">📷 Prendre en photo</button>
     <input type="file" id="photo" accept="image/*" capture="environment" hidden>
+    <a class="bouton scan-apple" href="/raccourci">📄 Scanner avec Apple</a>
     <button type="button" onclick="document.getElementById('fichiers').click()">Choisir des fichiers</button>
     <button type="button" class="dossier-seul" onclick="document.getElementById('dossier').click()">Choisir un dossier</button>
     <input type="file" id="dossier" webkitdirectory multiple hidden>
@@ -67,7 +68,7 @@
   .zone.survol { border-color: var(--accent); background: var(--accent-pale); }
   .zone input { display: none; }
   .boutons { display: flex; flex-wrap: wrap; gap: 8px; }
-  .photo { display: none; }
+  .photo, .scan-apple { display: none; }
   .selection { border-top: 1px solid var(--bord); padding-top: 4px; margin-bottom: 12px; }
   .selection p { margin: 6px 0; overflow-wrap: anywhere; }
   .selection ul { max-height: 30vh; overflow-y: auto; margin: 6px 0; padding-left: 18px; overflow-wrap: anywhere; }
@@ -75,6 +76,7 @@
   progress { width: 100%; height: 10px; accent-color: var(--accent); }
   @media (max-width: 760px), (pointer: coarse) {
     .photo { display: block; width: 100%; }
+    .scan-apple { display: flex; width: 100%; justify-content: center; }
     .zone { padding: 16px 12px; }
     .zone img, .dossier-seul { display: none; }
     #envoyer { width: 100%; }

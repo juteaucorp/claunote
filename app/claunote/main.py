@@ -25,11 +25,11 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
-from starlette.datastructures import FormData
+from starlette.datastructures import FormData, UploadFile as FichierRecu
 
 from claunote import (actualites, agent, anki, apercu, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
-                      pronote, profil, question, rangement, reglages, ressources, revision, schemas, securite, sensible,
+                      pronote, profil, question, raccourci, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local, turnstile)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
 from claunote.kdrive import KDrive, KDriveIndisponible
@@ -73,7 +73,7 @@ app = FastAPI(title="Claunote", lifespan=lifespan, docs_url=None, redoc_url=None
 # et « /appareils/…/retirer », qui doivent rester réservés au compte), plus les fichiers statiques.
 PUBLIC = frozenset({"/appareil", "/connexion", "/cles/connexion", "/cles/connexion/options", "/manifest.webmanifest",
                     "/sw.js", "/hors-ligne", "/installer", "/certificat.crt", "/invitation", "/conditions",
-                    "/tes-donnees"})
+                    "/tes-donnees", "/raccourci/envoi"})
 # Connecté mais conditions d'utilisation pas encore acceptées (ou changées) : seulement ces pages
 AVANT_CONDITIONS = frozenset({"/conditions", "/tes-donnees", "/deconnexion"})
 _moi: contextvars.ContextVar[dict | None] = contextvars.ContextVar("moi", default=None)
@@ -214,6 +214,8 @@ def _passe_sans_appareil(request: Request) -> bool:
     chemin = request.url.path
     if chemin in SANS_APPAREIL:
         return request.method == "GET"
+    if chemin == "/raccourci/envoi":
+        return request.method == "POST"   # raccourci iOS : son jeton tient lieu d'appareil (vérifié par la route)
     if chemin != "/invitation":
         return False
     if request.method == "POST":
@@ -1836,6 +1838,15 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
         raise HTTPException(400, "niveau inconnu")
     # Matière choisie : un sous-dossier de l'année, que le worker reconnaît (formations.matiere_depuis_dossier)
     matiere = " ".join(matiere.replace("/", " ").replace("\\", " ").split())[:80] if niveau else ""
+    envoyes, ignores = _envoyer_inbox(fichiers, niveau, matiere, moi()["id"])
+    if paquet:
+        return JSONResponse({"envoyes": envoyes, "ignores": ignores})
+    return templates.TemplateResponse(request, "deposer.html", {
+        "niveaux": NIVEAUX, "envoyes": envoyes, "ignores": ignores, **_filtres_depot()})
+
+
+def _envoyer_inbox(fichiers: list[UploadFile], niveau: str, matiere: str, compte_id: int) -> tuple[list, list]:
+    """Fichiers dans l'inbox (sous-dossiers gardés), notés au compte qui dépose ; (envoyés, ignorés)."""
     kd = KDrive.from_env()
     dossiers_kdrive: dict[tuple, int] = {}
     envoyes, ignores = [], []
@@ -1860,14 +1871,111 @@ def deposer(request: Request, fichiers: list[UploadFile] = File(...), niveau: st
         else:
             envoi = kd.upload(dossiers_kdrive[dossiers], chemin[-1], f.file.read(), conflict="rename")
         if isinstance(envoi, dict) and envoi.get("id"):   # le worker donnera le document à ce compte
-            db.noter_depot(envoi["id"], moi()["id"])
+            db.noter_depot(envoi["id"], compte_id)
         envoyes.append("/".join(chemin))
     if envoyes:
         db.demander_scan()
-    if paquet:
-        return JSONResponse({"envoyes": envoyes, "ignores": ignores})
-    return templates.TemplateResponse(request, "deposer.html", {
-        "niveaux": NIVEAUX, "envoyes": envoyes, "ignores": ignores, **_filtres_depot()})
+    return envoyes, ignores
+
+
+# --- Scanner avec Apple : raccourci iOS « Envoyer à Claunote » (raccourci.py) ---------------
+
+SCAN_MAX = 200 * 1024 * 1024    # un scan de 200 Mo : déjà des centaines de pages
+
+
+@app.get("/raccourci", response_class=HTMLResponse)
+def page_raccourci(request: Request):
+    return templates.TemplateResponse(request, "raccourci.html", _contexte_raccourci(request))
+
+
+def _contexte_raccourci(request: Request, jeton: str | None = None) -> dict:
+    return {"racc": raccourci.etat(moi()["id"]), "jeton": jeton, "nom": raccourci.NOM,
+            "adresse": _origine(request) + "/raccourci/envoi", "par_internet": appareils.par_tunnel(request.headers)}
+
+
+@app.post("/raccourci/jeton", response_class=HTMLResponse)
+def raccourci_jeton(request: Request):
+    """Nouveau jeton pour le raccourci (l'ancien ne marche plus) : montré une seule fois."""
+    jeton = raccourci.creer(moi()["id"])
+    securite.noter("raccourci_cree", request, f"compte {moi()['identifiant']}", alerte=(
+        f"Jeton du raccourci iPhone « {raccourci.NOM} » créé pour {moi()['identifiant']}. "
+        "Si ce n'est pas toi : Déposer → « Scanner avec Apple » → « Retirer »."))
+    return templates.TemplateResponse(request, "raccourci.html", _contexte_raccourci(request, jeton))
+
+
+@app.post("/raccourci/retirer")
+def raccourci_retirer(request: Request):
+    raccourci.retirer(moi()["id"])
+    securite.noter("raccourci_retire", request, f"compte {moi()['identifiant']}")
+    return RedirectResponse("/raccourci", status_code=303)
+
+
+def _refus_raccourci(request: Request, texte: str, statut: int, detail: str = "") -> Response:
+    if detail:
+        request.app.state.limiteur.echec(appareils.ip_client(request))
+        securite.echec("raccourci_echec", request, detail)
+    return Response(texte, status_code=statut, media_type="text/plain; charset=utf-8")
+
+
+@app.post("/raccourci/envoi")
+async def raccourci_envoi(request: Request, nom: str = ""):
+    """Reçoit un scan du raccourci iOS : corps brut (« Fichier ») ou formulaire (un ou plusieurs fichiers).
+
+    Réponse en texte court : le raccourci l'affiche tel quel (« Afficher le résultat »)."""
+    ip = appareils.ip_client(request)
+    if request.app.state.limiteur.bloque(ip) or _verrou_internet(request):
+        return _refus_raccourci(request, "Trop d'essais refusés : réessaie plus tard.", 429)
+    jeton = raccourci.lire_entete(request.headers.get("authorization"))
+    compte_id = await run_in_threadpool(raccourci.verifier, jeton) if jeton else None
+    compte = comptes.trouver(compte_id) if compte_id else None
+    if not compte or not comptes.utilisable(compte):
+        return _refus_raccourci(request, "Jeton du raccourci refusé : recrée-le dans Claunote (Déposer → "
+                                         "Scanner avec Apple).", 401,
+                                "jeton absent" if not jeton else f"jeton refusé ({jeton[:4]}…)")
+    if not comptes.peut(compte, "deposer"):
+        return _refus_raccourci(request, "Ton compte n'a pas le droit « Déposer ».", 403)
+    if int(request.headers.get("content-length") or 0) > SCAN_MAX:
+        return _refus_raccourci(request, "Fichier trop gros (200 Mo au plus).", 413)
+    fichiers: list[FichierRecu] = []
+    if (request.headers.get("content-type") or "").lower().startswith("multipart/form-data"):
+        formulaire = await request.form(max_files=100)
+        fichiers = [f for _, f in formulaire.multi_items() if isinstance(f, FichierRecu)]
+    else:   # « Corps de la requête : Fichier » : le fichier lui-même
+        tampon = tempfile.SpooledTemporaryFile(max_size=GROS_FICHIER)
+        taille = 0
+        async for morceau in request.stream():
+            taille += len(morceau)
+            if taille > SCAN_MAX:
+                return _refus_raccourci(request, "Fichier trop gros (200 Mo au plus).", 413)
+            tampon.write(morceau)
+        tampon.seek(0)
+        if taille:
+            fichiers = [UploadFile(tampon, size=taille, filename=nom)]
+    maintenant = dt.datetime.now()
+    for f in fichiers:   # nom absent (corps brut) ou sans extension : d'après le type du fichier
+        f.filename = raccourci.nom_du_scan(PurePosixPath((f.filename or nom).replace("\\", "/")).name,
+                                          f.content_type if f.headers else request.headers.get("content-type"),
+                                          maintenant)
+    if not fichiers:
+        return _refus_raccourci(request, "Rien reçu : partage un scan ou une photo vers le raccourci.", 400)
+
+    def deposer_pour_le_compte():
+        jeton_moi = _moi.set(compte)
+        try:
+            with comptes.pour(compte["id"]):
+                envoyes, ignores = _envoyer_inbox(fichiers, "", "", compte["id"])
+                raccourci.noter_usage(compte["id"], len(envoyes))
+                return envoyes, ignores
+        finally:
+            _moi.reset(jeton_moi)
+
+    request.app.state.limiteur.reussite(ip)
+    envoyes, ignores = await run_in_threadpool(deposer_pour_le_compte)
+    if not envoyes:
+        return _refus_raccourci(request, "Format non lu par Claunote : envoie un PDF ou une photo.", 415)
+    n = len(envoyes)
+    return Response(f"✅ {n} scan{'s' if n > 1 else ''} envoyé{'s' if n > 1 else ''} à Claunote : analyse en cours.",
+                    media_type="text/plain; charset=utf-8")
 
 
 def _filtres_depot() -> dict:

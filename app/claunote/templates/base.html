@@ -320,9 +320,33 @@
   main :where(img, figure, figure *, canvas, iframe) { touch-action: pan-x pan-y pinch-zoom; }
   /* iOS zoome sur tout champ écrit en moins de 16 px : jamais en dessous sur écran tactile */
   @media (pointer: coarse) { input, select, textarea { font-size: max(16px, 1em) !important; } }
+  /* Téléphone tenu à l'horizontale : iOS ignore « orientation: portrait » du manifeste, alors l'appli se cache
+     derrière « Tourne ton téléphone ». Seulement sur téléphone (tactile ET moins de 500 px de haut) : ni PC ni iPad. */
+  .paysage { display: none; }
+  @media (orientation: landscape) and (pointer: coarse) and (max-height: 500px) {
+    .paysage { position: fixed; inset: 0; z-index: 2147483647; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 10px; padding: 16px env(safe-area-inset-right) 16px env(safe-area-inset-left);
+      background: var(--fond-doux); color: var(--texte); text-align: center; touch-action: none; }
+    .paysage svg { color: var(--accent); animation: tourner 1.6s ease-in-out infinite alternate; }
+    .paysage strong { font-size: 1.2rem; }
+    .paysage span { color: var(--doux); }
+    html, body { overflow: hidden; }
+  }
+  @keyframes tourner { from { transform: rotate(-90deg); } to { transform: rotate(0deg); } }
+  @media (prefers-reduced-motion: reduce) { .paysage svg { animation: none; } }
 </style>
 </head>
 <body>
+<div class="paysage" role="alert" aria-live="polite">
+  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+       stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg>
+  <strong>Tourne ton téléphone</strong>
+  <span>Claunote s'utilise en portrait.</span>
+</div>
+<script>
+  // Android (appli installée) sait verrouiller l'orientation ; iOS non : la bannière ci-dessus prend le relais
+  try { screen.orientation?.lock?.("portrait").catch(() => {}); } catch (e) {}
+</script>
 {% from "_icones.html" import icone %}
 {% set chemin = request.url.path %}
 {% if not sans_nav %}

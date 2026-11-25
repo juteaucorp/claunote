@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block titre %}Scanner avec Apple{% endblock %}
+{% block contenu %}
+{% from "_onglets.html" import onglets %}
+{{ onglets('ajouter', 'deposer') }}
+<p class="fil"><a href="/deposer">‹ Déposer</a></p>
+<h1>Scanner avec Apple</h1>
+<p class="doux">Le scanner de documents de l'iPhone (recadrage auto, plusieurs pages, PDF net) n'est pas ouvert par une
+appli web : il est dans <strong>Notes</strong> et <strong>Fichiers</strong>. Le scan arrive ensuite dans Claunote en
+deux touches, par le raccourci <strong>« {{ nom }} »</strong> de la feuille de partage.</p>
+
+<div class="carte schema" aria-label="Chemin d'un scan">
+  <span>📷 <strong>Scanner</strong><br><small>Notes ou Fichiers</small></span><b aria-hidden="true">→</b>
+  <span>⬆️ <strong>Partager</strong><br><small>« {{ nom }} »</small></span><b aria-hidden="true">→</b>
+  <span>📥 <strong>Claunote</strong><br><small>analysé et rangé</small></span>
+</div>
+
+{% if jeton %}
+<div class="carte accent">
+  <strong>Ton jeton (montré une seule fois) :</strong>
+  <p class="copie"><code id="jeton">Bearer {{ jeton }}</code>
+    <button type="button" data-copier="jeton">Copier</button></p>
+  <p class="doux">Colle-le dans le raccourci (étape 4 plus bas). Il ne sert qu'à déposer des fichiers dans ton
+  compte. Perdu ? Crée-en un autre : l'ancien ne marchera plus.</p>
+</div>
+{% endif %}
+
+{% if racc %}
+<div class="carte">
+  <h2>Scanner maintenant</h2>
+  <p class="boutons">
+    <a class="bouton principal" href="mobilenotes://">📝 Ouvrir Notes</a>
+    <a class="bouton" href="shareddocuments://">📁 Ouvrir Fichiers</a>
+  </p>
+  <ol class="etapes">
+    <li><strong>Notes</strong> : nouvelle note → 📎 (ou 📷) → <strong>Scanner des documents</strong> → Enregistrer.
+      Touche le scan → <strong>Partager</strong> → <strong>{{ nom }}</strong>.</li>
+    <li><strong>Fichiers</strong> : <strong>•••</strong> en haut → <strong>Scanner des documents</strong> → Enregistrer.
+      Appui long sur le PDF → <strong>Partager</strong> → <strong>{{ nom }}</strong>.</li>
+  </ol>
+  <p class="doux">Marche aussi avec une photo de la Photothèque ou un PDF reçu par mail : Partager → {{ nom }}.
+  Tu peux ensuite supprimer la note ou le fichier : Claunote garde sa copie.</p>
+</div>
+{% endif %}
+
+<div class="carte">
+  <h2>1. Ton jeton</h2>
+  {% if racc %}
+  <p>Jeton en place depuis le {{ racc.cree_le[:10] }}{% if racc.utilise_le %}, dernier envoi le {{ racc.utilise_le[:10] }}
+    ({{ racc.nb }} fichier{{ 's' if racc.nb > 1 }} en tout){% else %}, pas encore utilisé{% endif %}.</p>
+  {% else %}
+  <p>Le raccourci n'a ni mot de passe ni appareil approuvé : un jeton secret, propre à ton compte, en tient lieu.</p>
+  {% endif %}
+  <form method="post" action="/raccourci/jeton" class="boutons">
+    <button class="{{ '' if racc else 'principal' }}" {% if racc %}onclick="return confirm('Le raccourci actuel ne marchera plus tant que tu n\'y colles pas le nouveau jeton. Continuer ?')"{% endif %}>
+      {{ 'Nouveau jeton' if racc else 'Créer mon jeton' }}</button>
+    {% if racc %}<button formaction="/raccourci/retirer" onclick="return confirm('Couper le raccourci ?')">Retirer</button>{% endif %}
+  </form>
+</div>
+
+<div class="carte">
+  <h2>2. Créer le raccourci (une fois, 2 min)</h2>
+  <ol class="etapes">
+    <li>App <strong>Raccourcis</strong> → <strong>+</strong> → nomme-le <strong>{{ nom }}</strong>.</li>
+    <li>Touche <strong>ⓘ</strong> en bas → active <strong>Afficher dans la feuille de partage</strong>. En haut du
+      raccourci, la ligne « Recevoir … de Feuille de partage » apparaît : garde <strong>PDF</strong>,
+      <strong>Images</strong> et <strong>Fichiers</strong>.</li>
+    <li>Ajoute l'action <strong>Répéter avec chaque élément</strong> (sur « Entrée du raccourci »).</li>
+    <li>Dedans, ajoute <strong>Obtenir le contenu de l'URL</strong> :
+      <ul>
+        <li>URL : <span class="copie"><code id="adresse">{{ adresse }}</code>
+          <button type="button" data-copier="adresse">Copier</button></span></li>
+        <li>Touche <strong>›</strong> (Afficher plus) → Méthode : <strong>POST</strong></li>
+        <li>En-têtes → Ajouter : clé <code>Authorization</code>, valeur
+          {% if jeton %}<strong>ton jeton copié plus haut</strong> (« Bearer … »){% else %}<code>Bearer</code> + ton jeton
+          (crée-le à l'étape 1){% endif %}</li>
+        <li>Corps de la requête : <strong>Fichier</strong> → <strong>Élément répété</strong></li>
+      </ul></li>
+    <li>Toujours dans la boucle : <strong>Afficher la notification</strong> avec « Contenu de l'URL ». Tu verras
+      « ✅ 1 scan envoyé à Claunote ».</li>
+  </ol>
+  <p class="doux">{% if par_internet %}Cette adresse passe par Internet : le jeton remplace le code d'appareil, et les
+    jetons refusés bloquent l'adresse comme un mauvais mot de passe.{% else %}Cette adresse est celle du VPN : le
+    raccourci marche quand le VPN est allumé. Pour envoyer aussi sans VPN, refais l'étape 4 depuis l'appli ouverte par
+    Internet.{% endif %}</p>
+</div>
+
+<style>
+  .schema { display: flex; align-items: center; justify-content: space-between; gap: 6px; text-align: center; }
+  .schema span { flex: 1; padding: 8px 4px; border-radius: 12px; background: var(--fond-doux); line-height: 1.3; }
+  .schema small { color: var(--doux); }
+  .schema b { color: var(--accent); }
+  .boutons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .etapes { padding-left: 20px; }
+  .etapes li { margin: 8px 0; }
+  .etapes ul { padding-left: 18px; }
+  .copie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .copie code { overflow-wrap: anywhere; padding: 4px 8px; border-radius: 8px; background: var(--fond-doux); }
+  @media (max-width: 760px) { .boutons a.bouton { flex: 1; justify-content: center; } }
+</style>
+<script>
+  document.querySelectorAll('[data-copier]').forEach(b => b.addEventListener('click', async () => {
+    const texte = document.getElementById(b.dataset.copier).textContent.trim();
+    try { await navigator.clipboard.writeText(texte); b.textContent = 'Copié ✓'; }
+    catch (e) { getSelection().selectAllChildren(document.getElementById(b.dataset.copier)); b.textContent = 'Sélectionné'; }
+  }));
+</script>
+{% endblock %}

@@ -56,7 +56,7 @@ PAGES = [
     ("/comptes", "admin"), ("/demandes", "admin"), ("/securite", "admin"), ("/mise-a-jour", "admin"),
     ("/analyses", "admin"), ("/inbox", "admin"), ("/scan", "admin"),
     ("/claude/reessayer", "admin"), ("/etat/nettoyer", "admin"), ("/installation", "admin"), ("/reglages/installation", "admin"), ("/organiser/matieres", "organiser"), ("/actualites/defaut", "admin"), ("/actualites/sources", "actualites"),
-    ("/deposer", "deposer"),
+    ("/deposer", "deposer"), ("/raccourci", "deposer"),
     ("/import", "organiser"),   # chacun trie ses propres dépôts (fichiers inutiles, scans, documents personnels)
     ("/a-verifier", "organiser"), ("/organiser", "organiser"), ("/hors-cours", "bibliotheque"),
     ("/reviser", "reviser"), ("/revision/", "reviser"), ("/campagne", "reviser"), ("/demander", "reviser"),
