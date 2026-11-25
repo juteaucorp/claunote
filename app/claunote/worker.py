@@ -1542,6 +1542,11 @@ def surveiller_disque():
     if effaces:
         log(f"cache des scans : {effaces} reste(s) d'anciens traitements effacé(s)")
     e = disque.etat()
+    if e and not disque.a_signaler(e):
+        # Place refaite (disque agrandi, ménage) : l'alerte encore en file ne part plus pour rien
+        n = db.oublier_notifications("disque:", "disque de nouveau libre")
+        if n:
+            log(f"disque de nouveau libre : {n} alerte(s) en attente retirée(s)")
     if disque.a_signaler(e):
         log(e["phrase"])
         db.notifier(f"disque:{e['niveau']}:{dt.date.today()}", "💽 Disque de la VM presque plein"
