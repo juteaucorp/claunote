@@ -25,13 +25,15 @@
     <input type="file" name="fichiers" id="fichiers" multiple>
   </label>
   <p class="boutons">
-    <button type="button" class="principal photo" onclick="document.getElementById('photo').click()">📷 Prendre en photo</button>
-    <input type="file" id="photo" accept="image/*" capture="environment" hidden>
-    <a class="bouton scan-apple" href="/raccourci">📄 Scanner avec Apple</a>
+    {# Sans « capture » : iOS ouvre son propre menu (Photothèque, Prendre une photo, Choisir un fichier) #}
+    <button type="button" class="principal photo" onclick="document.getElementById('photo').click()">📷 Photo ou scan</button>
+    <input type="file" id="photo" accept="image/*,application/pdf" multiple hidden>
     <button type="button" onclick="document.getElementById('fichiers').click()">Choisir des fichiers</button>
     <button type="button" class="dossier-seul" onclick="document.getElementById('dossier').click()">Choisir un dossier</button>
     <input type="file" id="dossier" webkitdirectory multiple hidden>
   </p>
+  <p class="doux scan-apple">Le scanner de documents d'Apple (recadrage auto) n'est proposé qu'aux applis d'Apple :
+    <a href="/raccourci">scanner depuis Notes</a>.</p>
   <p><label>Année d'étude (facultatif)<br>
     <select name="niveau">
       <option value="">Laisser l'agent deviner ou lire le nom du dossier</option>
@@ -76,7 +78,7 @@
   progress { width: 100%; height: 10px; accent-color: var(--accent); }
   @media (max-width: 760px), (pointer: coarse) {
     .photo { display: block; width: 100%; }
-    .scan-apple { display: flex; width: 100%; justify-content: center; }
+    .scan-apple { display: block; margin-top: 0; }
     .zone { padding: 16px 12px; }
     .zone img, .dossier-seul { display: none; }
     #envoyer { width: 100%; }
@@ -133,14 +135,16 @@
   const depuisInput = input => montrer([...input.files].map(f => ({ fichier: f, chemin: f.webkitRelativePath || f.name })));
   choixFichiers.addEventListener('change', () => depuisInput(choixFichiers));
   choixDossier.addEventListener('change', () => depuisInput(choixDossier));
-  // Photos prises une à une : elles s'ajoutent à la sélection (une photo = un document)
+  // Photo ou scan (menu d'iOS) : envoyé tout de suite, sans autre étape. Une photo prise = « photo-<date> »
   const photo = document.getElementById('photo');
   photo.addEventListener('change', () => {
-    const f = photo.files[0];
-    if (!f) return;
-    const nom = 'photo-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + (f.name.match(/\.\w+$/) || ['.jpg'])[0];
-    montrer([...selection, { fichier: f, chemin: nom }]);
+    const fichiers = [...photo.files];
+    if (!fichiers.length) return;
+    const date = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    montrer([...selection, ...fichiers.map((f, i) => ({ fichier: f, chemin: /^image\.\w+$/i.test(f.name) || !f.name
+      ? 'photo-' + date + (i ? '-' + i : '') + (f.name.match(/\.\w+$/) || ['.jpg'])[0] : f.name }))]);
     photo.value = '';
+    if (selection.length) form.requestSubmit();
   });
 
   async function lireEntree(entree, chemin, liste) {

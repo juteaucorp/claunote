@@ -41,7 +41,8 @@ def test_page_et_jeton_montre_une_fois(client):  # noqa: F811
     assert jeton not in page and "Ouvrir Notes" in page and "Nouveau jeton" in page
     assert jeton.split(".")[1] not in str(client.etat)   # la base ne garde que l'empreinte
     assert any(j["type"] == "raccourci_cree" for j in client.journal)
-    assert "Scanner avec Apple" in client.get("/deposer").text
+    page = client.get("/deposer").text
+    assert "Photo ou scan" in page and "capture=" not in page and "/raccourci" in page
 
 
 def test_envoi_brut_par_internet_sans_cookie(client, kd):  # noqa: F811

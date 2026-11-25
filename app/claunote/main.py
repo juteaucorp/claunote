@@ -1899,7 +1899,7 @@ def raccourci_jeton(request: Request):
     jeton = raccourci.creer(moi()["id"])
     securite.noter("raccourci_cree", request, f"compte {moi()['identifiant']}", alerte=(
         f"Jeton du raccourci iPhone « {raccourci.NOM} » créé pour {moi()['identifiant']}. "
-        "Si ce n'est pas toi : Déposer → « Scanner avec Apple » → « Retirer »."))
+        "Si ce n'est pas toi : Déposer → « scanner depuis Notes » → « Retirer »."))
     return templates.TemplateResponse(request, "raccourci.html", _contexte_raccourci(request, jeton))
 
 
@@ -1930,7 +1930,7 @@ async def raccourci_envoi(request: Request, nom: str = ""):
     compte = comptes.trouver(compte_id) if compte_id else None
     if not compte or not comptes.utilisable(compte):
         return _refus_raccourci(request, "Jeton du raccourci refusé : recrée-le dans Claunote (Déposer → "
-                                         "Scanner avec Apple).", 401,
+                                         "scanner depuis Notes).", 401,
                                 "jeton absent" if not jeton else f"jeton refusé ({jeton[:4]}…)")
     if not comptes.peut(compte, "deposer"):
         return _refus_raccourci(request, "Ton compte n'a pas le droit « Déposer ».", 403)
