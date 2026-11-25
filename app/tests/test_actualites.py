@@ -916,3 +916,9 @@ def test_page_coup_d_oeil(client, monkeypatch):
 def test_histoire_lue(client, monkeypatch):
     monkeypatch.setattr(db, "histoire_lue", lambda i: [i, 8])
     assert client.post("/actualites/3/histoire-lue").json() == {"ok": True, "ids": [3, 8]}
+
+
+def test_alerte_lue_reste_marquee_dans_l_essentiel():
+    from pathlib import Path
+    css = Path(ac.__file__).with_name("templates").joinpath("actualites.html").read_text()
+    assert ".essentiel li.lu::before" not in css and ".essentiel li.lu:not(.alerte)::before" in css

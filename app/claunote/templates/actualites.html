@@ -332,8 +332,9 @@
   .essentiel li > * { grid-column: 2; }
   .essentiel li::before { grid-column: 1; grid-row: 1 / span 3; }
   .essentiel .en-bref { margin: 8px 0 0; font-size: 1.02rem; font-weight: 600; line-height: 1.4; color: var(--texte); }
-  .essentiel li.lu p { color: var(--doux); }
-  .essentiel li.lu::before { background: var(--bord); color: var(--doux); }
+  /* Point déjà lu : grisé, sauf une alerte, qui reste marquée (« ! » rouge, texte lisible) même lue */
+  .essentiel li.lu:not(.alerte) p { color: var(--doux); }
+  .essentiel li.lu:not(.alerte)::before { background: var(--bord); color: var(--doux); }
   .essentiel li p strong { color: var(--texte); }
   .essentiel li p.a-faire { color: var(--accent-fonce); }
   .essentiel .a-faire { display: flex; align-items: flex-start; gap: 6px; margin: 3px 0 0; font-size: .88rem; color: var(--accent-fonce); }
