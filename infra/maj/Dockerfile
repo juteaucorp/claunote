@@ -1,6 +1,6 @@
 # Service « maj » : met à jour Claunote quand on le demande depuis le site (Réglages → Serveur → Mise à jour).
 # Docker + Compose pour reconstruire, git pour récupérer le code, jq pour l'état lu par le site.
-FROM docker:27.3-cli
+FROM docker:29.10-cli
 RUN apk add --no-cache git jq su-exec
 COPY boucle.sh /boucle.sh
 CMD ["sh", "/boucle.sh"]

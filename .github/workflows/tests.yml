@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: app/requirements.txt
       # Mêmes bibliothèques système que l'image : WeasyPrint (PDF), poppler et Tesseract (lecture locale), Graphviz (schémas)
@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: npm
           cache-dependency-path: pronote/package-lock.json
       - run: npm ci && npm test
@@ -49,6 +49,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
       - run: node --test
         working-directory: infra/maintenance
