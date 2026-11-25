@@ -123,7 +123,7 @@ Claunote sur la VM :
 
 ```bash
 docker run --rm -it -v "$PWD/infra/maintenance:/w" -w /w -e CLOUDFLARE_API_TOKEN=<le-jeton> \
-  node:24-alpine npx --yes wrangler@4 deploy --route "claunote.ton-domaine.fr/*"
+  node:26-alpine npx --yes wrangler@4 deploy --route "claunote.ton-domaine.fr/*"
 ```
 
 Puis vérifie une fois le **Failure mode** de la route dans le tableau de bord (étape 3, point 5).

@@ -58,7 +58,7 @@ services:
   cloudflared:
     # Accès par Internet sans ouvrir de port (infra/SETUP.md, section 17) : la VM appelle Cloudflare, pas l'inverse.
     # Ne démarre que si COMPOSE_PROFILES=tunnel dans .env. Seuls les appareils approuvés passent (appareils.py).
-    image: cloudflare/cloudflared:2026.10.7
+    image: cloudflare/cloudflared:2026.11.2
     profiles: [tunnel]
     restart: unless-stopped
     logging: *journaux
@@ -101,7 +101,7 @@ services:
     # Modèle local (« local d'abord ») : petit modèle de langue sur le processeur, pas de carte graphique.
     # Les modèles se téléchargent tout seuls au premier lancement (~2,3 Go). Pour s'en passer :
     # Analyses → « Éteindre les modèles locaux » sur le site (arrête ollama et lecture, tout passe par Claude).
-    image: ollama/ollama:0.40.15
+    image: ollama/ollama:0.40.18
     restart: unless-stopped
     logging: *journaux
     cpu_shares: 256    # priorité basse : il prend le processeur libre, pas celui du site
