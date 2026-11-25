@@ -40,7 +40,7 @@ INCONNUS_FENETRE, PALIERS_INCONNUS = 3600, (5, 20, 100)
 INSISTANCE, INSISTANCE_FENETRE = 100, 10 * 60
 ERREURS_FENETRE, ERREURS_SEUIL = 5 * 60, 5
 ALERTE_ESPACEE = 10 * 60
-ECHECS = {"connexion_echec", "faceid_echec", "code_echec"}
+ECHECS = {"connexion_echec", "faceid_echec", "code_echec", "raccourci_echec"}
 
 # type → (gravité, libellé) ; gravité : info, attention, alerte
 TYPES = {
@@ -49,6 +49,9 @@ TYPES = {
     "faceid_echec": ("attention", "Face ID refusé"),
     "code_echec": ("attention", "Code d'appareil refusé"),
     "captcha": ("attention", "Captcha Turnstile refusé"),
+    "raccourci_echec": ("attention", "Jeton du raccourci iPhone refusé"),
+    "raccourci_cree": ("alerte", "Jeton du raccourci iPhone créé"),
+    "raccourci_retire": ("attention", "Jeton du raccourci iPhone retiré"),
     "code_cree": ("info", "Code d'appareil créé"),
     "appareil_ajoute": ("alerte", "Nouvel appareil approuvé"),
     "appareil_retire": ("attention", "Appareil retiré"),
