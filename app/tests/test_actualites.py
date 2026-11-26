@@ -7,7 +7,8 @@ import pytest
 from claunote import actualites as ac, agent, db, main, notifications
 from tests.test_site import anonyme, client  # noqa: F401  (fixtures du site)
 
-MAINTENANT = dt.datetime(2026, 11, 12, 10, 0, tzinfo=dt.timezone.utc)
+# Relative à aujourd'hui : le code n'envoie à l'IA que les articles de moins de FRAIS jours (date figée = tests cassés 14 j plus tard)
+MAINTENANT = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
 RSS = """<?xml version="1.0"?><rss version="2.0"><channel><title>Veille SIO</title><link>https://ex.fr</link>
 <item><title>Faille &lt;b&gt;critique&lt;/b&gt; dans Windows Server</title><link>https://www.ex.fr/a/?utm_source=rss&amp;id=3#haut</link>
   <description>&lt;p&gt;Une &lt;b&gt;CVE&lt;/b&gt; exploitée&lt;/p&gt;&lt;script&gt;x()&lt;/script&gt;</description>
