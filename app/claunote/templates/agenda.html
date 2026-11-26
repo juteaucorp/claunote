@@ -67,6 +67,7 @@
             {% if c.controle %}<span class="edt-badge">Contrôle</span>{% endif %}
             {% if c.maintenant %}<span class="edt-badge maintenant">Maintenant</span>{% endif %}
             <div class="doux">{{ [c.salle, c.prof, c.statut]|select|join(' · ') }}</div>
+            {% if peut('notes') and c.matiere and j.date <= aujourdhui %}<a class="edt-note" href="/notes/nouvelle?{{ {'pronote': c.matiere, 'jour': j.date.isoformat()}|urlencode }}">📝 Prendre des notes</a>{% endif %}
           {% endif %}
         </div>
       </li>
@@ -178,6 +179,7 @@
   .edt-heure { flex: none; width: 48px; font-variant-numeric: tabular-nums; font-weight: 600; }
   .edt-creneau.dispense .edt-heure, .edt-creneau.dispense strong { color: var(--doux); }
   .edt-creneau.en-cours { box-shadow: inset 3px 0 0 var(--accent); }
+  .edt-note { display: inline-block; margin-top: 4px; font-size: .88rem; font-weight: 600; text-decoration: none; color: var(--accent-fonce); }
   .edt-badge { display: inline-block; font-size: .75em; padding: 1px 8px; border-radius: 999px; margin-left: 6px;
     background: var(--accent); color: #fff; vertical-align: middle; }
   .edt-badge.maintenant { background: #34c759; }

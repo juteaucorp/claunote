@@ -1,0 +1,6 @@
+{# Cours auxquels rattacher la note (ceux de la matière choisie : les siens, puis ceux partagés avec lui) #}
+<select name="document_id" aria-label="Cours rattaché">
+  <option value="">{{ 'Aucun cours rattaché' if cours_matiere or cours else 'Pas de cours dans cette matière' }}</option>
+  {% if cours and cours.id not in cours_matiere|map(attribute='id')|list %}<option value="{{ cours.id }}" selected>{{ cours.titre or cours.nom }}</option>{% endif %}
+  {% for d in cours_matiere %}<option value="{{ d.id }}" {{ 'selected' if d.id == choisi or (cours and d.id == cours.id) }}>{{ d.titre or d.nom }}{% if d.type %} · {{ d.type }}{% endif %}{% if d.date_doc %} · {{ d.date_doc.strftime('%d/%m/%y') }}{% endif %}{% if moi_id and d.compte_id != moi_id %} · partagé{% endif %}</option>{% endfor %}
+</select>

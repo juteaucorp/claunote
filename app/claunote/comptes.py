@@ -23,6 +23,7 @@ DROITS = {
     "deposer": ("Déposer", "Envoyer des scans et des fichiers"),
     "organiser": ("Organiser", "Classer, corriger, « À vérifier », supprimer ses documents"),
     "reviser": ("Réviser", "Fiches, quiz, campagnes, flashcards, questions sur ses cours"),
+    "notes": ("Notes", "Prendre ses notes par matière ou par cours, les retrouver, s'en servir pour réviser"),
     "agenda": ("Agenda Pronote", "Relier son propre Pronote : agenda, notes, emploi du temps, alertes"),
     "actualites": ("Actualités", "Son propre fil d'actualités (sources, sujets, alertes)"),
     "essentiel": ("L'essentiel du jour", "Le point du jour des actualités fait par Claude (forfait de l'admin, même sans autonomie)"),
@@ -41,7 +42,7 @@ FORFAIT = {
 }
 FORFAIT_DROIT = {"autonomie": "claude", "demande": "claude_demande", "aucun": None}
 DROITS_CASES = [d for d in DROITS if d not in ("claude", "claude_demande")]   # les autres : des cases à cocher
-DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "agenda", "actualites", "essentiel", "claude_demande"]   # par défaut
+DROITS_INVITE = ["bibliotheque", "deposer", "organiser", "reviser", "notes", "agenda", "actualites", "essentiel", "claude_demande"]   # par défaut
 FORFAIT_INVITE = "demande"
 ROLES = {"admin": "Admin", "invite": "Invité"}
 DUREE_JETON = 15 * 60
@@ -64,7 +65,7 @@ PAGES = [
     # Chacun relie SON Pronote (un jeton par compte dans le service) : le droit « agenda » suffit
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
-    ("/piece/", "reviser"), ("/partages", "bibliotheque"), ("/acces-cours", "bibliotheque"),
+    ("/piece/", "reviser"), ("/notes", "notes"), ("/partages/note", "notes"), ("/partages", "bibliotheque"), ("/acces-cours", "bibliotheque"),
 ]
 # Pages de rangement où l'admin ne travaille que sur ses propres dépôts, même avec « Tout voir » : chaque compte
 # trie ses imports, choisit sa formation et range ses matières (l'admin garde l'accès aux documents des autres
@@ -210,6 +211,7 @@ def migrer():
     """Le compte 1 (admin) reprend l'identifiant et le mot de passe d'avant (page Compte, sinon .env)."""
     migrer_forfait()
     migrer_essentiel()
+    migrer_notes()
     admin = db.compte(1)
     if admin is None or admin.get("hash"):
         return
@@ -246,6 +248,18 @@ def migrer_essentiel():
         if k["role"] != "admin" and "actualites" in droits and "essentiel" not in droits:
             db.maj_compte(k["id"], droits=droits + ["essentiel"])
     db.etat_ecrire("droit_essentiel", "fait")
+    oublier()
+
+
+def migrer_notes():
+    """Une seule fois : les invités qui lisent leurs cours reçoivent les Notes (case à décocher dans Comptes)."""
+    if db.etat_valeur("droit_notes") == "fait":
+        return
+    for k in db.comptes():
+        droits = list(k.get("droits") or [])
+        if k["role"] != "admin" and "bibliotheque" in droits and "notes" not in droits:
+            db.maj_compte(k["id"], droits=droits + ["notes"])
+    db.etat_ecrire("droit_notes", "fait")
     oublier()
 
 

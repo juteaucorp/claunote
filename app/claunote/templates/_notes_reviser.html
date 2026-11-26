@@ -1,0 +1,15 @@
+{# Réviser : ses notes de la matière choisie, à joindre au support (cochées = l'IA les lit avec les cours) #}
+{% if liste %}
+<div class="liste-cours notes-a-joindre">
+  <div class="doux tete-liste">📝 {{ liste|length }} note{{ 's' if liste|length > 1 }} en {{ matiere }} · cochées = jointes au support
+    <button type="button" class="lien" onclick="const l = this.closest('.liste-cours').querySelectorAll('input[type=checkbox]'); const tout = [...l].some((c) => !c.checked); l.forEach((c) => { c.checked = tout; }); this.textContent = tout ? 'Tout décocher' : 'Tout cocher'">Tout cocher</button></div>
+  {% for n in liste %}
+  <label><input type="checkbox" name="note_ids" value="{{ n.id }}">
+    <span><strong>{{ n|titre_note }}</strong> <span class="doux">· {{ n.maj_le|date_note }}</span></span></label>
+  {% endfor %}
+</div>
+<style>
+  .tete-liste { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tete-liste .lien { border: 0; background: none; padding: 4px 0; color: var(--accent-fonce); font-weight: 600; cursor: pointer; }
+</style>
+{% endif %}

@@ -747,6 +747,45 @@ UPDATE documents SET statut = 'a_verifier', relire = true, resume = NULL, transc
        note = 'Claude n''avait pas pu ouvrir ce fichier (outil PDF manquant) : il va le relire.'
  WHERE statut IN ('classe', 'a_verifier') AND length(transcription) < 1500
    AND left(transcription, 500) ~* 'pdftoppm|poppler|n''a pas pu être lu|n''ai pas pu (le )?lire|impossible de lire|aucune transcription';
+-- Prise de notes (notes.py) : à chaque compte ses notes, rattachées à une matière (niveau + matière), à un cours,
+-- ou libres. Privées par défaut ; une note publique se lit par les autres comptes sur « Partagés », en lecture seule.
+-- Pas de lien de propriété avec le cours : une note sur un cours partagé par un autre compte reste à son auteur.
+CREATE TABLE IF NOT EXISTS notes (
+    id           SERIAL PRIMARY KEY,
+    compte_id    INT NOT NULL DEFAULT claunote_compte() REFERENCES comptes(id) ON DELETE CASCADE,
+    titre        TEXT NOT NULL DEFAULT '',
+    contenu      TEXT NOT NULL DEFAULT '',     -- Markdown
+    niveau       TEXT,
+    matiere      TEXT,
+    document_id  INT REFERENCES documents(id) ON DELETE SET NULL,
+    epinglee     BOOLEAN NOT NULL DEFAULT false,
+    public       BOOLEAN NOT NULL DEFAULT false,
+    archive_le   TIMESTAMPTZ,
+    cree_le      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    maj_le       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    recherche    tsvector GENERATED ALWAYS AS (
+        setweight(to_tsvector('french', coalesce(titre, '')), 'A') ||
+        setweight(to_tsvector('french', coalesce(matiere, '')), 'B') ||
+        setweight(to_tsvector('french', coalesce(contenu, '')), 'C')
+    ) STORED
+);
+CREATE INDEX IF NOT EXISTS notes_compte ON notes (compte_id, maj_le DESC);
+CREATE INDEX IF NOT EXISTS notes_document ON notes (document_id) WHERE document_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notes_recherche ON notes USING GIN (recherche);
+GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO claunote_compte;
+GRANT USAGE, SELECT, UPDATE ON SEQUENCE notes_id_seq TO claunote_compte;
+DROP TRIGGER IF EXISTS proprietaire ON notes;
+CREATE TRIGGER proprietaire BEFORE INSERT ON notes FOR EACH ROW EXECUTE FUNCTION claunote_proprietaire();
+ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'notes'
+                   AND policyname = 'par_compte') THEN
+        CREATE POLICY par_compte ON notes USING (compte_id = claunote_compte() OR claunote_tout())
+            WITH CHECK (compte_id = claunote_compte() OR claunote_tout());
+    END IF;
+END $$;
+DROP POLICY IF EXISTS partage ON notes;
+CREATE POLICY partage ON notes FOR SELECT USING (claunote_partages() AND public AND archive_le IS NULL);
 """
 
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
@@ -3442,7 +3481,7 @@ def copie_kdrive_faite(chemin: str, taille: int, mtime: float, kdrive_id: int | 
 # --- Public ou privé (visibilite.py) ---------------------------------------------------
 # Changer la visibilité : seulement ses propres éléments (même en « Tout voir », l'admin ne choisit pas pour les autres)
 
-TABLES_VISIBILITE = {"documents", "revisions", "campagnes"}
+TABLES_VISIBILITE = {"documents", "revisions", "campagnes", "notes"}
 
 
 def changer_visibilite(table: str, element_id: int, public: bool | None) -> bool:
@@ -3678,3 +3717,191 @@ def acces_cours(statut: str):
     with sans_compte(), connect() as c:
         return c.execute("SELECT id, identifiant, nom, acces_cours_le, coalesce(nullif(nom, ''), identifiant) AS auteur "
                          "FROM comptes WHERE acces_cours = %s AND actif ORDER BY acces_cours_le", (statut,)).fetchall()
+
+
+# --- Notes (notes.py) : à chaque compte les siennes ; « Tout voir » de l'admin les montre toutes ---------------
+# Seul l'auteur les modifie (compte_id = claunote_compte()), même l'admin avec « Tout voir ».
+
+_NOTE_COLS = ("n.id, n.titre, n.niveau, n.matiere, n.document_id, n.epinglee, n.public, n.archive_le, n.cree_le, "
+              "n.maj_le, n.compte_id, left(n.contenu, 600) AS debut, length(n.contenu) AS taille, "
+              "coalesce(nullif(a.nom, ''), a.identifiant) AS auteur")
+_NOTE_DE = "notes n LEFT JOIN comptes a ON a.id = n.compte_id"
+_A_L_AUTEUR = "compte_id = claunote_compte()"
+
+
+def creer_note(titre: str = "", contenu: str = "", niveau: str | None = None, matiere: str | None = None,
+               document_id: int | None = None) -> dict:
+    with connect() as c:
+        return c.execute("INSERT INTO notes (titre, contenu, niveau, matiere, document_id) VALUES (%s, %s, %s, %s, %s) "
+                         "RETURNING id, maj_le", (titre, contenu, niveau, matiere, document_id)).fetchone()
+
+
+def note(note_id: int):
+    with connect() as c:
+        return c.execute(f"SELECT n.*, coalesce(nullif(a.nom, ''), a.identifiant) AS auteur FROM {_NOTE_DE} "
+                         "WHERE n.id = %s", (note_id,)).fetchone()
+
+
+CHAMPS_NOTE = {"titre", "contenu", "niveau", "matiere", "document_id", "epinglee", "archive_le"}
+
+
+def maj_note(note_id: int, base=None, **champs) -> tuple[str, object]:
+    """('ok', maj_le), ('conflit', note actuelle) si elle a changé depuis `base`, ('absente', None) sinon.
+    `base` : la version (maj_le) sur laquelle l'éditeur a travaillé ; None : pas de contrôle (actions)."""
+    inconnus = set(champs) - CHAMPS_NOTE
+    if inconnus or not champs:
+        raise ValueError(f"champs : {inconnus or 'aucun'}")
+    cols = ", ".join(f"{k} = %s" for k in champs)
+    with connect() as c:
+        r = c.execute(f"UPDATE notes SET {cols}, maj_le = clock_timestamp() WHERE id = %s AND {_A_L_AUTEUR} "
+                      "AND (%s::timestamptz IS NULL OR maj_le = %s::timestamptz) RETURNING maj_le",
+                      (*champs.values(), note_id, base, base)).fetchone()
+        if r:
+            return "ok", r["maj_le"]
+        actuelle = c.execute(f"SELECT id, titre, contenu, maj_le FROM notes WHERE id = %s AND {_A_L_AUTEUR}",
+                             (note_id,)).fetchone()
+    return ("conflit", actuelle) if actuelle else ("absente", None)
+
+
+def changer_note(note_id: int, **champs) -> bool:
+    """Épingler, archiver, restaurer : sans toucher à la date de modification du texte."""
+    inconnus = set(champs) - {"epinglee", "archive_le"}
+    if inconnus or not champs:
+        raise ValueError(f"champs : {inconnus or 'aucun'}")
+    cols = ", ".join(f"{k} = %s" for k in champs)
+    with connect() as c:
+        return c.execute(f"UPDATE notes SET {cols} WHERE id = %s AND {_A_L_AUTEUR}",
+                         (*champs.values(), note_id)).rowcount == 1
+
+
+def supprimer_note(note_id: int) -> bool:
+    with connect() as c:
+        return c.execute(f"DELETE FROM notes WHERE id = %s AND {_A_L_AUTEUR}", (note_id,)).rowcount == 1
+
+
+def notes(q: str = "", niveau: str | None = None, matiere: str | None = None, libres: bool = False,
+          archivees: bool = False):
+    """Les notes (sans leur texte entier), épinglées puis les plus récentes. `q` : recherche pendant la frappe
+    (début des mots, titre, matière et texte) ; `libres` : celles sans matière."""
+    from claunote import notes as n_
+    conditions = ["n.archive_le IS " + ("NOT NULL" if archivees else "NULL")]
+    params: list = []
+    if libres:
+        conditions.append("n.matiere IS NULL")
+    elif matiere:
+        conditions.append("n.matiere = %s AND n.niveau IS NOT DISTINCT FROM %s")
+        params += [matiere, niveau]
+    requete = n_.requete_prefixe(q)
+    if q.strip():
+        conditions.append("(n.recherche @@ to_tsquery('french', %s) OR n.titre ILIKE %s OR n.contenu ILIKE %s)"
+                          if requete else "(n.titre ILIKE %s OR n.contenu ILIKE %s)")
+        motif = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        params += ([requete] if requete else []) + [motif, motif]
+    ordre = "n.epinglee DESC, n.maj_le DESC, n.id DESC"
+    if requete:
+        ordre = f"ts_rank(n.recherche, to_tsquery('french', %s)) DESC, {ordre}"
+        params.append(requete)
+    with connect() as c:
+        return c.execute(f"SELECT {_NOTE_COLS} FROM {_NOTE_DE} WHERE {' AND '.join(conditions)} ORDER BY {ordre}",
+                         params).fetchall()
+
+
+def matieres_notes():
+    """(niveau, matière, nombre) des notes en cours (pas archivées), pour les filtres."""
+    with connect() as c:
+        return c.execute("SELECT niveau, matiere, count(*) AS n FROM notes WHERE archive_le IS NULL AND matiere IS NOT NULL "
+                         "GROUP BY niveau, matiere ORDER BY niveau DESC NULLS LAST, matiere").fetchall()
+
+
+def nb_notes() -> dict:
+    with connect() as c:
+        return c.execute("SELECT count(*) FILTER (WHERE archive_le IS NULL) AS actives, "
+                         "count(*) FILTER (WHERE archive_le IS NULL AND matiere IS NULL) AS libres, "
+                         "count(*) FILTER (WHERE archive_le IS NOT NULL) AS archivees FROM notes").fetchone()
+
+
+def notes_du_document(doc_id: int):
+    """Ses notes sur ce cours (le sien, ou un cours partagé qu'il lit)."""
+    with connect() as c:
+        return c.execute(f"SELECT {_NOTE_COLS} FROM {_NOTE_DE} WHERE n.document_id = %s AND n.archive_le IS NULL "
+                         f"AND n.{_A_L_AUTEUR} ORDER BY n.epinglee DESC, n.maj_le DESC", (doc_id,)).fetchall()
+
+
+def notes_matiere(niveau: str, matiere: str):
+    """Ses notes d'une matière, à cocher pour une fiche ou un quiz."""
+    with connect() as c:
+        return c.execute(f"SELECT {_NOTE_COLS} FROM {_NOTE_DE} WHERE n.matiere = %s AND n.niveau IS NOT DISTINCT FROM %s "
+                         f"AND n.archive_le IS NULL AND n.{_A_L_AUTEUR} ORDER BY n.epinglee DESC, n.maj_le DESC",
+                         (matiere, niveau)).fetchall()
+
+
+def notes_choisies(ids: list[int]):
+    """Notes cochées (les siennes seulement), texte compris."""
+    if not ids:
+        return []
+    with connect() as c:
+        return c.execute(f"SELECT * FROM notes WHERE id = ANY(%s) AND {_A_L_AUTEUR} ORDER BY maj_le DESC",
+                         (list(ids),)).fetchall()
+
+
+def notes_pour_question(q: str, niveau: str | None, matiere: str | None, limite: int = 3):
+    """Ses notes qui parlent de la question (chat « Une question »), dans la matière choisie s'il y en a une."""
+    from claunote import notes as n_
+    requete = n_.requete_prefixe(q)
+    if not requete:
+        return []
+    conditions, params = [f"{_A_L_AUTEUR}", "archive_le IS NULL", "recherche @@ to_tsquery('french', %s)"], [requete]
+    if matiere:
+        conditions.append("matiere = %s")
+        params.append(matiere)
+    if niveau:
+        conditions.append("niveau IS NOT DISTINCT FROM %s")
+        params.append(niveau)
+    with connect() as c:
+        # Les mots d'une question ne sont pas tous dans la note : au moins l'un d'eux (|), les meilleures d'abord
+        souple = requete.replace(" & ", " | ")
+        params[0] = souple
+        return c.execute(f"SELECT * FROM notes WHERE {' AND '.join(conditions)} "
+                         "ORDER BY ts_rank(recherche, to_tsquery('french', %s)) DESC LIMIT %s",
+                         (*params, requete, limite)).fetchall()
+
+
+def chercher_notes(q: str, limite: int = 10):
+    """Recherche du site : ses notes en cours qui contiennent tous les mots, extrait surligné."""
+    with connect() as c:
+        return c.execute(
+            f"""SELECT n.id, n.titre, n.niveau, n.matiere, n.maj_le, left(n.contenu, 600) AS debut,
+                      ts_headline('french', n.contenu, requete, 'MaxFragments=2, MaxWords=25, MinWords=8') AS extrait
+               FROM notes n, websearch_to_tsquery('french', %s) AS requete
+               WHERE n.recherche @@ requete AND n.archive_le IS NULL AND n.{_A_L_AUTEUR}
+               ORDER BY ts_rank(n.recherche, requete) DESC LIMIT %s""", (q, limite)).fetchall()
+
+
+def cours_pour_note(niveau: str, matiere: str):
+    """Cours auxquels rattacher une note : les siens et ceux qu'il lit en partage, de cette matière."""
+    with partages(), connect() as c:
+        return c.execute("SELECT d.id, d.titre, d.nom, d.type, d.date_doc, d.compte_id FROM documents d "
+                         "WHERE d.statut = 'classe' AND d.niveau = %s AND d.matiere = %s "
+                         "ORDER BY d.compte_id <> claunote_compte(), d.date_doc DESC NULLS LAST, d.id DESC",
+                         (niveau, matiere)).fetchall()
+
+
+def cours_lisible(doc_id: int):
+    """Le cours si ce compte peut le lire (le sien, ou partagé avec lui) : titre, matière, à qui."""
+    with partages(), connect() as c:
+        return c.execute("SELECT d.id, d.titre, d.nom, d.niveau, d.matiere, d.type, d.compte_id FROM documents d "
+                         "WHERE d.id = %s AND (d.compte_id = claunote_compte() OR claunote_tout() OR d.statut = 'classe')",
+                         (doc_id,)).fetchone()
+
+
+def partages_notes():
+    with partages(), connect() as c:
+        return c.execute(f"SELECT {_NOTE_COLS} FROM {_NOTE_DE} WHERE n.public AND n.archive_le IS NULL "
+                         "AND n.compte_id <> claunote_compte() ORDER BY n.maj_le DESC, n.id DESC").fetchall()
+
+
+def note_partagee(note_id: int):
+    with partages(), connect() as c:
+        return c.execute(f"SELECT n.*, coalesce(nullif(a.nom, ''), a.identifiant) AS auteur FROM {_NOTE_DE} "
+                         "WHERE n.id = %s AND n.public AND n.archive_le IS NULL AND n.compte_id <> claunote_compte()",
+                         (note_id,)).fetchone()

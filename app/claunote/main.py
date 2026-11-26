@@ -19,7 +19,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 import markdown
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -29,7 +29,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile as FichierRecu
 
 from claunote import (actualites, agent, anki, apercu, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
-                      disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notifications, pdf, progression,
+                      disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notes, notifications, pdf, progression,
                       pronote, profil, question, raccourci, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local, turnstile, version)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
@@ -545,6 +545,8 @@ def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Ma
             return (f'<a class="web" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
                     f'[{m.group(1)}]</a>') if url else m.group(0)
         doc_id = reperes.get(m.group(1))
+        if doc_id and int(doc_id) < 0:   # une note de l'élève (notes.comme_passage), pas un cours
+            return f'<a href="/notes/{-int(doc_id)}" class="repere-note">[{m.group(1)}]</a>'
         return f'<a href="/doc/{doc_id}">[{m.group(1)}]</a>' if doc_id else m.group(0)
     rendu = re.sub(r"\[([DW]\d+)\]", lien, rendu)
     return Markup(re.sub(r"\[IA\]", HORS_COURS, rendu))
@@ -1763,7 +1765,13 @@ def document(request: Request, doc_id: int):
         "format": PurePosixPath(doc["nom"]).suffix.lstrip(".").upper(),
         "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres(),
         "matiere_publique": (doc["niveau"], doc["matiere"]) in db.matieres_publiques()
-        if doc["statut"] == "classe" and db.plusieurs_comptes() else False})
+        if doc["statut"] == "classe" and db.plusieurs_comptes() else False,
+        "notes_cours": _notes_cours(doc_id)})
+
+
+def _notes_cours(doc_id: int) -> list[dict]:
+    """Ses notes rattachées à ce cours (section « Mes notes » de la page du cours)."""
+    return db.notes_du_document(doc_id) if comptes.peut(moi(), "notes") else []
 
 
 def _page_carte_mentale(request: Request, texte: str, titre: str, retour: str) -> HTMLResponse:
@@ -2014,8 +2022,9 @@ def recherche(request: Request, q: str = ""):
                     proches.append({**p, "id": p["document_id"]})
         except Exception as e:  # index pas encore créé : la recherche exacte suffit
             print(f"recherche par passages impossible : {e}", flush=True)
+    dans_notes = db.chercher_notes(q) if q.strip() and comptes.peut(moi(), "notes") else []
     return templates.TemplateResponse(request, "recherche.html", {"q": q, "resultats": resultats,
-                                                                  "proches": proches[:8]})
+                                                                  "proches": proches[:8], "dans_notes": dans_notes})
 
 
 @app.get("/a-verifier", response_class=HTMLResponse)
@@ -2404,11 +2413,15 @@ def _partages_utilisables() -> bool:
 
 @app.get("/reviser/nouvelle", response_class=HTMLResponse)
 def nouvelle_revision(request: Request, sujet: str = "", matiere: str = "", date_eval: str = "", genre: str = "",
-                      doc: int | None = None):
-    """Formulaire d'une révision ; les paramètres le préremplissent (depuis l'agenda Pronote ou un cours)."""
+                      doc: int | None = None, note: int | None = None):
+    """Formulaire d'une révision ; les paramètres le préremplissent (depuis l'agenda Pronote, un cours, une note)."""
     document = db.document(doc) if doc else None
+    jointes = db.notes_choisies([note]) if note and comptes.peut(moi(), "notes") else []
+    if document and comptes.peut(moi(), "notes"):
+        jointes += [n for n in db.notes_du_document(document["id"]) if n["id"] != note]
     return templates.TemplateResponse(request, "reviser_nouvelle.html", {
         "choix": db.niveaux_matieres_comptes(), "genres": revision.GENRES, "document": document,
+        "notes_jointes": jointes,
         "demain": dt.date.today() + dt.timedelta(days=1),
         "pre": {"sujet": sujet, "matiere": matiere, "date_eval": date_eval, "genre": genre or "fiche"}})
 
@@ -2447,12 +2460,20 @@ async def demander_revision(request: Request):
         sujet = sujet or f"{matiere} ({niveau})"
     if not ids:
         raise HTTPException(400, "aucun document classé pour ce choix")
-    pieces = await _pieces(f)
+    pieces = await _pieces(f) + _notes_jointes(f)
     rev_id = db.creer_revision(genre, sujet, ids, eval_le, consigne=consigne, strict=bool(f.get("strict")))
     if pieces:
         db.ajouter_pieces(pieces, revision_id=rev_id)
     db.demander_scan()
     return RedirectResponse(f"/revision/{rev_id}", status_code=303)
+
+
+def _notes_jointes(f) -> list[tuple[str, bytes]]:
+    """Notes cochées pour une fiche, un quiz… : jointes au support comme le contexte de l'élève (ses mots à lui)."""
+    if not comptes.peut(moi(), "notes"):
+        return []
+    ids = list(dict.fromkeys(int(i) for i in f.getlist("note_ids") if str(i).isdigit()))
+    return [notes.piece_jointe(n) for n in db.notes_choisies(ids)]
 
 
 def descriptions_genres() -> dict:
@@ -2919,10 +2940,24 @@ def _passages(q: str, conv: dict, limite: int = 10) -> list[dict]:
     # Deux fois plus de candidats, puis les meilleurs gardés après relecture (FlashRank, si le service tourne)
     passages = db.chercher_passages(question.requete(q), vecteur, conv["niveau"], conv["matiere"], limite * 2)
     if passages:
-        return question.reordonner(q, passages, limite)
-    return [{**d, "document_id": d["id"], "texte": (d.get("transcription") or "")[:3000]}
-            for d in db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], 5,
-                                            avec_texte=True, statuts=db.STATUTS_UTILES)]
+        passages = question.reordonner(q, passages, limite)
+    else:
+        passages = [{**d, "document_id": d["id"], "texte": (d.get("transcription") or "")[:3000]}
+                    for d in db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], 5,
+                                                    avec_texte=True, statuts=db.STATUTS_UTILES)]
+    return _notes_pour_question(q, conv) + passages
+
+
+def _notes_pour_question(q: str, conv: dict) -> list[dict]:
+    """Ses propres notes qui en parlent, en tête des passages : ce qu'il a compris et noté lui-même."""
+    if not comptes.peut(moi(), "notes"):
+        return []
+    try:
+        return [notes.comme_passage(n) for n in db.notes_pour_question(q, conv["niveau"], conv["matiere"],
+                                                                        notes.NB_POUR_QUESTION)]
+    except Exception as e:   # la recherche dans les cours suffit
+        print(f"notes pour la question impossibles : {e}", flush=True)
+        return []
 
 
 def _agenda_texte(jours: int = 30) -> str:
@@ -4169,6 +4204,268 @@ def inbox():
     return {"fichiers": sorted(i["name"] for i in items if i["type"] == "file")}
 
 
+# --- Notes : prise de notes par matière, par cours, ou libres (notes.py) ------------------------------
+# Privées par défaut ; seul l'auteur les modifie (même l'admin en « Tout voir » ne fait que les lire).
+
+templates.env.filters["titre_note"] = notes.titre_affiche
+templates.env.filters["extrait_note"] = notes.extrait
+templates.env.globals["nb_notes_archivees"] = lambda: (db.nb_notes() or {}).get("archivees", 0)
+
+
+def date_note(d: dt.datetime | None) -> str:
+    """« à 14:05 » aujourd'hui, « hier », sinon la date."""
+    if not d:
+        return ""
+    d = d.astimezone(pronote.PARIS)
+    jours = (dt.datetime.now(pronote.PARIS).date() - d.date()).days
+    if jours == 0:
+        return f"à {d:%H:%M}"
+    if jours == 1:
+        return "hier"
+    return f"{d:%d/%m}" if d.year == dt.datetime.now(pronote.PARIS).year else f"{d:%d/%m/%Y}"
+
+
+templates.env.filters["date_note"] = date_note
+
+
+def rendu_note(texte: str | None) -> Markup:
+    return Markup(notes.cases_a_cocher(rendu_markdown(texte)))
+
+
+def _matieres_note() -> list[dict]:
+    """Matières proposées pour une note : celles de ses cours, des cours qu'il lit en partage, et de ses notes.
+    L'année la plus récente d'abord."""
+    vues: dict[tuple, dict] = {}
+    sources = [db.niveaux_matieres_comptes(), db.matieres_notes()]
+    if not comptes.est_admin(moi()):
+        sources.append(db.bibliotheque_partagee())
+    for liste in sources:
+        for r in liste:
+            if r.get("matiere"):
+                vues.setdefault((r.get("niveau"), r["matiere"]), {"niveau": r.get("niveau"), "matiere": r["matiere"]})
+    return sorted(vues.values(), key=lambda m: (-_rang_niveau(m["niveau"] or ""), m["niveau"] or "",
+                                                 m["matiere"].lower()))
+
+
+def _a_l_auteur(n: dict) -> bool:
+    return bool(moi()) and n.get("compte_id") == moi()["id"]
+
+
+def _lire_champs_note(f) -> dict:
+    """Champs envoyés par l'éditeur (seulement ceux présents : l'enregistrement automatique peut n'envoyer que le texte)."""
+    champs = {}
+    if "titre" in f:
+        champs["titre"] = (f.get("titre") or "").strip()[:notes.TITRE_MAX]
+    if "contenu" in f:
+        contenu = (f.get("contenu") or "").replace("\r\n", "\n")
+        if len(contenu) > notes.CONTENU_MAX:
+            raise HTTPException(413, "note trop longue : coupe-la en plusieurs notes")
+        champs["contenu"] = contenu
+    if "matiere" in f:
+        valeur = f.get("matiere") or ""
+        if valeur == "__autre__":
+            valeur = f"{f.get('niveau_autre') or ''}|{(f.get('matiere_autre') or '').strip()}"
+        champs["niveau"], champs["matiere"] = notes.matiere_choisie(valeur)
+    if "document_id" in f:
+        brut = str(f.get("document_id") or "")
+        doc = db.cours_lisible(int(brut)) if brut.isdigit() else None
+        champs["document_id"] = doc["id"] if doc else None
+        if doc and not champs.get("matiere") and "matiere" not in f:
+            champs["niveau"], champs["matiere"] = doc["niveau"], doc["matiere"]
+    return champs
+
+
+def _groupes_notes(liste: list[dict]) -> list[dict]:
+    """Épinglées d'abord, puis une section par matière (l'année la plus récente d'abord), les libres à la fin."""
+    epinglees = [n for n in liste if n["epinglee"]]
+    par_matiere: dict[tuple, list] = defaultdict(list)
+    for n in liste:
+        if not n["epinglee"]:
+            par_matiere[(n["niveau"], n["matiere"])].append(n)
+    cles = sorted((k for k in par_matiere if k[1]), key=lambda k: (-_rang_niveau(k[0] or ""), k[1].lower()))
+    groupes = [{"titre": "📌 Épinglées", "notes": epinglees, "cle": "epinglees"}] if epinglees else []
+    groupes += [{"titre": k[1], "niveau": k[0], "notes": par_matiere[k], "cle": f"{k[0] or ''}|{k[1]}"} for k in cles]
+    if par_matiere.get((None, None)):
+        groupes.append({"titre": "Sans matière", "notes": par_matiere[(None, None)], "cle": "libres"})
+    return groupes
+
+
+@app.get("/notes", response_class=HTMLResponse)
+def page_notes(request: Request, q: str = "", m: str = "", vue: str = ""):
+    archivees = vue == "archives"
+    libres = m == "libres"
+    niveau, matiere = (None, None) if libres else notes.matiere_choisie(m)
+    liste = db.notes(q[:200], niveau, matiere, libres, archivees)
+    contexte = {"liste": liste, "groupes": [] if q.strip() or archivees else _groupes_notes(liste),
+                "q": q, "m": m, "vue": "archives" if archivees else "", "nb": db.nb_notes(),
+                "matieres": db.matieres_notes(), "moi_id": (moi() or {}).get("id")}
+    if request.headers.get("HX-Request") and request.headers.get("HX-Target") == "resultats-notes":
+        return templates.TemplateResponse(request, "_notes_liste.html", contexte)
+    return templates.TemplateResponse(request, "notes.html", contexte)
+
+
+def _page_note(request: Request, n: dict | None, pre: dict | None = None, statut: int = 200) -> HTMLResponse:
+    pre = pre or {}
+    doc_id = (n or pre).get("document_id")
+    cours = db.cours_lisible(doc_id) if doc_id else None
+    niveau, matiere = (n or pre).get("niveau"), (n or pre).get("matiere")
+    choix = _matieres_note()
+    if matiere and not any(c["matiere"] == matiere and c["niveau"] == niveau for c in choix):
+        choix.insert(0, {"niveau": niveau, "matiere": matiere})
+    lecture = bool(n) and (not _a_l_auteur(n) or bool(apercu_en_cours()))
+    return templates.TemplateResponse(request, "note.html", {
+        "n": n, "pre": pre, "cours": cours, "choix": choix, "niveaux": NIVEAUX, "lecture": lecture,
+        "rendu": rendu_note(n["contenu"]) if n else "",
+        "cours_matiere": db.cours_pour_note(niveau, matiere) if matiere and niveau and not lecture else [],
+        "a_moi_note": bool(n) and _a_l_auteur(n), "moi_id": (moi() or {}).get("id"),
+        "choisi": cours["id"] if cours else None}, status_code=statut)
+
+
+@app.get("/notes/nouvelle", response_class=HTMLResponse)
+def nouvelle_note(request: Request, matiere: str = "", doc: int | None = None, pronote_: str = Query("", alias="pronote"),
+                  jour: str = "", titre: str = ""):
+    """Éditeur vide, prérempli depuis une matière, un cours (doc) ou un créneau de l'Agenda (pronote)."""
+    pre = {"titre": titre.strip()[:notes.TITRE_MAX], "contenu": ""}
+    pre["niveau"], pre["matiere"] = notes.matiere_choisie(matiere)
+    if doc:
+        cours = db.cours_lisible(doc)
+        if cours:
+            pre.update(document_id=cours["id"], niveau=cours["niveau"], matiere=cours["matiere"])
+    elif pronote_:
+        rangees = db.niveaux_matieres()
+        trouvee = pronote.trouver_matiere(pronote_, sorted({r["matiere"] for r in rangees}))
+        if trouvee:
+            niveaux = [r["niveau"] for r in rangees if r["matiere"] == trouvee]
+            pre["niveau"], pre["matiere"] = max(niveaux, key=_rang_niveau), trouvee
+        try:
+            quand = dt.date.fromisoformat(jour) if jour else dt.datetime.now(pronote.PARIS).date()
+        except ValueError:
+            quand = dt.datetime.now(pronote.PARIS).date()
+        pre["titre"] = pre["titre"] or f"Cours de {matiere_lisible(pronote_)} du {quand:%d/%m}"
+    return _page_note(request, None, pre)
+
+
+def _reponse_auto(request: Request) -> bool:
+    return request.headers.get("X-Claunote-Auto") == "1"
+
+
+@app.post("/notes")
+async def creer_note(request: Request):
+    f = await request.form()
+    champs = _lire_champs_note(f)
+    cree = db.creer_note(**{k: champs.get(k) for k in ("titre", "contenu", "niveau", "matiere", "document_id")
+                            if champs.get(k) is not None})
+    if _reponse_auto(request):
+        return JSONResponse({"id": cree["id"], "maj_le": cree["maj_le"].isoformat(), "url": f"/notes/{cree['id']}"})
+    return RedirectResponse(f"/notes/{cree['id']}", status_code=303)
+
+
+@app.post("/notes/apercu", response_class=HTMLResponse)
+def apercu_note(contenu: str = Form("")):
+    """Aperçu dans l'éditeur : le même rendu que la note enregistrée (formules, schémas, cases à cocher)."""
+    rendu = rendu_note(contenu[:notes.CONTENU_MAX]) if contenu.strip() else Markup('<p class="doux">Rien à afficher pour l’instant.</p>')
+    return HTMLResponse(str(rendu))
+
+
+@app.get("/notes/pour-reviser", response_class=HTMLResponse)
+def notes_pour_reviser(request: Request, niveau_matiere: str = "", deja_: str = Query("", alias="deja")):
+    """Formulaire d'une fiche ou d'un quiz : ses notes de la matière choisie, à cocher pour les joindre."""
+    niveau, matiere = notes.matiere_choisie(niveau_matiere)
+    deja = {int(i) for i in deja_.split(",") if i.strip().isdigit()}
+    liste = [n for n in (db.notes_matiere(niveau, matiere) if matiere else []) if n["id"] not in deja]
+    return templates.TemplateResponse(request, "_notes_reviser.html", {"liste": liste, "matiere": matiere})
+
+
+@app.get("/notes/cours", response_class=HTMLResponse)
+def cours_de_la_matiere(request: Request, matiere: str = "", choisi: int | None = None):
+    """Les cours de la matière choisie, pour y rattacher la note (chargés quand la matière change)."""
+    niveau, nom = notes.matiere_choisie(matiere)
+    return templates.TemplateResponse(request, "_notes_cours.html", {
+        "cours_matiere": db.cours_pour_note(niveau, nom) if nom and niveau else [], "choisi": choisi,
+        "moi_id": (moi() or {}).get("id")})
+
+
+def _note_a_moi(note_id: int) -> dict:
+    n = db.note(note_id)
+    if n is None:
+        raise HTTPException(404)
+    if not _a_l_auteur(n):
+        raise HTTPException(403, "seul l'auteur modifie sa note")
+    return n
+
+
+@app.get("/notes/{note_id}", response_class=HTMLResponse)
+def voir_note(request: Request, note_id: int):
+    n = db.note(note_id)
+    if n is None:
+        if db.note_partagee(note_id):   # la note publique d'un autre compte : sa page en lecture seule
+            return RedirectResponse(f"/partages/note/{note_id}", status_code=303)
+        raise HTTPException(404)
+    return _page_note(request, n)
+
+
+@app.post("/notes/{note_id}")
+async def enregistrer_note(request: Request, note_id: int):
+    """Enregistrement (automatique pendant la frappe, ou bouton). `base` : la version sur laquelle l'éditeur
+    travaillait ; si la note a changé ailleurs entre-temps, rien n'est écrasé (409), sauf `forcer`."""
+    _note_a_moi(note_id)
+    f = await request.form()
+    champs = _lire_champs_note(f)
+    if not champs:
+        raise HTTPException(400, "rien à enregistrer")
+    base = None if f.get("forcer") else (_instant(str(f.get("base") or "")) or None)
+    statut, valeur = db.maj_note(note_id, base, **champs)
+    if statut == "absente":
+        raise HTTPException(404)
+    if statut == "conflit":
+        if _reponse_auto(request):
+            return JSONResponse({"conflit": True, "maj_le": valeur["maj_le"].isoformat(), "titre": valeur["titre"],
+                                 "contenu": valeur["contenu"]}, status_code=409)
+        raise HTTPException(409, "cette note a été modifiée ailleurs entre-temps : recharge la page")
+    if _reponse_auto(request):
+        return JSONResponse({"maj_le": valeur.isoformat(), "heure": _heure_fr(valeur)})
+    return RedirectResponse(f"/notes/{note_id}", status_code=303)
+
+
+@app.post("/notes/{note_id}/visibilite")
+def visibilite_note(note_id: int, valeur: str = Form(...)):
+    return _visibilite("notes", note_id, valeur, f"/notes/{note_id}")
+
+
+@app.post("/notes/{note_id}/{action}")
+def action_note(note_id: int, action: str, suite: str = Form("")):
+    _note_a_moi(note_id)
+    if action == "supprimer":
+        db.supprimer_note(note_id)
+        return RedirectResponse(_suite_sure(suite) if suite else "/notes", status_code=303)
+    actions = {"epingler": {"epinglee": True}, "detacher": {"epinglee": False},
+               "archiver": {"archive_le": dt.datetime.now(dt.timezone.utc), "epinglee": False},
+               "restaurer": {"archive_le": None}}
+    if action not in actions:
+        raise HTTPException(404)
+    db.changer_note(note_id, **actions[action])
+    return RedirectResponse(_suite_sure(suite) if suite else f"/notes/{note_id}", status_code=303)
+
+
+@app.get("/notes/{note_id}/telecharger")
+def telecharger_note(note_id: int):
+    n = db.note(note_id) or db.note_partagee(note_id)
+    if n is None:
+        raise HTTPException(404)
+    return Response(notes.markdown_complet(n), media_type="text/markdown; charset=utf-8", headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(notes.nom_fichier(n))}"})
+
+
+@app.get("/partages/note/{note_id}", response_class=HTMLResponse)
+def partage_note(request: Request, note_id: int):
+    n = db.note_partagee(note_id)
+    if n is None:
+        raise HTTPException(404)
+    cours = db.cours_lisible(n["document_id"]) if n.get("document_id") else None
+    return templates.TemplateResponse(request, "partage_note.html", {"n": n, "rendu": rendu_note(n["contenu"]),
+                                                                     "cours": cours})
+
+
 # --- Public ou privé : chacun choisit pour ses cours, matières, révisions, campagnes -----------
 # Privé par défaut. Public : les autres comptes le lisent sur « Partagés », en lecture seule. « Tout voir » de
 # l'admin ne change pas (il voit tout, privé compris) ; seul le propriétaire choisit, même pour l'admin.
@@ -4215,7 +4512,8 @@ def page_partages(request: Request):
         par_auteur[d["auteur"]][(d["niveau"], d["matiere"])].append(d)
     return templates.TemplateResponse(request, "partages.html", {
         "par_auteur": par_auteur, "nb_docs": len(docs), "revisions": db.partages_revisions(),
-        "campagnes": db.partages_campagnes(), "genres": revision.GENRES})
+        "campagnes": db.partages_campagnes(), "genres": revision.GENRES,
+        "notes_partagees": db.partages_notes() if comptes.peut(moi(), "notes") else []})
 
 
 @app.get("/partages/liste", response_class=HTMLResponse)
@@ -4231,7 +4529,7 @@ def partage_document(request: Request, doc_id: int):
     if doc is None:
         raise HTTPException(404)
     return templates.TemplateResponse(request, "partage_doc.html", {
-        "doc": doc, "transcription": rendu_markdown(doc["transcription"])})
+        "doc": doc, "transcription": rendu_markdown(doc["transcription"]), "notes_cours": _notes_cours(doc_id)})
 
 
 @app.get("/partages/doc/{doc_id}/fichier")

@@ -16,10 +16,14 @@ RUBRIQUES = {
     "cours": ("Cours", "/bibliotheque", "bibliotheque", "cours", "tes cours classés"),
     "reviser": ("Réviser", "/reviser", "reviser", "reviser", "fiches, quiz, flashcards"),
     "agenda": ("Agenda", "/agenda", "agenda", "agenda", "Pronote, contrôles"),
+    "notes": ("Notes", "/notes", "notes", "notes", "tes notes par matière"),
 }
 ORDRE = list(RUBRIQUES)
+# Onglets d'origine : quatre (la barre du téléphone garde de la place) ; les Notes sont dans Plus tant que le
+# compte ne les met pas en onglet (Réglages › Apparence).
+ONGLETS_DEFAUT = ["actualites", "cours", "reviser", "agenda"]
 DEFAUT = {"mode": "auto", "style": "claunote", "vigie": False,   # vigie : easter egg trouvé
-          "onglets": ORDRE, "accueil": ""}                       # accueil vide : Actualités, sinon la 1re permise
+          "onglets": ONGLETS_DEFAUT, "accueil": ""}                       # accueil vide : Actualités, sinon la 1re permise
 
 
 def _cle(compte_id: int) -> str:
@@ -29,11 +33,11 @@ def _cle(compte_id: int) -> str:
 def lire(compte: dict | None) -> dict:
     """Jamais d'erreur (la page doit s'afficher) ; sans compte (pages publiques) : l'apparence par défaut."""
     if not compte or not compte.get("id"):
-        return {**DEFAUT, "onglets": list(ORDRE), "caches": []}
+        return {**DEFAUT, "onglets": list(ONGLETS_DEFAUT), "caches": [k for k in ORDRE if k not in ONGLETS_DEFAUT]}
     try:
         p = {**DEFAUT, **json.loads(db.etat_valeur(_cle(compte["id"])) or "{}")}
     except Exception:
-        return {**DEFAUT, "onglets": list(ORDRE), "caches": []}
+        return {**DEFAUT, "onglets": list(ONGLETS_DEFAUT), "caches": [k for k in ORDRE if k not in ONGLETS_DEFAUT]}
     if p["mode"] not in MODES:
         p["mode"] = "auto"
     if p["style"] not in STYLES or (p["style"] == "vigie" and not p["vigie"]):
@@ -49,9 +53,9 @@ def lire(compte: dict | None) -> dict:
 def _onglets(valeur) -> list[str]:
     """Rubriques gardées en onglets, dans l'ordre choisi ; sans doublon ni inconnue. Aucune : celles d'origine."""
     if not isinstance(valeur, list):
-        return list(ORDRE)
+        return list(ONGLETS_DEFAUT)
     vus = list(dict.fromkeys(k for k in valeur if k in RUBRIQUES))
-    return vus or list(ORDRE)
+    return vus or list(ONGLETS_DEFAUT)
 
 
 def _ecrire(compte_id: int, p: dict):

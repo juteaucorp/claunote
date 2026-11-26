@@ -1,0 +1,47 @@
+{# Liste des notes : en sections (épinglées, puis par matière) sans recherche ni filtre, sinon à plat #}
+{% macro carte_note(n, avec_matiere=true) %}
+<a class="note-carte carte" href="/notes/{{ n.id }}">
+  <strong class="note-titre">{% if n.epinglee %}📌 {% endif %}{{ n|titre_note }}</strong>
+  {% set texte = n.debut|extrait_note(140) %}{% if texte and texte != (n|titre_note) %}<span class="note-extrait">{{ texte }}</span>{% endif %}
+  <span class="note-meta doux">
+    {% if avec_matiere %}{{ n.matiere or 'Sans matière' }}{% if n.niveau %} · {{ n.niveau }}{% endif %} · {% endif %}{{ n.maj_le|date_note }}
+    {% if n.document_id %} · 📎 cours{% endif %}{% if n.public %} · 🌐 publique{% endif %}
+    {% if moi_id and n.compte_id != moi_id %} · {{ n.auteur }}{% endif %}
+  </span>
+</a>
+{% endmacro %}
+{% if not liste %}
+<div class="carte vide-notes">
+  {% if q %}<p>Rien trouvé pour « <strong>{{ q }}</strong> » dans tes notes{{ ' archivées' if vue == 'archives' }}.</p>
+  {% elif vue == 'archives' %}<p>Aucune note archivée. Une note archivée sort de la liste, de la recherche et des révisions, sans être supprimée.</p>
+  {% else %}
+  <p><strong>Aucune note {{ 'ici' if m else 'pour l’instant' }}.</strong></p>
+  <p class="doux">Une note se range dans une <strong>matière</strong>, se rattache à un <strong>cours</strong> (bouton « Prendre une note » sur la page du cours), ou reste libre.
+    Tes notes sont <strong>privées</strong> ; elles servent aussi au chat « Une question » et aux fiches.</p>
+  <p><a class="bouton principal" href="/notes/nouvelle{{ ('?matiere=' ~ m|urlencode) if m and m != 'libres' }}">Écrire une note</a></p>
+  {% endif %}
+</div>
+{% elif groupes %}
+  {% for g in groupes %}
+  <section class="groupe-notes">
+    <h2>{{ g.titre }}{% if g.niveau %} <span class="doux">· {{ g.niveau }}</span>{% endif %} <span class="doux">· {{ g.notes|length }}</span>
+      {% if g.cle not in ('epinglees', 'libres') %}<a class="ajout-matiere" href="/notes/nouvelle?matiere={{ g.cle|urlencode }}" title="Nouvelle note en {{ g.titre }}" aria-label="Nouvelle note en {{ g.titre }}">＋</a>{% endif %}</h2>
+    <div class="grille-notes">{% for n in g.notes %}{{ carte_note(n, g.cle == 'epinglees') }}{% endfor %}</div>
+  </section>
+  {% endfor %}
+{% else %}
+  <p class="doux">{{ liste|length }} note{{ 's' if liste|length > 1 }}</p>
+  <div class="grille-notes">{% for n in liste %}{{ carte_note(n) }}{% endfor %}</div>
+{% endif %}
+<style>
+  .grille-notes { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+  .groupe-notes h2 { font-size: 1.2rem; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin: 18px 0 10px; }
+  .ajout-matiere { margin-left: auto; text-decoration: none; font-family: system-ui, sans-serif; font-weight: 600; color: var(--accent-fonce);
+                   width: 32px; height: 32px; display: inline-grid; place-items: center; border-radius: 999px; background: var(--accent-pale); }
+  .note-carte { display: flex; flex-direction: column; gap: 4px; margin: 0; text-decoration: none; color: var(--texte); padding: 14px 16px; min-width: 0; }
+  .note-carte:hover { border-color: var(--accent); }
+  .note-titre { overflow-wrap: anywhere; }
+  .note-extrait { color: var(--texte); opacity: .8; font-size: .92rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+  .note-meta { font-size: .82rem; }
+  .vide-notes p:first-child { margin-top: 0; }
+</style>

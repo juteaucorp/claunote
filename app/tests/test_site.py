@@ -69,6 +69,12 @@ def anonyme(monkeypatch):
     monkeypatch.setattr(db, "formations", lambda: [])
     monkeypatch.setattr(db, "matieres_regles", lambda: {})
     monkeypatch.setattr(db, "cles_acces", lambda: [])
+    # Notes : aucune par défaut (tests/test_notes.py les remplace par une fausse base)
+    monkeypatch.setattr(db, "notes_du_document", lambda doc_id: [])
+    monkeypatch.setattr(db, "chercher_notes", lambda q, limite=10: [])
+    monkeypatch.setattr(db, "notes_pour_question", lambda q, n, m, limite=3: [])
+    monkeypatch.setattr(db, "partages_notes", lambda: [])
+    monkeypatch.setattr(db, "nb_notes", lambda: {"actives": 0, "libres": 0, "archivees": 0})
     # Sécurité : journal en mémoire, alertes notées au lieu d'être envoyées ; cloudflared = le client de test
     journal, alertes = [], []
     securite.reinitialiser()
