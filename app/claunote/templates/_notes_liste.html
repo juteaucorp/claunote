@@ -1,6 +1,6 @@
 {# Liste des notes : en sections (épinglées, puis par matière) sans recherche ni filtre, sinon à plat #}
-{% macro carte_note(n, avec_matiere=true) %}
-<a class="note-carte carte" href="/notes/{{ n.id }}">
+{% macro carte_note(n, avec_matiere=true, partagee=false) %}
+<a class="note-carte carte{{ ' carte-partagee' if partagee }}" href="{{ '/partages/note/' if partagee else '/notes/' }}{{ n.id }}">
   <strong class="note-titre">{% if n.epinglee %}📌 {% endif %}{{ n|titre_note }}</strong>
   {% set texte = n.debut|extrait_note(140) %}{% if texte and texte != (n|titre_note) %}<span class="note-extrait">{{ texte }}</span>{% endif %}
   <span class="note-meta doux">
@@ -33,7 +33,15 @@
   <p class="doux">{{ liste|length }} note{{ 's' if liste|length > 1 }}</p>
   <div class="grille-notes">{% for n in liste %}{{ carte_note(n) }}{% endfor %}</div>
 {% endif %}
+{% if publiques %}
+<section class="groupe-notes notes-publiques">
+  <h2>🌐 Notes publiques des autres <span class="doux">· {{ publiques|length }}</span> <span class="pastille-vis">Lecture seule</span></h2>
+  <div class="grille-notes">{% for n in publiques %}{{ carte_note(n, true, true) }}{% endfor %}</div>
+</section>
+{% endif %}
 <style>
+  .carte-partagee { border-style: dashed; }
+  .notes-publiques h2 .pastille-vis { font-size: .78rem; }
   .grille-notes { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
   .groupe-notes h2 { font-size: 1.2rem; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin: 18px 0 10px; }
   .ajout-matiere { margin-left: auto; text-decoration: none; font-family: system-ui, sans-serif; font-weight: 600; color: var(--accent-fonce);

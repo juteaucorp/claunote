@@ -107,32 +107,11 @@ def test_cours_partages_dans_le_chat_et_les_fiches(base):
         assert db.revision(rev)["compte_id"] == camille
 
 
-def test_acces_a_tous_les_cours(base):
-    ids = _cours_admin()
+def test_cours_prives_jamais_partages(base):
+    """Plus d'« accès complet » : seuls les cours publics se lisent depuis un autre compte."""
+    _cours_admin()
     camille = db.creer_compte("camille", "h", "invite", ["bibliotheque"])
-    assert db.demander_acces_cours(camille) and not db.demander_acces_cours(camille)
-    assert not db.demander_acces_cours(1)                         # l'admin n'en a pas besoin
-    assert [c["id"] for c in db.acces_cours("attente")] == [camille] and db.nb_demandes_ia() == 1
-    with db.pour_compte(camille), db.partages():                  # en attente : toujours les publics seulement
-        assert [p["titre"] for p in db.chercher_passages("trunk")] == ["vlan"]
-    assert db.decider_acces_cours(camille, "accorde")
-    with db.pour_compte(camille):
-        assert db.bibliotheque() == [] and db.chercher_passages("secret") == []   # ailleurs : ses données
-        with db.partages():
-            assert sorted(p["titre"] for p in db.chercher_passages("trunk")) == ["secret", "vlan"]
-            assert {r["matiere"] for r in db.bibliotheque_partagee()} == {"Maths", "Réseau"}
-            with db.connect() as c:
-                assert c.execute("UPDATE documents SET titre = 'x' RETURNING id").fetchall() == []
-    assert db.decider_acces_cours(camille, None)                  # retiré
     with db.pour_compte(camille), db.partages():
         assert [p["titre"] for p in db.chercher_passages("trunk")] == ["vlan"]
-
-
-def test_acces_refuse_pas_redemande_tout_de_suite(base):
-    """Après un non, l'invité ne peut pas relancer l'admin en boucle (une notification à chaque fois) : 24 h."""
-    camille = db.creer_compte("camille", "h", "invite", ["bibliotheque"])
-    assert db.demander_acces_cours(camille) and db.decider_acces_cours(camille, "refuse")
-    assert not db.demander_acces_cours(camille)
-    with db.sans_compte(), db.connect() as c:
-        c.execute("UPDATE comptes SET acces_cours_le = now() - interval '25 hours' WHERE id = %s", (camille,))
-    assert db.demander_acces_cours(camille)
+        assert {r["matiere"] for r in db.bibliotheque_partagee()} == {"Réseau"}
+    assert db.nb_demandes_ia() == 0

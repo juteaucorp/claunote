@@ -65,7 +65,7 @@ PAGES = [
     # Chacun relie SON Pronote (un jeton par compte dans le service) : le droit « agenda » suffit
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
-    ("/piece/", "reviser"), ("/notes", "notes"), ("/partages/note", "notes"), ("/partages", "bibliotheque"), ("/acces-cours", "bibliotheque"),
+    ("/piece/", "reviser"), ("/notes", "notes"), ("/partages/note", "notes"), ("/partages", "bibliotheque"),
 ]
 # Pages de rangement où l'admin ne travaille que sur ses propres dépôts, même avec « Tout voir » : chaque compte
 # trie ses imports, choisit sa formation et range ses matières (l'admin garde l'accès aux documents des autres
@@ -100,7 +100,7 @@ def droit_requis(chemin: str, methode: str = "GET") -> str | None:
 CLAUDE_REQUIS = re.compile(r"^/organiser/matieres/ia$")
 
 
-# Pages où un invité se sert aussi des cours partagés (publics, ou tous s'il a l'accès complet), en lecture seule :
+# Pages où un invité se sert aussi des cours publics des autres comptes, en lecture seule :
 # choisir les cours d'une fiche ou d'une campagne, et le chat « Une question ». Ailleurs (historique, Organiser…),
 # il ne voit que ses données.
 LECTURE_PARTAGES = re.compile(r"^/(reviser/(nouvelle|documents|demande|lancer)|campagne/nouvelle|demander(/.*)?)$")

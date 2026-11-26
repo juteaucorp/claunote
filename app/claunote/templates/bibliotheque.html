@@ -42,19 +42,9 @@
   {% endfor %}
 </div>
 {% endfor %}
-{% if niveaux_autres or acces is not none %}
-<h2 class="titre-partages">🌐 {{ 'Tous les cours' if acces == 'accorde' else 'Cours partagés' }} <span class="pastille-vis">Lecture seule</span></h2>
-<p class="doux">{% if acces == 'accorde' %}Tous les cours de l'environnement, privés compris (accès accordé par l'admin).{% else %}Les cours que les autres comptes ont rendus publics.{% endif %}
-  Tu peux les lire, t'en servir dans <a href="/demander">Une question</a> et pour tes fiches, pas les modifier.</p>
-{% if acces is not none and acces != 'accorde' %}
-<div class="carte acces-cours" id="acces-cours">
-  {% if acces == 'attente' %}⏳ <strong>Accès à tous les cours demandé.</strong> L'admin doit dire oui ; une notification te préviendra.
-  {% else %}
-  <form method="post" action="/acces-cours/demander"><span>{% if acces == 'refuse' %}L'admin a refusé ta dernière demande. {% endif %}Besoin des cours <strong>privés</strong> aussi ?</span>
-    <button class="principal">🔑 Demander l'accès à tous les cours</button></form>
-  {% endif %}
-</div>
-{% endif %}
+{% if niveaux_autres %}
+<h2 class="titre-partages">🌐 Cours publics des autres <span class="pastille-vis">Lecture seule</span></h2>
+<p class="doux">Ce que les autres comptes ont rendu public. Tu peux les lire et t'en servir, pas les modifier.</p>
 {% for niveau in niveaux_autres %}
 <h3>{{ niveau }}</h3>
 <div class="grille">
@@ -75,7 +65,6 @@
   .titre-partages { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 28px; }
   .titre-partages .pastille-vis { font-size: .78rem; }
   .carte-partagee { border-style: dashed; }
-  .acces-cours form { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin: 0; }
   .petit-texte { font-size: .8rem; }
   .ligne-alerte { display: block; padding: 10px 16px; color: inherit; text-decoration: none; }
   .tete-matiere { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
