@@ -30,7 +30,7 @@
       <select name="niveau_autre" aria-label="Année">{% for x in niveaux|reverse %}<option>{{ x }}</option>{% endfor %}</select>
       <input name="matiere_autre" placeholder="Nom de la matière" aria-label="Nom de la nouvelle matière" maxlength="120">
     </span>
-    <label class="puce" title="Cours rattaché">📎 <span id="choix-cours">{% include "_notes_cours.html" %}</span></label>
+    <span id="choix-cours" class="choix-cours">{% include "_notes_cours.html" %}</span>
     {% if cours %}<a class="ouvrir-cours" href="/{{ 'doc' if cours.compte_id == moi_id else 'partages/doc' }}/{{ cours.id }}">Ouvrir le cours ›</a>{% endif %}
   </div>
 
@@ -97,14 +97,22 @@
   .boite-titre { font-size: 1.7rem; }   /* taille sur le parent : base.html impose max(16px, 1em) aux champs tactiles */
   form.editeur-note input.titre-note { font-size: 1em; min-height: 0; }
   .barre-outils .g { font-weight: 700; }
-  .rattache { display: flex; flex-wrap: wrap; gap: 8px; }
+  .rattache { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
   .rattache .puce { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 12px; border: 1px solid var(--bord);
                     border-radius: 999px; background: var(--fond-doux); color: var(--doux); max-width: 100%; min-width: 0; }
   .rattache .puce[hidden] { display: none; }
   .rattache select, .rattache input { border: 0; background: transparent; padding: 6px 8px; min-width: 0; max-width: 100%; color: var(--texte); }
-  .rattache #choix-cours { min-width: 0; max-width: 100%; }
+  .choix-cours { display: contents; }
+  .lier-cours { max-width: 100%; min-width: 0; }
+  .lier-cours > summary { list-style: none; cursor: pointer; padding: 8px 12px; border: 1px dashed var(--bord); border-radius: 999px;
+                          color: var(--doux); font-size: .9rem; white-space: nowrap; }
+  .lier-cours > summary::-webkit-details-marker { display: none; }
+  .lier-cours[open] > summary { border-style: solid; background: var(--fond-doux); }
+  .lier-cours .facultatif { opacity: .7; }
+  .rattache .puce select[name=document_id] { max-width: min(60vw, 360px); text-overflow: ellipsis; }
+  .lier-cours select { border: 1px solid var(--bord) !important; border-radius: 999px; background: var(--fond-doux) !important;
+                       padding: 6px 10px !important; display: block; margin-top: 6px; width: min(100%, 420px); text-overflow: ellipsis; }
   .ouvrir-cours { align-self: center; font-size: .9rem; font-weight: 600; text-decoration: none; color: var(--accent-fonce); }
-  .rattache #choix-cours select { width: 100%; text-overflow: ellipsis; }
   .barre-outils { position: sticky; top: calc(var(--haut-entete, 0px) + 4px); z-index: 5; display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto;
                   padding: 4px; border: 1px solid var(--bord); border-radius: 12px; background: var(--carte); scrollbar-width: none; }
   .barre-outils::-webkit-scrollbar { display: none; }

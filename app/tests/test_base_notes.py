@@ -105,3 +105,16 @@ def test_note_sur_un_cours_partage_et_note_publique(base):
         c.execute("DELETE FROM documents WHERE id = %s", (public,))
     with db.pour_compte(invite):
         assert db.note(n)["document_id"] is None
+
+
+def test_cours_pour_note_sans_doublons(base):
+    a = _cours(200, "squid-1.pdf")
+    with db.pour_compte(None):
+        db.maj(a, titre="Squid et SquidGuard")
+    b = _cours(201, "squid-2.pdf")
+    with db.pour_compte(None):
+        db.maj(b, titre="squid et  squidguard")
+    c = _cours(202, "glpi.pdf")
+    with db.pour_compte(1):
+        assert len(db.cours_pour_note("BTS2", "Réseaux")) == 2
+        assert c in [d["id"] for d in db.cours_pour_note("BTS2", "Réseaux")]

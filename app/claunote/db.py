@@ -3880,10 +3880,17 @@ def chercher_notes(q: str, limite: int = 10):
 def cours_pour_note(niveau: str, matiere: str):
     """Cours auxquels rattacher une note : les siens et ceux qu'il lit en partage, de cette matière."""
     with partages(), connect() as c:
-        return c.execute("SELECT d.id, d.titre, d.nom, d.type, d.date_doc, d.compte_id FROM documents d "
-                         "WHERE d.statut = 'classe' AND d.niveau = %s AND d.matiere = %s "
-                         "ORDER BY d.compte_id <> claunote_compte(), d.date_doc DESC NULLS LAST, d.id DESC",
-                         (niveau, matiere)).fetchall()
+        lignes = c.execute("SELECT d.id, d.titre, d.nom, d.type, d.date_doc, d.compte_id FROM documents d "
+                           "WHERE d.statut = 'classe' AND d.niveau = %s AND d.matiere = %s "
+                           "ORDER BY d.compte_id <> claunote_compte(), d.date_doc DESC NULLS LAST, d.id DESC",
+                           (niveau, matiere)).fetchall()
+    vus, uniques = set(), []
+    for d in lignes:                      # même titre en double (scans repris) : un seul, le sien et le plus récent
+        cle = " ".join((d["titre"] or d["nom"] or "").casefold().split())
+        if cle not in vus:
+            vus.add(cle)
+            uniques.append(d)
+    return uniques
 
 
 def cours_lisible(doc_id: int):
