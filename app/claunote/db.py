@@ -788,6 +788,27 @@ DROP POLICY IF EXISTS partage ON notes;
 CREATE POLICY partage ON notes FOR SELECT USING (claunote_partages() AND public AND archive_le IS NULL);
 """
 
+# « kDrive seul » (kdrive_seul.py) : pièces jointes et notes rangées aussi sur kDrive. Un élément supprimé sur le
+# site (ou parti avec sa révision, sa campagne, son compte) part à la corbeille kDrive, comme un cours.
+SCHEMA += """
+ALTER TABLE pieces_jointes ADD COLUMN IF NOT EXISTS kdrive_id BIGINT;    -- rangée sur kDrive : contenu vidé
+ALTER TABLE pieces_jointes ALTER COLUMN contenu DROP NOT NULL;
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS kdrive_id BIGINT;             -- copie .md de la note sur kDrive
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS kdrive_copie_le TIMESTAMPTZ;  -- maj_le de la version copiée
+CREATE OR REPLACE FUNCTION claunote_corbeille_kdrive() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public AS $$
+BEGIN
+    IF OLD.kdrive_id IS NOT NULL THEN
+        INSERT INTO kdrive_corbeille (kdrive_id) VALUES (OLD.kdrive_id) ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN OLD;
+END $$;
+DROP TRIGGER IF EXISTS corbeille_kdrive ON pieces_jointes;
+CREATE TRIGGER corbeille_kdrive AFTER DELETE ON pieces_jointes FOR EACH ROW EXECUTE FUNCTION claunote_corbeille_kdrive();
+DROP TRIGGER IF EXISTS corbeille_kdrive ON notes;
+CREATE TRIGGER corbeille_kdrive AFTER DELETE ON notes FOR EACH ROW EXECUTE FUNCTION claunote_corbeille_kdrive();
+"""
+
 CHAMPS = {"nom", "statut", "titre", "niveau", "matiere", "type", "chapitre", "date_doc",
           "mots_cles", "resume", "transcription", "confiance", "erreur", "kdrive_md_id", "origine", "note",
           "variante_kdrive_id", "variante_nom", "essais", "modele", "avis", "relire", "a_ranger"}
@@ -1506,8 +1527,9 @@ def ajouter_pieces(fichiers: list[tuple[str, bytes]], revision_id: int | None = 
 
 
 def pieces_jointes(revision_id: int | None = None, campagne_id: int | None = None, contenu: bool = False):
-    """Pièces d'une révision (et de sa campagne) ou d'une campagne ; `contenu` ajoute les octets."""
-    colonnes = "id, nom, taille, revision_id, campagne_id" + (", contenu" if contenu else "")
+    """Pièces d'une révision (et de sa campagne) ou d'une campagne ; `contenu` ajoute les octets (None pour une
+    pièce rangée sur kDrive : kdrive_seul.avec_contenu les relit)."""
+    colonnes = "id, nom, taille, revision_id, campagne_id, kdrive_id" + (", contenu" if contenu else "")
     with connect() as c:
         return c.execute(f"SELECT {colonnes} FROM pieces_jointes WHERE revision_id = %s OR campagne_id = %s "
                          "ORDER BY id", (revision_id, campagne_id)).fetchall()
@@ -3476,6 +3498,56 @@ def copie_kdrive_faite(chemin: str, taille: int, mtime: float, kdrive_id: int | 
         c.execute("INSERT INTO copies_kdrive (chemin, taille, mtime, kdrive_id) VALUES (%s, %s, %s, %s) "
                   "ON CONFLICT (chemin) DO UPDATE SET taille = EXCLUDED.taille, mtime = EXCLUDED.mtime, "
                   "kdrive_id = EXCLUDED.kdrive_id, copie_le = now()", (chemin, taille, mtime, kdrive_id))
+
+
+# --- « kDrive seul » (kdrive_seul.py) ------------------------------------------------------
+
+def pieces_a_ranger(limite: int = 20) -> list[dict]:
+    """Pièces jointes encore gardées dans la base (contenu compris), les plus anciennes d'abord."""
+    with sans_compte(), connect() as c:
+        return c.execute("SELECT id, nom, contenu, compte_id FROM pieces_jointes WHERE contenu IS NOT NULL "
+                         "ORDER BY id LIMIT %s", (limite,)).fetchall()
+
+
+def piece_rangee(piece_id: int, kdrive_id: int) -> bool:
+    """La pièce est sur kDrive : la base n'en garde plus les octets. False si elle a été supprimée entre-temps
+    (le fichier kDrive part alors à la corbeille)."""
+    with sans_compte(), connect() as c:
+        fait = c.execute("UPDATE pieces_jointes SET kdrive_id = %s, contenu = NULL WHERE id = %s",
+                         (kdrive_id, piece_id)).rowcount == 1
+        if not fait:
+            c.execute("INSERT INTO kdrive_corbeille (kdrive_id) VALUES (%s) ON CONFLICT DO NOTHING", (kdrive_id,))
+        return fait
+
+
+def place_pieces() -> int:
+    """Octets que les pièces jointes occupent encore dans la base (table et TOAST)."""
+    with sans_compte(), connect() as c:
+        return c.execute("SELECT pg_total_relation_size('pieces_jointes') AS n").fetchone()["n"]
+
+
+def compacter_pieces():
+    """Rend au disque la place des octets partis sur kDrive (VACUUM FULL : table verrouillée quelques instants)."""
+    with sans_compte(), connect() as c:
+        c.execute("VACUUM FULL pieces_jointes")
+
+
+def notes_a_copier(limite: int = 30) -> list[dict]:
+    """Notes jamais copiées sur kDrive, ou modifiées depuis la dernière copie."""
+    with sans_compte(), connect() as c:
+        return c.execute("SELECT id, compte_id, titre, contenu, niveau, matiere, maj_le, kdrive_id FROM notes "
+                         "WHERE kdrive_copie_le IS NULL OR maj_le > kdrive_copie_le ORDER BY maj_le LIMIT %s",
+                         (limite,)).fetchall()
+
+
+def note_copiee(note_id: int, kdrive_id: int, version) -> bool:
+    """Copie faite pour la version `version` (maj_le lu avant l'envoi : une frappe pendant l'envoi sera recopiée)."""
+    with sans_compte(), connect() as c:
+        fait = c.execute("UPDATE notes SET kdrive_id = %s, kdrive_copie_le = %s WHERE id = %s",
+                         (kdrive_id, version, note_id)).rowcount == 1
+        if not fait:
+            c.execute("INSERT INTO kdrive_corbeille (kdrive_id) VALUES (%s) ON CONFLICT DO NOTHING", (kdrive_id,))
+        return fait
 
 
 # --- Public ou privé (visibilite.py) ---------------------------------------------------

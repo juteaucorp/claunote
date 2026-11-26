@@ -104,7 +104,7 @@
     <fieldset class="choix-stockage"><legend>Stockage</legend>
       {% for s, nom in stockages.items() %}
       <label><input type="radio" name="stockage" value="{{ s }}" {{ 'checked' if s == stockage }}>
-        <span><strong>{{ nom }}</strong><br><span class="doux">{% if s == 'kdrive' %}Tes scans et cours rangés sur kDrive (Infomaniak, Suisse) ; la VM n'en garde qu'une copie le temps de les lire.
+        <span><strong>{{ nom }}</strong><br><span class="doux">{% if s == 'kdrive' %}<strong>Le plus possible sur kDrive</strong> (Infomaniak, Suisse) : scans, cours rangés, fiches en PDF, pièces jointes, copie de tes notes et sauvegarde de la base chaque nuit. La VM ne garde que la base vivante et un petit cache.
           {% elif s == 'local' %}Tout reste sur la VM, dans <code>{{ fichiers_dir }}</code>. Rien à créer ailleurs, mais <strong>pense à la sauvegarde</strong> et à la place disque.
           {% else %}Tout est sur la VM, et le worker <strong>copie les cours rangés sur kDrive</strong> toutes les heures (copie de sauvegarde : rien n'y est effacé).{% endif %}</span></span></label>
       {% endfor %}
@@ -127,6 +127,8 @@
     {{ champ('KDRIVE_INBOX_ID', 'kdrive_inbox_id', (saisi or {}).get('KDRIVE_INBOX_ID')) }}
     <p class="doux">Inbox : là où tu déposes les scans (le site les y met aussi). Cours rangés : là où Claunote les classe par année et matière.</p>
     </div>
+    {% if sauvegarde_kdrive and stockage == 'kdrive' %}<p class="doux">Sauvegarde de la base sur kDrive (<code>Claunote/Sauvegardes</code>) :
+      {% if sauvegarde_kdrive.le %}dernière le {{ sauvegarde_kdrive.le[:16]|replace('T', ' à ') }}{% if sauvegarde_kdrive.taille %} ({{ '%.1f'|format(sauvegarde_kdrive.taille / 1e6) }} Mo){% endif %}{% else %}pas encore faite{% endif %}{% if sauvegarde_kdrive.erreur %} · <span class="alerte">dernier essai raté : {{ sauvegarde_kdrive.erreur }}</span>{% endif %}</p>{% endif %}
     {% if copie_kdrive %}<p class="doux">Dernière copie vers kDrive : {{ copie_kdrive.le }}{% if copie_kdrive.erreur %} · <span class="alerte">{{ copie_kdrive.erreur }}</span>{% else %} · {{ copie_kdrive.copies }} fichier(s) copié(s){% endif %}</p>{% endif %}
     </div>
     {% call boutons('stockage') %}{% endcall %}

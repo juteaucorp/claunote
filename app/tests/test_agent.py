@@ -472,7 +472,9 @@ def test_claude_sans_les_secrets_de_la_vm():
     for interdit in ("Bash", "Write", "Edit", "Read(//proc/**)", "Read(//secrets/**)", "Read(//fichiers/**)",
                      "Grep(//fichiers/**)", "Glob(//proc/**)"):
         assert interdit in reglages
-    assert not any(r.startswith(("Read(//tmp", "Read(//cache")) for r in reglages)   # dossiers de travail
+    assert not any(r.startswith(("Read(//tmp", "Read(//cache")) and r != "Read(//cache/kdrive/**)"
+                   for r in reglages)   # dossiers de travail ; /cache/kdrive : fichiers kDrive de tous les comptes
+    assert "Read(//cache/kdrive/**)" in reglages
 
 
 def test_appel_claude_avec_les_interdits(monkeypatch, tmp_path):

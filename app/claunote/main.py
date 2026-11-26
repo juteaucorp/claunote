@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
+import httpx
 import markdown
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -29,7 +30,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile as FichierRecu
 
 from claunote import (actualites, agent, anki, apercu, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
-                      disque, emploi_du_temps, formations, formules, importation, index, installation, lecture, local, maj, matieres, modeles, notes, notifications, pdf, progression,
+                      disque, emploi_du_temps, formations, formules, importation, index, installation, kdrive_seul, lecture, local, maj, matieres, modeles, notes, notifications, pdf, progression,
                       pronote, profil, question, raccourci, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local, turnstile, version)
 from claunote.agent import NIVEAUX, TYPES, ClaudeIndisponible, ErreurAgent, LimiteAtteinte
@@ -884,7 +885,7 @@ def _page_installation(request: Request, etape: str | None, statut: int = 200, *
         "precedente": installation.precedente(etape) if etape else None,
         "r": reglages.etat(), "stockages": reglages.STOCKAGES, "stockage": reglages.stockage(),
         "kdrive_ok": reglages.stockage_pret(), "fichiers_dir": str(stockage_local.dossier()),
-        "copie_kdrive": _json_ou_rien(db.etat_valeur("copie_kdrive")), "disque": disque.etat(), "besoins": disque.BESOINS,
+        "copie_kdrive": _json_ou_rien(db.etat_valeur("copie_kdrive")), "sauvegarde_kdrive": kdrive_seul.etat_sauvegarde(), "disque": disque.etat(), "besoins": disque.BESOINS,
         "besoin_total": disque.BESOIN_INSTALLATION, "tunnel_actif": maj.tunnel_actif(), "maj_present": maj.present(),
         "analyse": local.reglages(), "compte_admin": db.compte(moi()["id"]), "a_faire": installation.a_faire(),
         "turnstile_actif": turnstile.actif(), "supervision_active": cloudflare.actif(),
@@ -1810,14 +1811,18 @@ def genre_apercu(nom: str | None) -> str | None:
 
 def _servir(kdrive_id: int, nom: str) -> FileResponse:
     """Affiché dans le navigateur s'il sait le lire ; sinon téléchargé (jamais ouvert de force dans la page)."""
-    tmp = Path(tempfile.mkdtemp())
-    chemin = KDrive.from_env().download(kdrive_id, tmp / PurePosixPath(nom).name)
+    kd = KDrive.from_env()
     media = mimetypes.guess_type(nom)[0] or "application/octet-stream"
     if genre_apercu(nom) == "texte":
         media = "text/plain; charset=utf-8"
-    return FileResponse(chemin, media_type=media,
-                        content_disposition_type="inline" if genre_apercu(nom) else "attachment",
-                        filename=PurePosixPath(nom).name, background=BackgroundTask(lambda: _nettoyer(tmp)))
+    disposition = {"media_type": media, "content_disposition_type": "inline" if genre_apercu(nom) else "attachment",
+                   "filename": PurePosixPath(nom).name}
+    if kdrive_seul.actif() and isinstance(kd, KDrive):
+        # « kDrive seul » : un cours déjà ouvert est relu sur la VM (kDrive vérifie seulement qu'il n'a pas changé)
+        return FileResponse(kdrive_seul.en_cache(kd, kdrive_id, nom), **disposition)
+    tmp = Path(tempfile.mkdtemp())
+    chemin = kd.download(kdrive_id, tmp / PurePosixPath(nom).name)
+    return FileResponse(chemin, **disposition, background=BackgroundTask(lambda: _nettoyer(tmp)))
 
 
 def _nettoyer(dossier: Path):
@@ -2367,7 +2372,13 @@ def voir_piece(piece_id: int):
     # Un SVG ouvert dans le navigateur peut contenir du JavaScript : téléchargé, jamais affiché
     lisible = media == "application/pdf" or (media.startswith("image/") and media != "image/svg+xml"
                                              and not nom.lower().endswith((".heic", ".heif")))
-    return Response(bytes(piece["contenu"]), media_type=media, headers={
+    try:   # « kDrive seul » : la pièce est sur kDrive (gardée ensuite dans le cache de la VM)
+        contenu = kdrive_seul.contenu_piece(piece)
+    except httpx.HTTPStatusError as e:   # kDrive en panne : KDriveIndisponible, page d'explication
+        raise HTTPException(404 if e.response.status_code == 404 else 502)
+    if contenu is None:
+        raise HTTPException(404)
+    return Response(contenu, media_type=media, headers={
         "Content-Disposition": f"{'inline' if lisible else 'attachment'}; filename*=UTF-8''{quote(nom)}",
         "Cache-Control": "private, max-age=3600"})
 

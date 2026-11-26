@@ -1805,3 +1805,25 @@ def test_pronote_deconnecte_previent_une_fois(monkeypatch):
     nt.pronote_deconnecte(4)
     assert len(envoyes) == 2 and {v[0] for v in envoyes.values()} == {None, 4}
     assert all(v[1][2] == "/agenda#reconnexion" for v in envoyes.values())
+
+
+def test_kdrive_seul_cours_et_pieces_lus_par_le_cache(client, monkeypatch, tmp_path):
+    """« kDrive seul » : un cours déjà ouvert est relu sur la VM ; une pièce rangée sur kDrive s'affiche toujours."""
+    from tests.test_kdrive_seul import FauxKDrive
+    for k, v in {"STOCKAGE": "kdrive", "KDRIVE_TOKEN": "t", "KDRIVE_ID": "1", "KDRIVE_ETUDES_ID": "1",
+                 "KDRIVE_INBOX_ID": "2", "CACHE_DIR": str(tmp_path)}.items():
+        monkeypatch.setenv(k, v)
+    kd = FauxKDrive()
+    cours = kd.upload(1, "cours.pdf", b"%PDF cours")["id"]
+    piece = kd.upload(1, "3-edt.png", b"\x89PNG")["id"]
+    monkeypatch.setattr(main.KDrive, "from_env", classmethod(lambda cls: kd))
+    monkeypatch.setattr(main.KDrive, "distant", classmethod(lambda cls: kd))
+    monkeypatch.setattr(db, "document", lambda i: {**DOC, "kdrive_id": cours, "nom": "cours.pdf"})
+    for _ in range(2):
+        r = client.get("/doc/1/fichier")
+        assert r.status_code == 200 and r.content == b"%PDF cours"
+    assert kd.telechargements == 1 and (tmp_path / "kdrive").is_dir()
+    monkeypatch.setattr(db, "piece_jointe", lambda i: {"id": 3, "nom": "edt.png", "contenu": None, "taille": 4,
+                                                       "kdrive_id": piece} if i == 3 else None)
+    r = client.get("/piece/3")
+    assert r.status_code == 200 and r.content == b"\x89PNG" and r.headers["content-type"] == "image/png"

@@ -33,7 +33,7 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
-from claunote import (actualites, agent, cloudflare, coherence, comptes, db, decoupage, demandes_ia, disque, emploi_du_temps, formations, importation, index, lecture, local, modeles,
+from claunote import (actualites, agent, cloudflare, coherence, comptes, db, decoupage, demandes_ia, disque, emploi_du_temps, formations, importation, index, kdrive_seul, lecture, local, modeles,
                       notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
                       stockage_local, version)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
@@ -754,7 +754,7 @@ def traiter_revision(kd: KDrive, rev: dict):
         # Beaucoup de cours : condensés par groupes, gardés en base pour reprendre après une limite
         return revision.generer(
             rev["genre"], rev["sujet"], docs, rev["date_eval"], rev.get("consigne") or "",
-            pieces=db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True), memoire=db.Condenses(),
+            pieces=kdrive_seul.avec_contenu(db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True)), memoire=db.Condenses(),
             progres=lambda etape: activite(f"{quoi} : {etape}"), strict=bool(rev.get("strict")),
             reperes_perimetre=perimetre, recentrer=recentrer)
     try:
@@ -807,7 +807,7 @@ def retoucher_revision(kd: KDrive, rev: dict, quoi: str):
     try:
         contenu, web = revision.retoucher(
             rev, rev["retouche"], db.documents(rev["doc_ids"]),
-            pieces=db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True), memoire=db.Condenses(),
+            pieces=kdrive_seul.avec_contenu(db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True)), memoire=db.Condenses(),
             progres=lambda etape: activite(f"{quoi} : {etape}"))
     except ErreurAgent as e:
         db.finir_retouche(rev["id"], erreur=f"La modification n'a pas marché : {e}")
@@ -871,7 +871,7 @@ def traiter_campagne(campagne: dict):
     try:
         programme = revision.generer_programme(campagne, list(matieres.values()),
                                                db.evenements_entre(campagne["debut"], campagne["fin"]),
-                                               db.pieces_jointes(campagne_id=campagne["id"], contenu=True))
+                                               kdrive_seul.avec_contenu(db.pieces_jointes(campagne_id=campagne["id"], contenu=True)))
     except ErreurAgent as e:
         db.maj_campagne(campagne["id"], "erreur", erreur=str(e))
         log(f"erreur de programme pour la campagne {campagne['id']} : {e}")
@@ -1538,7 +1538,7 @@ def surveiller_disque():
     if time.monotonic() - _disque["vu"] < 3600:
         return
     _disque["vu"] = time.monotonic()
-    effaces = nettoyer_cache()
+    effaces = nettoyer_cache() + kdrive_seul.elaguer()
     if effaces:
         log(f"cache des scans : {effaces} reste(s) d'anciens traitements effacé(s)")
     e = disque.etat()
@@ -1577,6 +1577,8 @@ def nettoyer_cache(racine: Path = CACHE_DIR, maintenant: float | None = None) ->
         return 0
     candidats = []
     for e in racine.iterdir():
+        if e.name == "kdrive" and e.is_dir():   # fichiers kDrive déjà ouverts : limités en taille (kdrive_seul)
+            continue
         if e.name == "morceaux" and e.is_dir():
             candidats += [(m, CACHE_REPRISE) for m in e.iterdir()]
         elif e.name.startswith("decoupage-"):
@@ -1634,6 +1636,7 @@ def tour(kd: KDrive, dernier_nettoyage: float) -> float:
     etape("rangement", ranger_en_attente, kd)
     etape("PDF des révisions", pdf_manquants, kd)
     etape("corbeille kDrive", vider_corbeille, kd)
+    etape("kDrive seul", kdrive_seul.entretien, kd, ETUDES_ID, racine, log, ARRET)   # pièces, notes, sauvegarde
     inbox = etape("inbox", lire_inbox, kd)
     if inbox is not None:
         ETAT["inbox"] = frozenset(i["id"] for i in inbox)

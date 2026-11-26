@@ -949,3 +949,15 @@ def test_haut_de_page_allege(client, monkeypatch):
     assert "<button type=\"button\" class=\"petit\" data-ouvrir-recherche" in t   # la recherche se déplie à la demande
     t = client.get(f"/actualites?sujet={SUJETS[0]['id']}").text
     assert 'class="actif">Cybersécurité</a>' in t and "class=\"petit\" data-ouvrir-recherche" not in t
+
+
+def test_cache_des_vignettes_borne(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(ac, "VIGNETTES", tmp_path)
+    for n in range(5):
+        f = tmp_path / f"{n}.jpg"
+        f.write_bytes(b"x" * 100)
+        os.utime(f, (1000 + n, 1000 + n))
+    assert ac.elaguer_vignettes(1000) == 0
+    assert ac.elaguer_vignettes(300) == 3     # les plus anciennes, jusqu'à 80 % de la limite
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["3.jpg", "4.jpg"]

@@ -28,9 +28,11 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}
+      CACHE_DIR: /cache
     ports:
       - "${BIND_ADDR:-127.0.0.1}:8000:8000"   # IP de la VM sur ton VPN, jamais 0.0.0.0
     volumes:
+      - cache:/cache      # « kDrive seul » : cours et pièces jointes déjà ouverts (2 Go au plus, CACHE_KDRIVE_MO)
       - caddy:/caddy:ro   # certificat racine à installer sur l'iPhone (page /installer)
       - maj:/maj          # demandes de mise à jour, lues par le service maj
       - secrets:/secrets  # clé qui chiffre les secrets réglés sur le site (jamais dans la base)
@@ -88,7 +90,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db/${POSTGRES_DB}
       CACHE_DIR: /cache
     volumes:
-      - cache:/cache   # copies locales des scans en cours de traitement
+      - cache:/cache   # copies locales des scans en cours de traitement (+ cache borné des fichiers kDrive)
       - secrets:/secrets   # clé qui déchiffre les secrets réglés sur le site
       - ${FICHIERS_HOTE:-fichiers}:/fichiers
     # À une mise à jour, le worker finit le document en cours avant de s'arrêter (sinon, il est refait)

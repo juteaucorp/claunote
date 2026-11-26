@@ -38,14 +38,44 @@ un réglage fait sur le site passe avant celui du `.env`.
 
 | Choix | Scans et cours rangés | À prévoir |
 | --- | --- | --- |
-| **kDrive** | sur kDrive (Infomaniak) | un jeton API et deux dossiers (ou « Créer les dossiers pour moi ») |
+| **kDrive** | sur kDrive (Infomaniak), **avec le plus possible du reste** (voir ci-dessous) | un jeton API et deux dossiers (ou « Créer les dossiers pour moi ») |
 | **Sur la VM** | dans le volume Docker `fichiers` (`Inbox/`, `Etudes/`) | de la place disque et **ta propre sauvegarde** ; `FICHIERS_HOTE=/chemin` dans `.env` pour un autre disque |
 | **Les deux** | sur la VM, **copie de `Etudes/` sur kDrive** toutes les heures | les deux ; la copie ne supprime jamais rien sur kDrive |
 
 Ce choix se fait **à l'installation** : une fois des documents rangés, le site refuse d'en changer (leurs
 fichiers deviendraient introuvables). Sur la VM, un document supprimé va dans `.corbeille/`, vidée après 30 jours.
 
+**Choix kDrive : le plus possible sur kDrive.** La VM (40 Go) ne garde que ce qui doit rester sur place :
+
+```
+                kDrive : Etudes/                                  VM
+                ├── <année>/<matière>/  cours + .md           ┌──────────────────────────────────┐
+                ├── fiches/             PDF des révisions      │ base PostgreSQL vivante          │
+                └── Claunote/                                  │   (recherche, chat, comptes)     │
+                    ├── Pièces jointes/  ◄── sorties de la base │ secrets, modèles locaux          │
+                    ├── Notes/<année>/<matière>/*.md  (copie)  │ cache des fichiers kDrive ouverts│
+                    └── Sauvegardes/  base chaque nuit, 14 j   │   (2 Go max, CACHE_KDRIVE_MO)    │
+                                                               └──────────────────────────────────┘
+```
+
+- **Pièces jointes** des révisions et campagnes : envoyées sur kDrive, la base n'en garde plus que le nom.
+- **Notes** : une copie `.md` par note, refaite quand elle change (une note supprimée part à la corbeille kDrive).
+- **Sauvegarde de la base** chaque nuit vers 3 h (`pg_dump`), les 14 dernières gardées (`SAUVEGARDES_GARDEES`) ;
+  aucune copie ne reste sur la VM. État affiché dans *Réglages → Configuration du site → Stockage*.
+- Une installation existante migre **toute seule** (par lots de 20 pièces et 30 notes par minute), puis la place
+  des pièces dans la base est rendue au disque.
+- Les autres comptes ont leur dossier `Etudes/comptes/<identifiant>/Claunote/`.
+- Choix **Sur la VM** ou **Les deux** : rien de tout ça, ils restent comme avant.
+
+Restaurer une sauvegarde (base vide ou à écraser), depuis le dossier Claunote sur la VM :
+
+```bash
+docker compose cp claunote-2026-11-26.dump worker:/tmp/b.dump
+docker compose exec worker sh -c 'pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL" /tmp/b.dump'
+```
+
 > Sauvegarde le volume `secrets` avec la base : sans la clé, les jetons enregistrés sur le site sont à recoller.
+> La sauvegarde sur kDrive ne contient **pas** cette clé (exprès : les jetons y restent chiffrés).
 
 À la main, sans l'assistant :
 
