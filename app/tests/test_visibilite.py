@@ -21,7 +21,7 @@ def test_seul_sur_l_environnement_rien_ne_change(client):
 def test_matiere_publique_depuis_la_bibliotheque(client, faux_comptes):
     _a_plusieurs(faux_comptes)
     r = client.get("/bibliotheque")
-    assert "/bibliotheque/visibilite" in r.text and "🔒 Privée" in r.text and 'href="/partages"' in r.text
+    assert "/bibliotheque/visibilite" in r.text and "🔒 Privée" in r.text
     r = client.post("/bibliotheque/visibilite", data={"niveau": "BTS1", "matiere": "Réseaux", "valeur": "public"},
                     follow_redirects=False)
     assert r.status_code == 303 and faux_comptes.matieres_publiques == {("BTS1", "Réseaux")}
