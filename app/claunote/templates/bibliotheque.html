@@ -15,14 +15,8 @@
 <div class="carte">Aucun document classé pour l'instant. <a href="/deposer">Dépose des scans</a> ici,
   ou dans <code>Etudes/inbox</code> sur kDrive.</div>
 {% endif %}
-{% if peut('notes') %}
-<p class="doux">📝 <a href="/notes">Tes notes</a> · par matière ou par cours, sur la page de chaque cours</p>
-{% endif %}
 {% if nb_hors_cours %}
 <p class="doux">📁 <a href="/hors-cours">Hors cours</a> · {{ nb_hors_cours }} document{{ 's' if nb_hors_cours > 1 }} rangé{{ 's' if nb_hors_cours > 1 }} à part</p>
-{% endif %}
-{% if partage %}
-<p class="doux legende-vis">Chaque matière est <span class="pastille-vis">🔒 Privée</span> (toi seul) ou <span class="pastille-vis publique">🌐 Publique</span> (lisible par les autres comptes) : clique dessus pour changer. · <a href="/partages">🌐 Voir ce que les autres partagent</a></p>
 {% endif %}
 {% for niveau in niveaux %}
 <h2>{{ niveau }}</h2>
@@ -44,7 +38,6 @@
 {% endfor %}
 {% if niveaux_autres %}
 <h2 class="titre-partages">🌐 Cours publics des autres <span class="pastille-vis">Lecture seule</span></h2>
-<p class="doux">Ce que les autres comptes ont rendu public. Tu peux les lire et t'en servir, pas les modifier.</p>
 {% for niveau in niveaux_autres %}
 <h3>{{ niveau }}</h3>
 <div class="grille">
