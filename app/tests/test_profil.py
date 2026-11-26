@@ -141,7 +141,7 @@ def test_onglets_et_accueil(client):
                                               "ordre_cours": "2", "onglet_agenda": "1", "ordre_agenda": "3",
                                               "ordre_actualites": "4", "accueil": "reviser"})
     ap = apparence.lire({"id": 1})
-    assert ap["onglets"] == ["reviser", "cours", "agenda"] and ap["caches"] == ["actualites"] and ap["accueil"] == "reviser"
+    assert ap["onglets"] == ["reviser", "cours", "agenda"] and ap["caches"] == ["actualites", "notes"] and ap["accueil"] == "reviser"
     assert client.get("/", follow_redirects=False).headers["location"] == "/reviser"
     page = client.get("/bibliotheque").text
     onglets = page[page.index('<nav class="onglets'):page.index('<details id="plus"')]
@@ -151,7 +151,7 @@ def test_onglets_et_accueil(client):
     # Rien de coché : les onglets d'origine ; une valeur inconnue ne casse rien
     client.post("/reglages/navigation", data={"accueil": "nimporte", "onglet_x": "1"})
     ap = apparence.lire({"id": 1})
-    assert ap["onglets"] == apparence.ORDRE and ap["accueil"] == "" and ap["caches"] == []
+    assert ap["onglets"] == apparence.ONGLETS_DEFAUT and ap["accueil"] == "" and ap["caches"] == ["notes"]
     # Le thème choisi ne remet pas les onglets à zéro
     client.post("/reglages/navigation", data={"onglet_cours": "1", "accueil": "cours"})
     client.post("/reglages/apparence", data={"mode": "sombre", "style": "claunote"})

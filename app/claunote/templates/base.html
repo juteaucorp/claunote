@@ -354,7 +354,7 @@
 {% set evals = nb_evaluations_proches() if peut('agenda') else 0 %}
 {% set a_importer = nb_import_a_confirmer() if peut('organiser') else 0 %}
 {% set attente = nb_a_verifier() + a_importer %}
-{% set rubrique = 'actualites' if chemin.startswith('/actualites') else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours', '/partages')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander', '/progression')) else 'agenda' if chemin.startswith('/agenda') else 'plus' %}
+{% set rubrique = 'actualites' if chemin.startswith('/actualites') else 'cours' if chemin.startswith(('/bibliotheque', '/liste', '/doc', '/recherche', '/hors-cours', '/partages')) else 'reviser' if chemin.startswith(('/revis', '/cartes', '/campagne', '/demander', '/progression')) else 'agenda' if chemin.startswith('/agenda') else 'notes' if chemin.startswith(('/notes', '/partages/note')) and 'notes' in ap.onglets else 'plus' %}
 {% set admin = est_admin() %}
 {% set actus = nb_actualites() if peut('actualites') else 0 %}
 {% set nb_cours = nb_cours_total() if peut('bibliotheque') else 0 %}
@@ -370,6 +370,8 @@
 {% if peut('reviser') %}<a href="/reviser" id="maj-h-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
 {% elif cle == 'agenda' %}
 {% if peut('agenda') %}<a href="/agenda" id="maj-h-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}" title="Pronote">Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
+{% elif cle == 'notes' %}
+{% if peut('notes') %}<a href="/notes" id="maj-h-notes" class="{{ 'actif' if rubrique == 'notes' }}">Notes</a>{% endif %}
 {% endif %}
 {% endmacro %}
 {% macro onglet_bas(cle) %}
@@ -381,6 +383,8 @@
 {% if peut('reviser') %}<a href="/reviser" id="maj-o-reviser" class="maj {{ 'actif' if rubrique == 'reviser' }}">{{ icone('reviser') }}Réviser{% if cartes_dues %}<span class="badge">{{ cartes_dues }}</span>{% endif %}</a>{% endif %}
 {% elif cle == 'agenda' %}
 {% if peut('agenda') %}<a href="/agenda" id="maj-o-agenda" class="maj {{ 'actif' if rubrique == 'agenda' }}">{{ icone('agenda') }}Agenda{% if evals %}<span class="badge">{{ evals }}</span>{% endif %}</a>{% endif %}
+{% elif cle == 'notes' %}
+{% if peut('notes') %}<a href="/notes" id="maj-o-notes" class="{{ 'actif' if rubrique == 'notes' }}">{{ icone('notes') }}Notes</a>{% endif %}
 {% endif %}
 {% endmacro %}
 {% macro liens_plus() %}

@@ -5,9 +5,9 @@
 <p class="fil"><a href="/bibliotheque">Bibliothèque</a> › Partagés</p>
 <h1>Partagés par les autres comptes</h1>
 <p class="doux">Ce que les autres comptes ont choisi de rendre <strong>public</strong>, en lecture seule.
-  Tes cours et révisions sont <strong>privés par défaut</strong> : le bouton 🔒 / 🌐 sur une matière, un cours, une fiche
-  ou une campagne les partage.</p>
-{% if not nb_docs and not revisions and not campagnes %}
+  Tes cours et révisions sont <strong>privés par défaut</strong> : le bouton 🔒 / 🌐 sur une matière, un cours, une fiche,
+  une campagne ou une note les partage.</p>
+{% if not nb_docs and not revisions and not campagnes and not notes_partagees %}
 <div class="carte">Rien de partagé pour l'instant.</div>
 {% endif %}
 
@@ -28,6 +28,18 @@
   {% for r in revisions %}
     <li><a href="/partages/revision/{{ r.id }}">{{ icone(r.genre, 15) }} {{ r.sujet }}</a>
       <span class="doux">· {{ genres[r.genre] }}{% if r.matiere %} · {{ r.matiere }}{% if r.niveau %} {{ r.niveau }}{% endif %}{% endif %} · {{ r.auteur }}</span></li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if notes_partagees %}
+<h2>Notes</h2>
+<div class="carte">
+  <ul class="liste-partages">
+  {% for n in notes_partagees %}
+    <li><a href="/partages/note/{{ n.id }}">📝 {{ n|titre_note }}</a>
+      <span class="doux">{% if n.matiere %}· {{ n.matiere }}{% if n.niveau %} {{ n.niveau }}{% endif %} {% endif %}· {{ n.auteur }}</span></li>
   {% endfor %}
   </ul>
 </div>

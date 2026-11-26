@@ -15,6 +15,9 @@
 <div class="carte">Aucun document classé pour l'instant. <a href="/deposer">Dépose des scans</a> ici,
   ou dans <code>Etudes/inbox</code> sur kDrive.</div>
 {% endif %}
+{% if peut('notes') %}
+<p class="doux">📝 <a href="/notes">Tes notes</a> · par matière ou par cours, sur la page de chaque cours</p>
+{% endif %}
 {% if nb_hors_cours %}
 <p class="doux">📁 <a href="/hors-cours">Hors cours</a> · {{ nb_hors_cours }} document{{ 's' if nb_hors_cours > 1 }} rangé{{ 's' if nb_hors_cours > 1 }} à part</p>
 {% endif %}

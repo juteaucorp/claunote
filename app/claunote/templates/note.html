@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}{{ (n|titre_note) if n else 'Nouvelle note' }}{% endblock %}
+{% block contenu %}
+{% set src = n or pre %}
+<p class="fil"><a href="/notes">Notes</a> ›
+  {% if src.matiere %}<a href="/notes?m={{ ((src.niveau or '') ~ '|' ~ src.matiere)|urlencode }}">{{ src.matiere }}{% if src.niveau %} · {{ src.niveau }}{% endif %}</a>{% else %}Sans matière{% endif %}
+  {% if n and n.archive_le %} · <strong>archivée</strong>{% endif %}</p>
+
+{% if lecture %}
+{# Lecture seule : note d'un autre compte vue avec « Tout voir », ou « Voir en tant que » #}
+<h1>{{ n|titre_note }}</h1>
+<p class="doux">{% if not a_moi_note %}📝 Note de <strong>{{ n.auteur }}</strong> · {% endif %}modifiée le {{ n.maj_le.astimezone(paris_tz).strftime('%d/%m/%Y à %H:%M') }}
+  {% if cours %} · 📎 <a href="/{{ 'doc' if cours.compte_id == moi_id or est_admin() else 'partages/doc' }}/{{ cours.id }}">{{ cours.titre or cours.nom }}</a>{% endif %} · lecture seule</p>
+<div class="carte transcription rendu-note">{{ rendu if n.contenu.strip() else '<p class="doux">Note vide.</p>'|safe }}</div>
+{% else %}
+
+<form id="editeur" method="post" action="{{ '/notes/' ~ n.id if n else '/notes' }}" class="editeur-note"
+      data-id="{{ n.id if n else '' }}" data-base="{{ n.maj_le.isoformat() if n else '' }}">
+  <input type="hidden" name="base" value="{{ n.maj_le.isoformat() if n else '' }}">
+  <div class="boite-titre"><input name="titre" class="titre-note" value="{{ src.titre or '' }}" placeholder="Titre" aria-label="Titre de la note" maxlength="160" autocomplete="off" {{ 'autofocus' if not n and not src.titre }}></div>
+  <div class="rattache">
+    <label class="puce" title="Matière de la note">{{ icone('cours', 16) }}
+      <select name="matiere" aria-label="Matière" hx-get="/notes/cours" hx-target="#choix-cours" hx-trigger="change" hx-include="this">
+        <option value="" {{ 'selected' if not src.matiere }}>Sans matière</option>
+        {% for c in choix %}<option value="{{ c.niveau or '' }}|{{ c.matiere }}" {{ 'selected' if c.matiere == src.matiere and c.niveau == src.niveau }}>{{ c.matiere }}{% if c.niveau %} · {{ c.niveau }}{% endif %}</option>{% endfor %}
+        <option value="__autre__">Autre matière…</option>
+      </select></label>
+    <span id="autre-matiere" class="puce" hidden>
+      <select name="niveau_autre" aria-label="Année">{% for x in niveaux|reverse %}<option>{{ x }}</option>{% endfor %}</select>
+      <input name="matiere_autre" placeholder="Nom de la matière" aria-label="Nom de la nouvelle matière" maxlength="120">
+    </span>
+    <label class="puce" title="Cours rattaché">📎 <span id="choix-cours">{% include "_notes_cours.html" %}</span></label>
+    {% if cours %}<a class="ouvrir-cours" href="/{{ 'doc' if cours.compte_id == moi_id else 'partages/doc' }}/{{ cours.id }}">Ouvrir le cours ›</a>{% endif %}
+  </div>
+
+  <div class="barre-outils" role="toolbar" aria-label="Mise en forme">
+    <button type="button" data-md="titre" title="Titre" aria-label="Titre"><span class="g">H</span></button>
+    <button type="button" data-md="gras" title="Gras" aria-label="Gras"><span class="g">G</span></button>
+    <button type="button" data-md="italique" title="Italique" aria-label="Italique"><i>I</i></button>
+    <button type="button" data-md="liste" title="Liste" aria-label="Liste">•</button>
+    <button type="button" data-md="case" title="Case à cocher" aria-label="Case à cocher">☐</button>
+    <button type="button" data-md="code" title="Code ou commande" aria-label="Code">{}</button>
+    <button type="button" data-md="formule" title="Formule (LaTeX)" aria-label="Formule">∑</button>
+    <button type="button" id="bascule-apercu" class="apercu-bouton" aria-pressed="false" hx-post="/notes/apercu" hx-target="#apercu-note" hx-include="[name=contenu]" hx-trigger="click">Aperçu</button>
+  </div>
+  <textarea name="contenu" id="texte-note" class="texte-note" placeholder="Écris ici…&#10;&#10;# Titre   - liste   - [ ] à faire   **gras**   `commande`   $formule$"
+            aria-label="Texte de la note" spellcheck="true" {{ 'autofocus' if not n and src.titre }}>{{ src.contenu or '' }}</textarea>
+  <div id="apercu-note" class="carte transcription rendu-note" hidden></div>
+  <div class="pied-editeur">
+    <span id="etat-note" class="doux" role="status" aria-live="polite">{% if n %}Enregistrée · {{ n.maj_le.astimezone(paris_tz).strftime('%d/%m à %H:%M') }}{% else %}Enregistrée dès que tu écris{% endif %}</span>
+    <button class="principal" id="enregistrer">Enregistrer</button>
+  </div>
+</form>
+
+<div id="conflit-note" class="carte accent" hidden role="alert">
+  <strong>Cette note a été modifiée ailleurs</strong> (un autre appareil ou onglet) pendant que tu écrivais.
+  <div class="actions" style="margin-top: 10px">
+    <button type="button" class="principal" id="garder-mienne">Garder ma version</button>
+    <button type="button" id="prendre-autre">Prendre l'autre version</button>
+  </div>
+</div>
+{% endif %}
+
+{% if n %}
+<section class="options-note">
+  {% if not lecture %}
+  <div class="actions">
+    {% if not n.archive_le %}
+    <form method="post" action="/notes/{{ n.id }}/{{ 'detacher' if n.epinglee else 'epingler' }}"><button>📌 {{ 'Désépingler' if n.epinglee else 'Épingler' }}</button></form>
+    {% endif %}
+    {% if peut('reviser') and n.matiere %}<a class="bouton" href="/reviser/nouvelle?{{ {'note': n.id, 'matiere': n.matiere}|urlencode }}">{{ icone('fiche', 18) }} Fiche ou quiz avec cette note</a>{% endif %}
+    {% if peut('reviser') %}<a class="bouton" href="/demander?{{ {'niveau': n.niveau or '', 'matiere': n.matiere or ''}|urlencode }}">Poser une question</a>{% endif %}
+    <a class="bouton" href="/notes/{{ n.id }}/telecharger">{{ icone('pdf', 18) }} Télécharger (.md)</a>
+  </div>
+  {% if partage_possible() and a_moi_note and not n.archive_le %}{% from "_visibilite.html" import visibilite with context %}
+  {{ visibilite('/notes/' ~ n.id ~ '/visibilite', n.public, none, 'cette note') }}{% endif %}
+  <div class="actions actions-fin">
+    {% if n.archive_le %}
+    <form method="post" action="/notes/{{ n.id }}/restaurer"><button class="principal">Restaurer</button></form>
+    {% else %}
+    <form method="post" action="/notes/{{ n.id }}/archiver"><button title="Sortie de la liste, de la recherche et des révisions, sans être supprimée">Archiver</button></form>
+    {% endif %}
+    <form method="post" action="/notes/{{ n.id }}/supprimer" onsubmit="return confirm('Supprimer cette note pour de bon ?')"><button class="danger">Supprimer</button></form>
+  </div>
+  {% else %}
+  <div class="actions"><a class="bouton" href="/notes/{{ n.id }}/telecharger">{{ icone('pdf', 18) }} Télécharger (.md)</a></div>
+  {% endif %}
+</section>
+{% endif %}
+
+<style>
+  .editeur-note { display: flex; flex-direction: column; gap: 10px; }
+  .titre-note { font-family: ui-serif, Georgia, "Times New Roman", serif; font-size: 1.7rem; font-weight: 600; border: 0 !important;
+                background: transparent !important; padding: 4px 0 !important; outline: none; width: 100%; }
+  .titre-note:focus { outline: none; }
+  .boite-titre { font-size: 1.7rem; }   /* taille sur le parent : base.html impose max(16px, 1em) aux champs tactiles */
+  form.editeur-note input.titre-note { font-size: 1em; min-height: 0; }
+  .barre-outils .g { font-weight: 700; }
+  .rattache { display: flex; flex-wrap: wrap; gap: 8px; }
+  .rattache .puce { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 12px; border: 1px solid var(--bord);
+                    border-radius: 999px; background: var(--fond-doux); color: var(--doux); max-width: 100%; min-width: 0; }
+  .rattache .puce[hidden] { display: none; }
+  .rattache select, .rattache input { border: 0; background: transparent; padding: 6px 8px; min-width: 0; max-width: 100%; color: var(--texte); }
+  .rattache #choix-cours { min-width: 0; max-width: 100%; }
+  .ouvrir-cours { align-self: center; font-size: .9rem; font-weight: 600; text-decoration: none; color: var(--accent-fonce); }
+  .rattache #choix-cours select { width: 100%; text-overflow: ellipsis; }
+  .barre-outils { position: sticky; top: calc(var(--haut-entete, 0px) + 4px); z-index: 5; display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto;
+                  padding: 4px; border: 1px solid var(--bord); border-radius: 12px; background: var(--carte); scrollbar-width: none; }
+  .barre-outils::-webkit-scrollbar { display: none; }
+  .barre-outils button { flex: 0 0 auto; min-width: 40px; min-height: 38px; padding: 4px 10px; border: 0; border-radius: 8px; background: transparent; }
+  .barre-outils button:hover { background: var(--accent-pale); }
+  .barre-outils .apercu-bouton { margin-left: auto; border: 1px solid var(--bord); font-weight: 600; }
+  .barre-outils .apercu-bouton[aria-pressed=true] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .texte-note { width: 100%; box-sizing: border-box; min-height: 55vh; resize: vertical; font-size: 1.05rem; line-height: 1.6;
+                padding: 14px 16px; border-radius: 14px; tab-size: 4; }
+  .texte-note[hidden] { display: none; }
+  .rendu-note { min-height: 30vh; }
+  .rendu-note li.tache { list-style: none; margin-left: -1.3em; }
+  .rendu-note li.tache input { margin-right: 6px; }
+  .pied-editeur { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .pied-editeur .doux.attention { color: var(--accent-fonce); font-weight: 600; }
+  .options-note { margin-top: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .options-note form { margin: 0; }
+  .actions-fin { padding-top: 10px; border-top: 1px solid var(--bord); }
+  button.danger { color: #b3261e; }
+  @media (max-width: 640px) {
+    .boite-titre { font-size: 1.45rem; }
+    .barre-outils { gap: 2px; }
+    .barre-outils button { min-width: 36px; padding: 4px 6px; }
+    .barre-outils .apercu-bouton { padding: 4px 12px; }
+    .rattache .puce { flex: 1 1 100%; }
+    .texte-note { min-height: 50vh; font-size: 1.02rem; padding: 12px; }
+    .options-note .actions > * { flex: 1 1 auto; }
+    .options-note .actions a.bouton, .options-note .actions button { width: 100%; justify-content: center; }
+  }
+</style>
+
+{% if not lecture %}
+<script>
+(() => {
+  const form = document.getElementById("editeur");
+  const texte = document.getElementById("texte-note"), titre = form.querySelector("[name=titre]");
+  const etat = document.getElementById("etat-note"), base = form.querySelector("[name=base]");
+  const matiere = form.querySelector("[name=matiere]"), autre = document.getElementById("autre-matiere");
+  const apercu = document.getElementById("apercu-note"), bascule = document.getElementById("bascule-apercu");
+  const conflit = document.getElementById("conflit-note");
+  if (document.documentElement.classList.contains("en-apercu")) return;   // « Voir en tant que » : rien n'est envoyé
+  let id = form.dataset.id, minuteur = null, envoi = null, sale = false, bloque = false, essais = 0;
+  const brouillon = () => `claunote-note-${id || "nouvelle"}`;
+
+  // Hauteur du texte selon son contenu (téléphone : pas de double barre de défilement)
+  const ajuster = () => { texte.style.height = "auto"; texte.style.height = Math.max(texte.scrollHeight + 4, window.innerHeight * .5) + "px"; };
+  ajuster();
+
+  const dire = (t, attention = false) => { etat.textContent = t; etat.classList.toggle("attention", attention); };
+  const vide = () => !texte.value.trim() && !titre.value.trim();
+
+  function donnees(forcer = false) {
+    const d = new FormData(form);
+    if (forcer) d.set("forcer", "1");
+    return d;
+  }
+
+  async function enregistrer(forcer = false) {
+    clearTimeout(minuteur);
+    if (envoi) { sale = true; return envoi; }
+    if (!id && vide()) return;
+    if (bloque && !forcer) return;
+    sale = false;
+    dire("Enregistrement…");
+    envoi = fetch(id ? `/notes/${id}` : "/notes", { method: "POST", body: donnees(forcer), keepalive: true,
+                                                   headers: { "X-Claunote-Auto": "1" } })
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 409 && j.conflit) {
+          bloque = true; conflit.hidden = false; conflit.dataset.titre = j.titre || ""; conflit.dataset.contenu = j.contenu || "";
+          conflit.dataset.base = j.maj_le; dire("Pas enregistrée : version plus récente ailleurs", true); return;
+        }
+        if (!r.ok) throw new Error(r.status);
+        if (j.id) {   // première frappe d'une nouvelle note : elle existe maintenant
+          id = String(j.id); form.action = `/notes/${id}`; form.dataset.id = id;
+          history.replaceState(null, "", j.url);
+          try { localStorage.removeItem("claunote-note-nouvelle"); } catch (e) {}
+        }
+        base.value = j.maj_le; essais = 0; bloque = false; conflit.hidden = true;
+        try { localStorage.removeItem(brouillon()); } catch (e) {}
+        dire(`Enregistrée · ${new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`);
+      })
+      .catch(() => {
+        // Hors ligne, serveur redémarré… : gardée sur l'appareil et renvoyée un peu plus tard
+        try { localStorage.setItem(brouillon(), JSON.stringify({ titre: titre.value, contenu: texte.value, base: base.value, le: Date.now() })); } catch (e) {}
+        essais += 1; sale = true;
+        dire("Pas encore enregistrée (connexion ?) : gardée sur cet appareil, nouvel essai bientôt", true);
+        minuteur = setTimeout(() => enregistrer(), Math.min(30000, 2000 * 2 ** essais));
+      })
+      .finally(() => { envoi = null; if (sale && !bloque && !minuteur) plusTard(); });
+    return envoi;
+  }
+
+  function plusTard(delai = 900) { sale = true; clearTimeout(minuteur); minuteur = setTimeout(() => { minuteur = null; enregistrer(); }, delai); dire("Modifications…"); }
+
+  form.addEventListener("input", (e) => { if (e.target === texte) ajuster(); if (e.target.name !== "matiere_autre" || matiere.value === "__autre__") plusTard(); });
+  form.addEventListener("change", (e) => {
+    if (e.target === matiere) autre.hidden = matiere.value !== "__autre__";
+    if (e.target !== matiere || matiere.value !== "__autre__") plusTard(300);
+  });
+  document.body.addEventListener("htmx:afterSwap", (e) => { if (e.detail.target.id === "choix-cours") plusTard(300); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); enregistrer(); });
+  document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); enregistrer(); } });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && (sale || minuteur)) enregistrer(); });
+  window.addEventListener("pagehide", () => { if (sale || minuteur) enregistrer(); });
+  window.addEventListener("beforeunload", (e) => { if ((sale || minuteur || envoi) && !(!id && vide())) { enregistrer(); e.preventDefault(); } });
+
+  // Conflit : garder la sienne (écrase l'autre) ou prendre l'autre (remplace le texte à l'écran)
+  document.getElementById("garder-mienne").addEventListener("click", () => { bloque = false; enregistrer(true); });
+  document.getElementById("prendre-autre").addEventListener("click", () => {
+    titre.value = conflit.dataset.titre; texte.value = conflit.dataset.contenu; base.value = conflit.dataset.base;
+    bloque = false; conflit.hidden = true; ajuster(); dire("Version la plus récente reprise");
+  });
+
+  // Brouillon resté sur l'appareil (pas pu être envoyé la dernière fois) : proposé, jamais imposé
+  try {
+    const garde = JSON.parse(localStorage.getItem(brouillon()) || "null");
+    if (garde && (garde.contenu !== texte.value || garde.titre !== titre.value)
+        && confirm("Cette note a des modifications pas encore envoyées, restées sur cet appareil. Les reprendre ?")) {
+      titre.value = garde.titre; texte.value = garde.contenu; ajuster(); plusTard(100);
+    } else if (garde) { localStorage.removeItem(brouillon()); }
+  } catch (e) {}
+
+  // Aperçu : le rendu du serveur (formules, schémas, cases à cocher), puis retour à l'écriture
+  bascule.addEventListener("click", (e) => {
+    const montrer = bascule.getAttribute("aria-pressed") !== "true";
+    if (!montrer) { e.stopImmediatePropagation(); e.preventDefault(); }
+    bascule.setAttribute("aria-pressed", String(montrer));
+    apercu.hidden = !montrer; texte.hidden = montrer;
+    form.querySelectorAll("[data-md]").forEach((b) => { b.disabled = montrer; });
+    bascule.textContent = montrer ? "Écrire" : "Aperçu";
+    if (!montrer) texte.focus();
+  }, true);
+
+  // Barre de mise en forme : entoure la sélection, ou ajoute en début de ligne
+  const autour = { gras: ["**", "**", "gras"], italique: ["_", "_", "italique"], code: ["`", "`", "commande"], formule: ["$", "$", "x^2"] };
+  const ligne = { titre: "## ", liste: "- ", case: "- [ ] " };
+  form.querySelectorAll("[data-md]").forEach((b) => b.addEventListener("click", () => {
+    const quoi = b.dataset.md, debut = texte.selectionStart, fin = texte.selectionEnd, v = texte.value;
+    if (autour[quoi]) {
+      const [a, z, exemple] = autour[quoi], choisi = v.slice(debut, fin) || exemple;
+      texte.setRangeText(a + choisi + z, debut, fin, "end");
+      if (debut === fin) texte.setSelectionRange(debut + a.length, debut + a.length + choisi.length);
+    } else {
+      const d = v.lastIndexOf("\n", debut - 1) + 1, prefixe = ligne[quoi];
+      if (v.startsWith(prefixe, d)) texte.setRangeText("", d, d + prefixe.length, "end");
+      else texte.setRangeText(prefixe, d, d, "end");
+    }
+    texte.focus(); ajuster(); plusTard();
+  }));
+
+  // Entrée dans une liste : la puce (ou la case) continue à la ligne suivante ; ligne vide = fin de la liste
+  texte.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+    const v = texte.value, p = texte.selectionStart, d = v.lastIndexOf("\n", p - 1) + 1, courante = v.slice(d, p);
+    const m = courante.match(/^(\s*)(- \[[ xX]\] |[-*+] |(\d+)[.)] )/);
+    if (!m) return;
+    e.preventDefault();
+    if (courante.trim() === m[2].trim()) { texte.setRangeText("", d, p, "end"); }
+    else {
+      const suite = m[3] ? `${Number(m[3]) + 1}${m[2].trim().slice(-1)} ` : m[2].replace(/\[[xX]\]/, "[ ]");
+      texte.setRangeText("\n" + m[1] + suite, p, texte.selectionEnd, "end");
+    }
+    ajuster(); plusTard();
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

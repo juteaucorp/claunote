@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block titre %}{{ n|titre_note }}{% endblock %}
+{% block contenu %}
+<p class="fil"><a href="/partages">Partagés</a> › {{ n.auteur }} › Notes{% if n.matiere %} › {{ n.matiere }}{% if n.niveau %} · {{ n.niveau }}{% endif %}{% endif %}</p>
+<h1>{{ n|titre_note }}</h1>
+<p class="doux">🌐 Note partagée par <strong>{{ n.auteur }}</strong> · lecture seule · modifiée le {{ n.maj_le.astimezone(paris_tz).strftime('%d/%m/%Y') }}
+  {% if cours %} · 📎 <a href="/doc/{{ cours.id }}">{{ cours.titre or cours.nom }}</a>{% endif %}
+  · <a href="/notes/{{ n.id }}/telecharger">télécharger (.md)</a></p>
+<div class="carte transcription rendu-note">{{ rendu if n.contenu.strip() else '<p class="doux">Note vide.</p>'|safe }}</div>
+<style>.rendu-note li.tache { list-style: none; margin-left: -1.3em; } .rendu-note li.tache input { margin-right: 6px; }</style>
+{% endblock %}

@@ -1,0 +1,16 @@
+{# Page d'un cours (le sien ou partagé) : ses notes rattachées à ce cours, et en écrire une #}
+{% if peut('notes') %}
+<div class="carte notes-du-cours">
+  <div class="tete-ndc"><strong>📝 Mes notes sur ce cours{% if notes_cours %} <span class="doux">· {{ notes_cours|length }}</span>{% endif %}</strong>
+    <a class="bouton" href="/notes/nouvelle?doc={{ doc.id }}">Prendre une note</a></div>
+  {% if notes_cours %}
+  <ul class="liste-ndc">
+    {% for n in notes_cours %}<li><a href="/notes/{{ n.id }}">{% if n.epinglee %}📌 {% endif %}{{ n|titre_note }}</a> <span class="doux">· {{ n.maj_le|date_note }}</span></li>{% endfor %}
+  </ul>
+  {% else %}<p class="doux">Ce que le prof a dit à l'oral, tes questions, un résumé à ta façon : rattaché à ce cours, retrouvé dans <a href="/notes">Notes</a>.</p>{% endif %}
+</div>
+<style>
+  .tete-ndc { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .liste-ndc { margin: 8px 0 0; padding-left: 18px; } .liste-ndc li { margin: 4px 0; }
+</style>
+{% endif %}

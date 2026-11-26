@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% from "_icones.html" import icone %}
+{% block titre %}Notes{% endblock %}
+{% block contenu %}
+<div class="tete-notes">
+  <h1>Notes</h1>
+  {% if vue != 'archives' %}<a class="bouton principal" href="/notes/nouvelle{{ ('?matiere=' ~ m|urlencode) if m and m != 'libres' }}">{{ icone('nouveau', 18) }} Nouvelle note</a>{% endif %}
+</div>
+<nav class="vues-notes" aria-label="Notes en cours ou archivées">
+  <a href="/notes" class="{{ 'actif' if vue != 'archives' }}">En cours <span class="doux">{{ nb.actives }}</span></a>
+  <a href="/notes?vue=archives" class="{{ 'actif' if vue == 'archives' }}">Archivées <span class="doux">{{ nb.archivees }}</span></a>
+</nav>
+<form class="filtres-notes" action="/notes" role="search" hx-get="/notes" hx-target="#resultats-notes" hx-push-url="true"
+      hx-trigger="input changed delay:250ms from:find input[name=q], change from:find select, submit">
+  <input type="search" name="q" value="{{ q }}" placeholder="Chercher dans tes notes…" aria-label="Chercher dans tes notes" enterkeyhint="search" autocomplete="off">
+  {% if vue != 'archives' %}
+  <select name="m" aria-label="Matière">
+    <option value="">Toutes les matières</option>
+    {% for x in matieres %}<option value="{{ x.niveau or '' }}|{{ x.matiere }}" {{ 'selected' if m == (x.niveau or '') ~ '|' ~ x.matiere }}>{{ x.matiere }}{% if x.niveau %} · {{ x.niveau }}{% endif %} ({{ x.n }})</option>{% endfor %}
+    {% if nb.libres %}<option value="libres" {{ 'selected' if m == 'libres' }}>Sans matière ({{ nb.libres }})</option>{% endif %}
+  </select>
+  {% else %}<input type="hidden" name="vue" value="archives">{% endif %}
+</form>
+<div id="resultats-notes">{% include "_notes_liste.html" %}</div>
+<style>
+  .tete-notes { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .tete-notes h1 { margin: 4px 0; }
+  .vues-notes { display: flex; gap: 6px; margin: 0 0 12px; }
+  .vues-notes a { padding: 6px 14px; border-radius: 999px; text-decoration: none; color: var(--texte); border: 1px solid var(--bord); background: var(--carte); font-weight: 500; }
+  .vues-notes a.actif { background: var(--accent-pale); border-color: var(--accent-pale); color: var(--accent-fonce); }
+  .filtres-notes { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+  .filtres-notes input[type=search] { flex: 1 1 240px; min-width: 0; border-radius: 999px; padding-left: 16px; }
+  .filtres-notes select { flex: 0 1 260px; min-width: 0; }
+  @media (max-width: 640px) { .filtres-notes select { flex: 1 1 100%; } }
+</style>
+{% endblock %}

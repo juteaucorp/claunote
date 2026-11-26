@@ -40,6 +40,9 @@
 <div class="carte doux">Rien à ranger : tout ce que tu as sert encore. {{ icone('check', 16) }}</div>
 {% endif %}
 
+{% if peut('notes') %}{% set nb_na = nb_notes_archivees() %}{% if nb_na %}
+<p class="doux">📝 <a href="/notes?vue=archives">{{ nb_na }} note{{ 's' if nb_na > 1 }} archivée{{ 's' if nb_na > 1 }}</a> : dans Notes › Archivées.</p>
+{% endif %}{% endif %}
 <h2>Archivé {% if campagnes or revisions %}<span class="doux">· {{ campagnes|length + revisions|length }}</span>{% endif %}</h2>
 {% if campagnes or revisions %}
 <form method="post">

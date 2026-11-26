@@ -24,17 +24,19 @@
 {% if doc.statut == 'classe' %}
 <form method="post" action="/reviser" class="carte">
   <input type="hidden" name="doc_id" value="{{ doc.id }}">
-  <strong>Réviser ce document</strong>
+  <strong>Réviser ce document</strong>{% if notes_cours %} <span class="doux">· avec {{ 'ta note' if notes_cours|length == 1 else 'tes ' ~ notes_cours|length ~ ' notes' }} sur ce cours</span>{% endif %}
   <div class="actions" style="margin-top: 8px">
     <button name="genre" value="fiche" class="principal">Fiche</button>
     <button name="genre" value="quiz">Quiz</button>
     <button name="genre" value="cartes">Flashcards</button>
     <button name="genre" value="examen">Épreuve blanche</button>
     <a href="/reviser/nouvelle?doc={{ doc.id }}">Plus d'options…</a>
+    {% for n in notes_cours %}<input type="hidden" name="note_ids" value="{{ n.id }}">{% endfor %}
     <a href="/demander?{{ {'niveau': doc.niveau, 'matiere': doc.matiere}|urlencode }}">Poser une question</a>
   </div>
 </form>
 {% endif %}
+{% if doc.statut == 'classe' %}{% include "_notes_du_cours.html" %}{% endif %}
 {% if doc.statut not in ('nouveau', 'erreur', 'reclasser') %}
 <details class="carte">
   <summary>Modifier le classement</summary>

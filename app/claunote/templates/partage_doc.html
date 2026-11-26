@@ -14,6 +14,7 @@
 </div>
 <style>.actions-partage { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }</style>
 {% endif %}
+{% include "_notes_du_cours.html" %}
 {% if doc.resume %}<p>{{ doc.resume }}</p>{% endif %}
 {% if transcription %}<div class="carte transcription">{{ transcription|safe }}</div>
 {% else %}<div class="carte doux">Pas de texte lu pour ce cours : ouvre l'original.</div>{% endif %}

@@ -41,6 +41,17 @@
         <div id="cours"><p class="doux">Chargement…</p></div>
       </details>
     {% endif %}
+    {% if notes_jointes %}
+      <div class="liste-cours notes-jointes">
+        <div class="doux">📝 Avec {{ 'ta note' if notes_jointes|length == 1 else 'tes notes' }} (l'IA les lit avec les cours ; décoche pour les laisser de côté)</div>
+        {% for n in notes_jointes %}<label><input type="checkbox" name="note_ids" value="{{ n.id }}" checked>
+          <span><strong>{{ n|titre_note }}</strong> <span class="doux">· {{ n.matiere or 'Sans matière' }}</span></span></label>{% endfor %}
+      </div>
+    {% endif %}
+    {% if peut('notes') and not document %}
+      <div id="notes-matiere" hx-get="/notes/pour-reviser" hx-trigger="load, change from:[name=niveau_matiere]"
+           hx-include="[name=niveau_matiere]" hx-vals='{"deja": "{{ notes_jointes|map(attribute="id")|join(",") }}"}'></div>
+    {% endif %}
       <p><label>Sujet ou chapitre <span class="doux">(facultatif)</span><br>
         <input name="sujet" style="width: 100%" placeholder="ex. VLAN et routage inter-VLAN" value="{{ pre.sujet }}"></label></p>
     </div>

@@ -5,7 +5,18 @@
 <form action="/recherche" class="actions form-recherche"><input type="search" name="q" value="{{ q }}" placeholder="ex. suites géométriques, ou une question" aria-label="Recherche" enterkeyhint="search" {{ 'autofocus' if not q }}>
   <button class="principal">Chercher</button>
   <button formaction="/demander" formmethod="post">Demander à l'IA</button></form>
-{% if q %}<p class="doux">{{ resultats|length }} résultat{{ 's' if resultats|length > 1 }}{% if not resultats and not proches %} : essaie <strong>Demander à l'IA</strong>, elle lit tous tes documents.{% endif %}</p>{% endif %}
+{% if q %}<p class="doux">{{ resultats|length }} résultat{{ 's' if resultats|length > 1 }}{% if dans_notes %} · {{ dans_notes|length }} note{{ 's' if dans_notes|length > 1 }}{% endif %}{% if not resultats and not proches %} : essaie <strong>Demander à l'IA</strong>, elle lit tous tes documents.{% endif %}</p>{% endif %}
+{% if dans_notes %}
+<h2>Dans tes notes</h2>
+{% for n in dans_notes %}
+<div class="carte">
+  <a href="/notes/{{ n.id }}"><strong>📝 {{ n|titre_note }}</strong></a>
+  <div class="doux">{{ n.matiere or 'Sans matière' }}{% if n.niveau %} · {{ n.niveau }}{% endif %} · {{ n.maj_le|date_note }}</div>
+  {% if n.extrait %}<p>{{ n.extrait|surligner }}</p>{% endif %}
+</div>
+{% endfor %}
+{% if resultats %}<h2>Dans tes cours</h2>{% endif %}
+{% endif %}
 {% for r in resultats %}
 <div class="carte">
   <a href="/doc/{{ r.id }}"><strong>{{ r.titre or r.nom }}</strong></a>
