@@ -152,6 +152,17 @@ def test_onglets_et_accueil(client):
     client.post("/reglages/navigation", data={"accueil": "nimporte", "onglet_x": "1"})
     ap = apparence.lire({"id": 1})
     assert ap["onglets"] == apparence.ONGLETS_DEFAUT and ap["accueil"] == "" and ap["caches"] == ["agenda"]
+    # 5 rubriques cochées : 4 en bas sur téléphone, la 5e passe dans Plus (PC : toutes en haut)
+    client.post("/reglages/navigation", data={**{f"onglet_{k}": "1" for k in apparence.ORDRE},
+                                              **{f"ordre_{k}": str(i) for i, k in enumerate(
+                                                  ["actualites", "cours", "reviser", "notes", "agenda"], 1)}})
+    page = client.get("/bibliotheque").text
+    onglets = page[page.index('<nav class="onglets'):page.index('<details id="plus"')]
+    assert onglets.count('class="maj') + onglets.count('href="/notes"') == 4 and 'href="/agenda"' not in onglets
+    plus = page[page.index('<div class="feuille verre">'):]
+    assert 'href="/agenda" class="cache-pc"' in plus
+    haut = page[page.index('<nav class="haut"'):page.index('<div class="outils">')]
+    assert 'href="/agenda"' in haut
     # Le thème choisi ne remet pas les onglets à zéro
     client.post("/reglages/navigation", data={"onglet_cours": "1", "accueil": "cours"})
     client.post("/reglages/apparence", data={"mode": "sombre", "style": "claunote"})

@@ -319,3 +319,17 @@ def test_outils_du_module():
     assert notes.nom_fichier({"titre": "Réseaux : VLAN/trunk ?"}) == "Reseaux  VLANtrunk.md"
     p = notes.comme_passage({"id": 4, "titre": "T", "contenu": "texte", "niveau": "BTS1", "matiere": "Maths"})
     assert p["document_id"] == -4 and p["texte"] == "texte"
+
+
+def test_cours_facultatif_replie_et_seulement_avec_une_matiere(client, carnet):
+    # Sans matière : aucune liste de cours, juste un champ vide (la note reste libre)
+    r = client.get("/notes/nouvelle")
+    assert 'name="document_id" value=""' in r.text and "Lier un cours" not in r.text
+    # Avec une matière : le choix du cours existe mais reste replié (facultatif)
+    r = client.get("/notes/nouvelle?matiere=BTS1|Réseaux")
+    assert '<details class="lier-cours">' in r.text and "(facultatif)" in r.text
+    # Ouverte depuis un cours : le cours est affiché et sélectionné
+    r = client.get("/notes/nouvelle?doc=1")
+    assert 'title="Cours rattaché"' in r.text and "Lier un cours" not in r.text
+    r = client.get("/notes/cours?matiere=BTS1|Maths")
+    assert "Lier un cours" not in r.text and 'name="document_id" value=""' in r.text
