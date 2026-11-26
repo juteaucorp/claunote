@@ -7,7 +7,7 @@ import secrets
 import threading
 import time
 import weakref
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -718,22 +718,18 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS validation TEXT;
 ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS validation TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS demande_le TIMESTAMPTZ;
 ALTER TABLE campagnes ADD COLUMN IF NOT EXISTS demande_le TIMESTAMPTZ;
--- Accès d'un invité à TOUS les cours de l'environnement, privés compris, en lecture seule (demandes_ia.py) :
--- NULL : jamais demandé ; 'attente' : chez l'admin ; 'accorde' ; 'refuse'.
-ALTER TABLE comptes ADD COLUMN IF NOT EXISTS acces_cours TEXT;
-ALTER TABLE comptes ADD COLUMN IF NOT EXISTS acces_cours_le TIMESTAMPTZ;
-CREATE OR REPLACE FUNCTION claunote_acces_complet() RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
-SET search_path = public AS
-$$ SELECT EXISTS (SELECT 1 FROM comptes WHERE id = claunote_compte() AND acces_cours = 'accorde' AND actif) $$;
--- Un cours lisible par le compte de la requête sur les pages qui montrent les partages : public, ou accès complet
+-- Un cours lisible par le compte de la requête sur les pages qui montrent les partages : public seulement.
+-- (L'« accès complet » aux cours privés, accordé par l'admin, est retiré : le public suffit.)
 CREATE OR REPLACE FUNCTION claunote_cours_lisible(doc INT) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = public AS
 $$ SELECT EXISTS (SELECT 1 FROM documents d WHERE d.id = doc AND d.statut = 'classe'
-                  AND (claunote_acces_complet() OR claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere))) $$;
+                  AND claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere)) $$;
 DROP POLICY IF EXISTS partage ON documents;
 CREATE POLICY partage ON documents FOR SELECT
-    USING (claunote_partages() AND statut = 'classe'
-           AND (claunote_acces_complet() OR claunote_document_public(compte_id, public, niveau, matiere)));
+    USING (claunote_partages() AND statut = 'classe' AND claunote_document_public(compte_id, public, niveau, matiere));
+DROP FUNCTION IF EXISTS claunote_acces_complet();
+ALTER TABLE comptes DROP COLUMN IF EXISTS acces_cours;
+ALTER TABLE comptes DROP COLUMN IF EXISTS acces_cours_le;
 -- Passages (recherche du chat « Une question ») : ceux des cours partagés, en lecture seule
 DROP POLICY IF EXISTS partage ON passages;
 CREATE POLICY partage ON passages FOR SELECT USING (claunote_partages() AND claunote_cours_lisible(document_id));
@@ -3592,7 +3588,7 @@ def plusieurs_comptes() -> bool:
 # ici (pas seulement dans la base) : avec « Tout voir », l'admin y voit la même chose que les autres.
 _AUTEUR = "coalesce(nullif(a.nom, ''), a.identifiant) AS auteur"
 _DOC_PUBLIC = ("d.statut = 'classe' AND d.compte_id <> claunote_compte() "
-               "AND (claunote_acces_complet() OR claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere))")
+               "AND claunote_document_public(d.compte_id, d.public, d.niveau, d.matiere)")
 _REV_PUBLIQUE = ("r.statut = 'pret' AND r.compte_id <> claunote_compte() "
                  "AND (r.public OR claunote_campagne_publique(r.campagne_id))")
 
@@ -3697,8 +3693,7 @@ def nb_demandes_ia() -> int:
         return c.execute(
             "SELECT (SELECT count(*) FROM revisions WHERE validation = 'attente' AND statut = 'en_attente' "
             "AND campagne_id IS NULL) + (SELECT count(*) FROM campagnes WHERE validation = 'attente' "
-            "AND statut = 'en_attente') + (SELECT count(*) FROM comptes WHERE acces_cours = 'attente' AND actif) "
-            "AS n").fetchone()["n"]
+            "AND statut = 'en_attente') AS n").fetchone()["n"]
 
 
 def decider_demande(quoi: str, item_id: int, oui: bool, erreur: str = ""):
@@ -3764,33 +3759,6 @@ def titres_documents_tous(ids: list[int]) -> dict[int, str]:
                 c.execute("SELECT id, titre, nom FROM documents WHERE id = ANY(%s)", (list(set(ids)),)).fetchall()}
 
 
-# --- Accès d'un invité à tous les cours (privés compris), accordé par l'admin ----------
-
-def demander_acces_cours(compte_id: int) -> bool:
-    """Vrai si la demande vient d'être faite (pas déjà en attente ni accordée)."""
-    with sans_compte(), connect() as c:
-        return c.execute("UPDATE comptes SET acces_cours = 'attente', acces_cours_le = now() WHERE id = %s "
-                         "AND role <> 'admin' AND acces_cours IS DISTINCT FROM 'attente' "
-                         "AND acces_cours IS DISTINCT FROM 'accorde' "
-                         # un refus : pas de nouvelle demande (ni de notification à l'admin) avant 24 h
-                         "AND NOT coalesce(acces_cours = 'refuse' AND acces_cours_le > now() - interval '1 day', false)",
-                         (compte_id,)).rowcount == 1
-
-
-def decider_acces_cours(compte_id: int, statut: str | None) -> bool:
-    """'accorde', 'refuse', ou None pour retirer un accès accordé."""
-    assert statut in ("accorde", "refuse", None)
-    with sans_compte(), connect() as c:
-        return c.execute("UPDATE comptes SET acces_cours = %s, acces_cours_le = now() WHERE id = %s "
-                         "AND role <> 'admin'", (statut, compte_id)).rowcount == 1
-
-
-def acces_cours(statut: str):
-    with sans_compte(), connect() as c:
-        return c.execute("SELECT id, identifiant, nom, acces_cours_le, coalesce(nullif(nom, ''), identifiant) AS auteur "
-                         "FROM comptes WHERE acces_cours = %s AND actif ORDER BY acces_cours_le", (statut,)).fetchall()
-
-
 # --- Notes (notes.py) : à chaque compte les siennes ; « Tout voir » de l'admin les montre toutes ---------------
 # Seul l'auteur les modifie (compte_id = claunote_compte()), même l'admin avec « Tout voir ».
 
@@ -3852,11 +3820,14 @@ def supprimer_note(note_id: int) -> bool:
 
 
 def notes(q: str = "", niveau: str | None = None, matiere: str | None = None, libres: bool = False,
-          archivees: bool = False):
+          archivees: bool = False, publiques_des_autres: bool = False):
     """Les notes (sans leur texte entier), épinglées puis les plus récentes. `q` : recherche pendant la frappe
-    (début des mots, titre, matière et texte) ; `libres` : celles sans matière."""
+    (début des mots, titre, matière et texte) ; `libres` : celles sans matière. `publiques_des_autres` : les notes
+    que les autres comptes ont rendues publiques (lecture seule), avec les mêmes filtres."""
     from claunote import notes as n_
-    conditions = ["n.archive_le IS " + ("NOT NULL" if archivees else "NULL")]
+    conditions = ["n.archive_le IS " + ("NOT NULL" if archivees and not publiques_des_autres else "NULL")]
+    if publiques_des_autres:
+        conditions += ["n.public", "n.compte_id <> claunote_compte()"]
     params: list = []
     if libres:
         conditions.append("n.matiere IS NULL")
@@ -3869,11 +3840,11 @@ def notes(q: str = "", niveau: str | None = None, matiere: str | None = None, li
                           if requete else "(n.titre ILIKE %s OR n.contenu ILIKE %s)")
         motif = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         params += ([requete] if requete else []) + [motif, motif]
-    ordre = "n.epinglee DESC, n.maj_le DESC, n.id DESC"
+    ordre = "n.maj_le DESC, n.id DESC" if publiques_des_autres else "n.epinglee DESC, n.maj_le DESC, n.id DESC"
     if requete:
         ordre = f"ts_rank(n.recherche, to_tsquery('french', %s)) DESC, {ordre}"
         params.append(requete)
-    with connect() as c:
+    with partages() if publiques_des_autres else nullcontext(), connect() as c:
         return c.execute(f"SELECT {_NOTE_COLS} FROM {_NOTE_DE} WHERE {' AND '.join(conditions)} ORDER BY {ordre}",
                          params).fetchall()
 

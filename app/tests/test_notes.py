@@ -78,7 +78,10 @@ class FaussesNotes:
         self.notes[i].update(champs)
         return True
 
-    def liste(self, q="", niveau=None, matiere=None, libres=False, archivees=False):
+    def liste(self, q="", niveau=None, matiere=None, libres=False, archivees=False, publiques_des_autres=False):
+        if publiques_des_autres:
+            return [dict(n) for n in self.notes.values() if n["public"] and not n["archive_le"]
+                    and n["compte_id"] != self.compte and (not q or q in n["titre"] + n["contenu"])]
         r = [dict(n) for n in self.notes.values() if self._lisible(n) and bool(n["archive_le"]) == archivees
              and (not q or q in n["titre"] + n["contenu"]) and (not matiere or n["matiere"] == matiere)
              and (not libres or n["matiere"] is None)]
@@ -333,3 +336,16 @@ def test_cours_facultatif_replie_et_seulement_avec_une_matiere(client, carnet):
     assert 'title="Cours rattaché"' in r.text and "Lier un cours" not in r.text
     r = client.get("/notes/cours?matiere=BTS1|Maths")
     assert "Lier un cours" not in r.text and 'name="document_id" value=""' in r.text
+
+
+def test_notes_publiques_des_autres_dans_l_onglet_notes(client, carnet):
+    for titre in ("Oral STP", "Brouillon"):
+        carnet.creer(titre, "le prof a dit : STP" if titre == "Oral STP" else "privé")
+    for n in carnet.notes.values():
+        n["compte_id"], n["auteur"] = 2, "camille"            # écrites par un autre compte
+    carnet.notes[1]["public"] = True
+    page = client.get("/notes").text
+    assert "Notes publiques des autres" in page and 'href="/partages/note/1"' in page
+    assert "Brouillon" not in page                                    # privée : jamais
+    assert "Oral STP" in client.get("/notes?q=STP").text              # la recherche les trouve aussi
+    assert "Notes publiques des autres" not in client.get("/notes?vue=archives").text

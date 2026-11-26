@@ -118,3 +118,18 @@ def test_cours_pour_note_sans_doublons(base):
     with db.pour_compte(1):
         assert len(db.cours_pour_note("BTS2", "Réseaux")) == 2
         assert c in [d["id"] for d in db.cours_pour_note("BTS2", "Réseaux")]
+
+
+def test_notes_publiques_des_autres_dans_leur_liste(base):
+    invite = db.creer_compte("camille", "h", "invite", ["notes"])
+    with db.pour_compte(invite):
+        pub = db.creer_note("STP", "à l'oral : STP", "BTS2", "Réseaux")["id"]
+        db.creer_note("Privée", "rien à voir")
+        db.changer_visibilite("notes", pub, True)
+    with db.pour_compte(1):
+        assert db.notes() == []                                            # ses notes à lui : aucune
+        assert [n["id"] for n in db.notes(publiques_des_autres=True)] == [pub]
+        assert [n["id"] for n in db.notes("oral", publiques_des_autres=True)] == [pub]
+        assert db.notes(niveau="BTS1", matiere="Maths", publiques_des_autres=True) == []
+    with db.pour_compte(invite):
+        assert db.notes(publiques_des_autres=True) == []                   # pas les siennes en double

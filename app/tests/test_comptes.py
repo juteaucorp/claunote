@@ -301,11 +301,13 @@ def test_invite_voit_les_cours_publics_en_lecture_seule(client, monkeypatch):
     monkeypatch.setattr(db, "liste_partagee", lambda n, m, t: [
         {"id": 9, "titre": "VLAN", "nom": "vlan.pdf", "chapitre": None, "date_doc": None, "auteur": "admin"}])
     page = invite.get("/bibliotheque").text
-    assert "Cours partagés" in page and "Lecture seule" in page and "/partages/liste?niveau=BTS1" in page
-    assert "/bibliotheque/visibilite" not in page.split("Cours partagés")[1]    # pas de bouton Public / Privé
+    assert "Cours publics des autres" in page and "Lecture seule" in page and "/partages/liste?niveau=BTS1" in page
+    assert "/bibliotheque/visibilite" not in page.split("Cours publics des autres")[1]    # pas de bouton Public / Privé
+    assert "Demander l'accès" not in page and "acces-cours" not in page          # fonction retirée
     liste = invite.get("/partages/liste", params={"niveau": "BTS1", "matiere": "Réseau", "type": "cours"}).text
     assert 'href="/partages/doc/9"' in liste and 'href="/doc/9"' not in liste and "lecture seule" in liste
-    assert "Cours partagés" not in client.get("/bibliotheque").text             # l'admin : ses propres cours
+    # L'admin aussi voit les cours publics des autres comptes dans son onglet Cours
+    assert "Cours publics des autres" in client.get("/bibliotheque").text
 
 
 def test_invite_se_sert_des_partages_sur_reviser_et_le_chat():
@@ -318,25 +320,11 @@ def test_invite_se_sert_des_partages_sur_reviser_et_le_chat():
     assert not comptes.lit_les_partages({"id": 1, "role": "admin"}, "/demander")   # l'admin : comme avant
 
 
-def test_demander_l_acces_a_tous_les_cours(client, monkeypatch):
+def test_plus_de_demande_d_acces_a_tous_les_cours(client):
     invite, _ = _creer(_inviter(client, ["bibliotheque"]))
-    demandes, decisions, notifs = [], [], []
-    monkeypatch.setattr(db, "demander_acces_cours", lambda i: demandes.append(i) or True)
-    monkeypatch.setattr(db, "decider_acces_cours", lambda i, statut: decisions.append((i, statut)) or True)
-    monkeypatch.setattr(db, "notifier_compte", lambda *a: notifs.append(a) or True)
-    assert "Demander l'accès à tous les cours" in invite.get("/bibliotheque").text
-    invite.post("/acces-cours/demander")
-    assert demandes == [2] and notifs[-1][0] is None and notifs[-1][4] == "/demandes"
-    assert client.post("/acces-cours/demander").status_code == 400                # pas pour l'admin
-    assert invite.post("/demandes/acces/2", data={"reponse": "oui"}).status_code == 403   # l'invité ne décide pas
-    monkeypatch.setattr(db, "demandes_ia", lambda: [])
-    monkeypatch.setattr(db, "acces_cours", lambda statut: [{"id": 2, "auteur": "camille", "acces_cours_le": None}]
-                        if statut == "attente" else [])
-    page = client.get("/demandes").text
-    assert "Accès à tous les cours · camille" in page and "privés compris" in page
-    client.post("/demandes/acces/2", data={"reponse": "oui"})
-    client.post("/demandes/acces/2", data={"reponse": "retirer"})
-    assert decisions == [(2, "accorde"), (2, None)] and notifs[-1][0] == 2
+    assert invite.post("/acces-cours/demander").status_code in (404, 405)
+    assert client.post("/demandes/acces/2", data={"reponse": "oui"}).status_code in (400, 404, 405, 422)
+    assert "Accès à tous les cours" not in client.get("/demandes").text
 
 
 def test_forfait_claude_a_trois_niveaux(client, monkeypatch):

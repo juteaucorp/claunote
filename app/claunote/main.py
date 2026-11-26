@@ -1730,17 +1730,17 @@ def bibliotheque(request: Request):
     niveaux = [n for n in reversed(NIVEAUX) if n in arbre]  # le plus récent (BTS2) en haut, le collège en bas
     # « Tout voir » mélange les comptes : les boutons Public / Privé des matières restent sur ses propres données
     partage = db.plusieurs_comptes() and not (moi() or {}).get("tout_voir")
-    # Invités : les cours publics des autres comptes (ceux de l'admin surtout) directement ici, en lecture seule
+    # Chacun voit ici, en plus des siens, les cours publics des autres comptes (lecture seule), admin compris.
+    # « Tout voir » montre déjà tout dans l'arbre : pas de doublon.
     autres = defaultdict(lambda: defaultdict(list))
-    if not comptes.est_admin(moi()):
+    if not (moi() or {}).get("tout_voir"):
         for r in db.bibliotheque_partagee():
             autres[r["niveau"]][r["matiere"]].append(r)
     niveaux_autres = [n for n in reversed(NIVEAUX) if n in autres] + sorted(n for n in autres if n not in NIVEAUX)
-    acces = None if comptes.est_admin(moi()) else ((comptes.trouver(moi()["id"]) or {}).get("acces_cours") or "")
     return templates.TemplateResponse(request, "bibliotheque.html", {
         "arbre": arbre, "niveaux": niveaux, "nb_hors_cours": db.nb_hors_cours(),
         "partage": partage, "publiques": db.matieres_publiques() if partage else set(),
-        "autres": autres, "niveaux_autres": niveaux_autres, "acces": acces})
+        "autres": autres, "niveaux_autres": niveaux_autres})
 
 
 @app.get("/liste", response_class=HTMLResponse)
@@ -1753,7 +1753,7 @@ def liste(request: Request, niveau: str, matiere: str, type: str):
 def document(request: Request, doc_id: int):
     doc = db.document(doc_id)
     if doc is None:
-        if not comptes.est_admin(moi()) and db.document_partage(doc_id):   # un cours partagé (cité par le chat, une fiche) : sa page en lecture seule
+        if db.document_partage(doc_id):   # un cours public d'un autre compte (cité par le chat, une fiche) : sa page en lecture seule
             return RedirectResponse(f"/partages/doc/{doc_id}", status_code=303)
         raise HTTPException(404)
     # Aperçu : le fichier lui-même s'il s'affiche dans le navigateur, sinon son autre format (PDF d'un
@@ -4307,7 +4307,10 @@ def page_notes(request: Request, q: str = "", m: str = "", vue: str = ""):
     libres = m == "libres"
     niveau, matiere = (None, None) if libres else notes.matiere_choisie(m)
     liste = db.notes(q[:200], niveau, matiere, libres, archivees)
-    contexte = {"liste": liste, "groupes": [] if q.strip() or archivees else _groupes_notes(liste),
+    # Les notes publiques des autres comptes, ici aussi (lecture seule) ; « Tout voir » les a déjà dans la liste
+    publiques = ([] if archivees or (moi() or {}).get("tout_voir")
+                 else db.notes(q[:200], niveau, matiere, libres, publiques_des_autres=True))
+    contexte = {"liste": liste, "publiques": publiques, "groupes": [] if q.strip() or archivees else _groupes_notes(liste),
                 "q": q, "m": m, "vue": "archives" if archivees else "", "nb": db.nb_notes(),
                 "matieres": db.matieres_notes(), "moi_id": (moi() or {}).get("id")}
     if request.headers.get("HX-Request") and request.headers.get("HX-Target") == "resultats-notes":
@@ -4589,31 +4592,7 @@ def page_demandes(request: Request):
     demandes = db.demandes_ia()
     cours = db.titres_documents_tous([i for d in demandes for i in (d.get("doc_ids") or [])])
     return templates.TemplateResponse(request, "demandes.html", {
-        "demandes": demandes, "cours": cours, "genres": demandes_ia.GENRES,
-        "acces_attente": db.acces_cours("attente"), "acces_accordes": db.acces_cours("accorde")})
-
-
-@app.post("/demandes/acces/{compte_id}")
-def decider_acces(compte_id: int, reponse: str = Form(...)):
-    if reponse == "retirer":
-        demandes_ia.retirer_acces(compte_id)
-    elif reponse in ("oui", "non"):
-        demandes_ia.decider_acces(compte_id, reponse == "oui")
-    else:
-        raise HTTPException(400)
-    comptes.oublier(compte_id)
-    return RedirectResponse("/demandes", status_code=303)
-
-
-@app.post("/acces-cours/demander")
-def demander_acces_cours(request: Request):
-    """Un invité demande à lire tous les cours de l'environnement, privés compris : l'admin dit oui ou non."""
-    compte = moi()
-    if not compte or comptes.est_admin(compte):
-        raise HTTPException(400)
-    demandes_ia.demander_acces(compte)
-    comptes.oublier(compte["id"])
-    return RedirectResponse("/bibliotheque#acces-cours", status_code=303)
+        "demandes": demandes, "cours": cours, "genres": demandes_ia.GENRES})
 
 
 @app.post("/demandes/{quoi}/{item_id}")
