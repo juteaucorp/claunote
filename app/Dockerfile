@@ -2,6 +2,7 @@ FROM python:3.14-slim
 # Pango + polices : WeasyPrint, pour les PDF des révisions ; catdoc : texte des vieux .doc/.xls/.ppt ;
 # poppler + Tesseract : lecture locale (sans IA) des scans, pour le garde-fou et le découpage des gros scans
 # Graphviz : schémas des fiches et épreuves (blocs ```dot), dessinés en SVG pour le site et le PDF
+# postgresql-client : pg_dump, pour la sauvegarde de la base sur kDrive chaque nuit (stockage « kDrive seul »)
 # Robuste : 5 essais par téléchargement, délai de 30 s, aucune question ; paquets .deb gardés en cache entre
 # deux constructions (BuildKit), donc un nouvel essai ne retélécharge rien
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -12,7 +13,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates \
        libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core \
-       catdoc poppler-utils tesseract-ocr tesseract-ocr-fra graphviz
+       catdoc poppler-utils tesseract-ocr tesseract-ocr-fra graphviz postgresql-client
 # Claude Code : l'agent IA, authentifié par CLAUDE_CODE_OAUTH_TOKEN (forfait Pro)
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:${PATH}"

@@ -1211,6 +1211,24 @@ def cours_lies(notions: list[str], limite: int = 12) -> dict[str, dict]:
 VIGNETTE_MAX = 4 * 1024 * 1024   # octets téléchargés au plus
 VIGNETTE_COTE = 480              # pixels (côté le plus long) de la vignette gardée
 VIGNETTES = Path(tempfile.gettempdir()) / "claunote-vignettes"
+VIGNETTES_MAX = 300 * 1024 * 1024   # cache des vignettes borné : les plus anciennes effacées (retéléchargées au besoin)
+_vignettes_ecrites = {"n": 0}
+
+
+def elaguer_vignettes(maximum: int = VIGNETTES_MAX) -> int:
+    """Cache des vignettes au-delà de `maximum` : les plus anciennes effacées jusqu'à 80 %. Renvoie le nombre effacé."""
+    try:
+        fichiers = sorted(((f.stat().st_mtime, f.stat().st_size, f) for f in VIGNETTES.iterdir()), key=lambda x: x[0])
+    except OSError:
+        return 0
+    total, effaces = sum(t for _, t, _ in fichiers), 0
+    for _, taille, f in fichiers:
+        if total <= maximum * 0.8 or (effaces == 0 and total <= maximum):
+            break
+        f.unlink(missing_ok=True)
+        total -= taille
+        effaces += 1
+    return effaces
 
 
 def _hote_public(url: str) -> bool:
@@ -1280,6 +1298,9 @@ def vignette(url: str) -> bytes | None:
     try:
         VIGNETTES.mkdir(parents=True, exist_ok=True)
         fichier.write_bytes(image or b"")
+        _vignettes_ecrites["n"] += 1
+        if _vignettes_ecrites["n"] % 200 == 0:
+            elaguer_vignettes()
     except OSError:
         pass
     return image

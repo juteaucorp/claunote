@@ -123,10 +123,11 @@ def env_claude(environ=None) -> dict[str, str]:
 ENV_FORFAIT = env_claude()
 
 # Claude ne lit que les fichiers qu'on lui donne (dossier de travail) : jamais les secrets de la VM, les fichiers des
-# autres comptes ni l'environnement des processus (/proc/1/environ = tout .env). Aucun outil qui écrit ou exécute.
+# autres comptes (ni /cache/kdrive, leurs fichiers kDrive déjà ouverts) ni l'environnement des processus
+# (/proc/1/environ = tout .env). Aucun outil qui écrit ou exécute.
 LECTURES_INTERDITES = ("//proc/**", "//sys/**", "//secrets/**", "//fichiers/**", "//tunnel/**", "//caddy/**",
                        "//maj/**", "//etc/**", "//root/**", "//home/**", "//srv/**", "//var/**", "//run/**",
-                       "//dev/**", "//opt/**", "//mnt/**", "//data/**", "~/**")
+                       "//dev/**", "//opt/**", "//mnt/**", "//data/**", "//cache/kdrive/**", "~/**")
 OUTILS_INTERDITS = ("Bash", "Edit", "Write", "NotebookEdit")
 REGLAGES_CLAUDE = json.dumps({"permissions": {
     "deny": [*OUTILS_INTERDITS, *(f"{outil}({chemin})" for outil in ("Read", "Grep", "Glob")
