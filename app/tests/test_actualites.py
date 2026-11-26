@@ -785,6 +785,17 @@ def test_page_recherche_filtres_et_categories(client, monkeypatch):
     r = client.get("/actualites")
     (vue, *_), k = appels[-1]
     assert vue == "pour_toi" and k["q"] == "" and k["categorie"] is None
+    # Le formulaire tel que le navigateur l'envoie sans rien choisir : champs vides = tous, pas d'erreur brute
+    r = client.get("/actualites?q=fortinet&categorie=&flux=&type=&periode=&tri=&sujet=&page=&article=")
+    assert r.status_code == 200 and "int_parsing" not in r.text
+    (vue, sujet, flux, *_), k = appels[-1]
+    assert vue == "tout" and sujet is None and flux is None and k["q"] == "fortinet" and k["categorie"] is None \
+        and k["media"] is None and k["jours"] is None and k["non_lus"] is False
+    r = client.get("/actualites?flux=2&page=abc&non_lus=on")
+    assert r.status_code == 200
+    (vue, sujet, flux, *_), k = appels[-1]
+    assert flux == 2 and k["non_lus"] is True
+    assert 'el.disabled = true' in r.text   # les filtres vides ne partent plus dans l'adresse
     r = client.get("/actualites/sources")
     assert r.status_code == 200
     assert r.text.index(">IT<") < r.text.index(">Podcast<") and "🎙 Tech Café" in r.text

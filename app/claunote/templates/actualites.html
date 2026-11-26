@@ -468,6 +468,14 @@
     document.querySelector("[data-ouvrir-recherche]")?.remove();
   };
   document.addEventListener("click", (e) => { if (e.target.closest && e.target.closest("[data-ouvrir-recherche]")) ouvrirRecherche(); });
+  // Recherche : les filtres laissés sur « Toutes / Tout / Toujours » ne partent pas dans l'adresse
+  document.addEventListener("submit", (e) => {
+    const f = e.target;
+    if (!f.matches || !f.matches(".recherche-actu")) return;
+    const vides = [...f.elements].filter((el) => el.name && !el.disabled && el.type !== "checkbox" && el.name !== "q" && !String(el.value).trim());
+    vides.forEach((el) => { el.disabled = true; });
+    setTimeout(() => vides.forEach((el) => { el.disabled = false; }), 0);
+  }, true);
   // Clavier (sur ordinateur) : j/k, o, m, s, t, /, ?
   let courant = -1;
   document.addEventListener("keydown", (e) => {

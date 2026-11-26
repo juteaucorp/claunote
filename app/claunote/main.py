@@ -3646,10 +3646,21 @@ def _duree_txt(secondes: int | None) -> str:
 templates.env.filters["duree"] = _duree_txt
 
 
+def _entier_ou_rien(v: str | None) -> int | None:
+    """Un filtre vide (« Toutes », « Tous ») ou illisible = pas de filtre, jamais une erreur brute."""
+    try:
+        return int((v or "").strip()) or None
+    except ValueError:
+        return None
+
+
 @app.get("/actualites", response_class=HTMLResponse)
-def page_actualites(request: Request, vue: str = "pour_toi", sujet: int | None = None, flux: int | None = None,
-                    page: int = 1, article: int | None = None, q: str = "", categorie: str | None = None,
-                    type: str = "", periode: str = "", non_lus: bool = False, tri: str = ""):
+def page_actualites(request: Request, vue: str = "pour_toi", sujet: str = "", flux: str = "",
+                    page: str = "", article: str = "", q: str = "", categorie: str | None = None,
+                    type: str = "", periode: str = "", non_lus: str = "", tri: str = ""):
+    sujet, flux, article = _entier_ou_rien(sujet), _entier_ou_rien(flux), _entier_ou_rien(article)
+    page = _entier_ou_rien(page) or 1
+    non_lus = non_lus.strip().lower() in ("1", "true", "on", "oui", "yes")
     vue = vue if vue in VUES_ACTU else "pour_toi"
     q = q.strip()[:200]
     categorie = (categorie or "").strip() or None
