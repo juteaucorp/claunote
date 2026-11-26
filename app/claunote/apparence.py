@@ -19,11 +19,12 @@ RUBRIQUES = {
     "notes": ("Notes", "/notes", "notes", "notes", "tes notes par matière"),
 }
 ORDRE = list(RUBRIQUES)
-# Onglets d'origine : quatre (la barre du téléphone garde de la place) ; les Notes sont dans Plus tant que le
-# compte ne les met pas en onglet (Réglages › Apparence).
-ONGLETS_DEFAUT = ["actualites", "cours", "reviser", "agenda"]
+# Onglets du téléphone : quatre (la barre du bas garde de la place) ; Notes à la place d'Agenda, qui passe dans
+# Plus. Sur PC, la barre du haut montre toutes les rubriques (base.html) : Agenda y reste.
+ONGLETS_DEFAUT = ["actualites", "cours", "reviser", "notes"]
+NAV = 2   # version des onglets : 2 = Notes à la place d'Agenda (choix déjà enregistrés repris une fois)
 DEFAUT = {"mode": "auto", "style": "claunote", "vigie": False,   # vigie : easter egg trouvé
-          "onglets": ONGLETS_DEFAUT, "accueil": ""}                       # accueil vide : Actualités, sinon la 1re permise
+          "onglets": ONGLETS_DEFAUT, "accueil": "", "nav": NAV}                       # accueil vide : Actualités, sinon la 1re permise
 
 
 def _cle(compte_id: int) -> str:
@@ -35,7 +36,8 @@ def lire(compte: dict | None) -> dict:
     if not compte or not compte.get("id"):
         return {**DEFAUT, "onglets": list(ONGLETS_DEFAUT), "caches": [k for k in ORDRE if k not in ONGLETS_DEFAUT]}
     try:
-        p = {**DEFAUT, **json.loads(db.etat_valeur(_cle(compte["id"])) or "{}")}
+        enregistre = json.loads(db.etat_valeur(_cle(compte["id"])) or "{}")
+        p = {**DEFAUT, **enregistre, "nav": enregistre.get("nav", 1) if enregistre.get("onglets") else NAV}
     except Exception:
         return {**DEFAUT, "onglets": list(ONGLETS_DEFAUT), "caches": [k for k in ORDRE if k not in ONGLETS_DEFAUT]}
     if p["mode"] not in MODES:
@@ -43,6 +45,11 @@ def lire(compte: dict | None) -> dict:
     if p["style"] not in STYLES or (p["style"] == "vigie" and not p["vigie"]):
         p["style"] = "claunote"
     p["onglets"] = _onglets(p.get("onglets"))
+    if (p.get("nav") or 1) < NAV:
+        # Choix d'avant les Notes : Notes prend la place d'Agenda (une fois ; le compte peut remettre Agenda)
+        if "agenda" in p["onglets"] and "notes" not in p["onglets"]:
+            p["onglets"][p["onglets"].index("agenda")] = "notes"
+        p["nav"] = NAV
     p["caches"] = [k for k in ORDRE if k not in p["onglets"]]
     if p["accueil"] not in RUBRIQUES:
         p["accueil"] = ""

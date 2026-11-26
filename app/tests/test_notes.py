@@ -266,10 +266,22 @@ def test_invite_avec_le_droit_et_partage(client, carnet, faux_comptes):
     assert client.post("/notes/1/visibilite", data={"valeur": "public"}, follow_redirects=False).status_code == 303
     assert carnet.notes[1]["public"] is True
     assert client.post("/notes/1/visibilite", data={"valeur": "matiere"}).status_code == 400
-    # Les onglets d'origine ne bougent pas : Notes est dans Plus
+    # Téléphone : Notes à la place d'Agenda en bas ; PC : toutes les rubriques en haut
     page = client.get("/notes").text
     onglets = page[page.index('<nav class="onglets'):page.index('<details id="plus"')]
-    assert 'href="/notes"' not in onglets and 'href="/notes"' in page[page.index('<div class="feuille verre">'):]
+    assert 'id="maj-o-notes" class="actif"' in onglets and 'href="/agenda"' not in onglets
+    haut = page[page.index('<nav class="haut"'):page.index('</nav>', page.index('<nav class="haut"'))]
+    assert 'id="maj-h-notes"' in haut
+
+
+def test_choix_d_onglets_d_avant_les_notes(client):
+    from claunote import apparence
+    import json
+    client.etat["apparence:1"] = json.dumps({"mode": "auto", "style": "claunote", "vigie": False,
+                                             "onglets": ["cours", "agenda", "reviser"], "accueil": ""})
+    assert apparence.lire({"id": 1})["onglets"] == ["cours", "notes", "reviser"]   # Notes prend la place d'Agenda
+    client.post("/reglages/navigation", data={"onglet_cours": "1", "ordre_cours": "1", "onglet_agenda": "1", "ordre_agenda": "2"})
+    assert apparence.lire({"id": 1})["onglets"] == ["cours", "agenda"]            # remis par le compte : gardé
 
 
 def test_voir_en_tant_que_lecture_seule(client, carnet, faux_comptes):

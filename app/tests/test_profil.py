@@ -151,7 +151,7 @@ def test_onglets_et_accueil(client):
     # Rien de coché : les onglets d'origine ; une valeur inconnue ne casse rien
     client.post("/reglages/navigation", data={"accueil": "nimporte", "onglet_x": "1"})
     ap = apparence.lire({"id": 1})
-    assert ap["onglets"] == apparence.ONGLETS_DEFAUT and ap["accueil"] == "" and ap["caches"] == ["notes"]
+    assert ap["onglets"] == apparence.ONGLETS_DEFAUT and ap["accueil"] == "" and ap["caches"] == ["agenda"]
     # Le thème choisi ne remet pas les onglets à zéro
     client.post("/reglages/navigation", data={"onglet_cours": "1", "accueil": "cours"})
     client.post("/reglages/apparence", data={"mode": "sombre", "style": "claunote"})

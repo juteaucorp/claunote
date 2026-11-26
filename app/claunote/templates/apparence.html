@@ -38,7 +38,7 @@
 <h2>Onglets et page d'accueil</h2>
 <form method="post" action="/reglages/navigation" class="carte apparence navigation">
   <table>
-    <thead><tr><th>Rubrique</th><th>En onglet</th><th>Position</th><th>Accueil</th></tr></thead>
+    <thead><tr><th>Rubrique</th><th>Onglet (téléphone)</th><th>Position</th><th>Accueil</th></tr></thead>
     <tbody>
     {% set liste = (ap.onglets + ap.caches)|select('in', permises)|list %}
     {% for cle in liste %}{% set r = rubriques[cle] %}{% set position = loop.index %}
@@ -51,7 +51,7 @@
         <td><input type="radio" name="accueil" value="" {{ 'checked' if not ap.accueil }} aria-label="Accueil automatique"></td></tr>
     </tbody>
   </table>
-  <p class="doux">Une rubrique retirée des onglets reste dans <strong>Plus</strong>.</p>
+  <p class="doux">Une rubrique retirée des onglets du téléphone reste dans <strong>Plus</strong>. Sur PC, toutes les rubriques sont dans la barre du haut.</p>
   <button class="principal">Enregistrer</button>
 </form>
 
