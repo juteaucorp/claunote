@@ -63,7 +63,7 @@
     --verre: rgba(255, 255, 255, .7); --verre-fort: rgba(255, 255, 255, .93); --verre-bord: rgba(255, 255, 255, .7);
     --verre-reflet: inset 0 1px 0 rgba(255, 255, 255, .9), inset 0 -1px 0 rgba(255, 255, 255, .25);
     --verre-ombre: 0 8px 32px rgba(60, 40, 20, .14), 0 1px 3px rgba(60, 40, 20, .08);
-    --verre-flou: blur(22px) saturate(180%); --entete: rgba(250, 249, 245, .82);
+    --verre-flou: blur(22px) saturate(180%); --entete: var(--fond-doux);
     --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(217, 119, 87, .16), transparent 60%),
       radial-gradient(90% 50% at 0% 100%, rgba(240, 190, 140, .18), transparent 60%);
   }
@@ -74,7 +74,7 @@
       --alerte: #f0a487; --ok: #7cc28d; --ombre: none;
       --verre: rgba(40, 38, 36, .66); --verre-fort: rgba(40, 38, 36, .93); --verre-bord: rgba(255, 255, 255, .12);
       --verre-reflet: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 -1px 0 rgba(255, 255, 255, .04);
-      --verre-ombre: 0 8px 32px rgba(0, 0, 0, .45); --entete: rgba(35, 34, 32, .82);
+      --verre-ombre: 0 8px 32px rgba(0, 0, 0, .45); --entete: var(--fond-doux);
       --fond-ambiance: radial-gradient(120% 60% at 100% 0%, rgba(224, 138, 109, .14), transparent 60%),
         radial-gradient(90% 50% at 0% 100%, rgba(160, 90, 60, .12), transparent 60%);
   {% endset %}
@@ -102,10 +102,10 @@
   h1 { font-size: 1.9rem; line-height: 1.25; margin: 4px 0 20px; }
   h2 { font-size: 1.25rem; line-height: 1.3; margin: 32px 0 12px; }
 
-  /* En-tête en verre léger : le fond de la page continue dessous, sans bande d'une autre couleur */
-  header { position: sticky; top: 0; z-index: 10; isolation: isolate; border-bottom: 1px solid var(--bord); padding-top: env(safe-area-inset-top); }
-  header::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--entete);
-    -webkit-backdrop-filter: var(--verre-flou); backdrop-filter: var(--verre-flou); transform: translateZ(0); }
+  /* En-tête net et opaque, de la couleur du fond (= theme-color, donc la barre d'état de l'iPhone se fond dedans).
+     Plus de flou : sur iPhone le texte qui défile dessous donnait une bande floue et sale sous l'encoche. */
+  header { position: sticky; top: 0; z-index: 10; isolation: isolate; border-bottom: 1px solid var(--bord); padding-top: env(safe-area-inset-top);
+    background: var(--entete); }
   .barre { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 8px 14px; }
   .marque { display: flex; align-items: center; gap: 10px; font-size: 1.35rem; color: var(--texte); text-decoration: none; margin-right: auto; }
   .marque img { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--bord); background: #fff; }
