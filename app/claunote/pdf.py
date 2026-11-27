@@ -32,6 +32,7 @@ def md(texte: str | None, dense: bool = False) -> Markup:
     texte = texte.replace("&", "&amp;").replace("<", "&lt;")
     rendu = formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths,
                                texte=True)
+    rendu = re.sub(r"&lt;br\s*/?&gt;", "<br>", rendu, flags=re.I)   # retour à la ligne dans une case de tableau
     if dense:
         rendu = re.sub(r"\s*\[IA\]", ' <span class="ia">✚</span>', rendu)
         rendu = RE_REPERE.sub(r'<span class="ref">\1</span>', rendu)
