@@ -430,6 +430,7 @@ templates.env.globals["turnstile_requis"] = turnstile.requis   # captcha par Int
 templates.env.globals["turnstile_cle"] = turnstile.cle_site
 templates.env.globals["mdp_par_defaut"] = lambda: bool((moi() or {}).get("mdp_defaut"))
 templates.env.globals["moi"] = moi
+templates.env.globals["generations_actives"] = lambda: db.generations(moi()["id"])["actives"] if moi() else []
 templates.env.globals["voir_en_tant_que"] = apercu_en_cours   # « Voir en tant que » en cours (bandeau de base.html)
 templates.env.globals["apparence"] = lambda: apparence.lire(moi())   # thème et style du compte (base.html)
 templates.env.globals["rubriques"] = apparence.RUBRIQUES
@@ -4212,6 +4213,17 @@ def claude_reessayer():
     db.etat_ecrire("claude_sonde", "oui")
     db.demander_scan()  # réveille le worker
     return "Test demandé : le worker essaie Claude dans les secondes qui viennent (résultat sur la page État)."
+
+
+@app.get("/generations")
+def generations_en_cours(suivies: str = ""):
+    """Logo animé (base.html) : les créations IA du compte en cours, et parmi `suivies` celles finies depuis.
+    Toujours le compte de la requête (« Voir en tant que » : celui qu'on regarde), jamais ceux des autres."""
+    compte = moi()
+    if not compte:
+        return JSONResponse({"actives": [], "finies": []})
+    cles = [c for c in suivies.split(",") if c][:50]
+    return JSONResponse(db.generations(compte["id"], cles), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/etat", response_class=HTMLResponse)

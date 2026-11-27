@@ -38,6 +38,7 @@ def anonyme(monkeypatch):
                                                     "note": "Le dossier « BTS1 » indique BTS1", "origine": "BTS1"}])
     monkeypatch.setattr(db, "nb_a_verifier", lambda: 1)
     monkeypatch.setattr(db, "nb_import_a_confirmer", lambda: 0)
+    monkeypatch.setattr(db, "generations", lambda compte_id, suivies=(): {"actives": [], "finies": []})
     monkeypatch.setattr(db, "sensibles", lambda decision=None, jours=30: [])
     monkeypatch.setattr(db, "decoupages", lambda limite=10: [])
     monkeypatch.setattr(db, "nb_evaluations_proches", lambda: 0)
@@ -1833,3 +1834,23 @@ def test_kdrive_seul_cours_et_pieces_lus_par_le_cache(client, monkeypatch, tmp_p
                                                        "kdrive_id": piece} if i == 3 else None)
     r = client.get("/piece/3")
     assert r.status_code == 200 and r.content == b"\x89PNG" and r.headers["content-type"] == "image/png"
+
+
+def test_logo_anime_pendant_une_creation(client, monkeypatch):
+    """Une création IA de CE compte en cours : cercle qui tourne à la place du papillon, sur toutes les pages."""
+    assert 'data-etat=""' in client.get("/reviser").text            # rien en cours : le papillon
+    vus = []
+    monkeypatch.setattr(db, "generations", lambda compte_id, suivies=(): vus.append((compte_id, list(suivies)))
+                        or {"actives": ["r5"], "finies": [] if suivies else []})
+    for page in ("/reviser", "/bibliotheque", "/agenda"):
+        r = client.get(page)
+        assert r.status_code == 200 and 'data-etat="genere"' in r.text and 'data-actives="r5"' in r.text
+    monkeypatch.setattr(db, "generations", lambda compte_id, suivies=(): vus.append((compte_id, list(suivies)))
+                        or {"actives": [], "finies": ["r5"]})
+    r = client.get("/generations?suivies=r5,c2")
+    assert r.json() == {"actives": [], "finies": ["r5"]} and r.headers["cache-control"] == "no-store"
+    assert vus[-1] == (1, ["r5", "c2"])                                 # toujours le compte connecté
+
+
+def test_generations_sans_connexion(anonyme):
+    assert anonyme.get("/generations", follow_redirects=False).status_code in (303, 401)
