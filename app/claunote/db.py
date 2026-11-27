@@ -1456,6 +1456,33 @@ def revisions_en_attente():
         return c.execute("SELECT * FROM revisions WHERE statut = 'en_attente' ORDER BY essais, cree_le, id").fetchall()
 
 
+# Logo animé (base.html) : les créations IA demandées par le compte, en cours ou tout juste finies.
+# Clés : « r12 » (fiche, quiz, plan, cartes, modification…), « c3 » (programme de campagne), « f:BTS1 » (référentiel).
+# Une demande qui attend l'accord de l'admin (validation « attente ») ou refusée n'est pas « en cours ».
+_GENERATIONS = """
+    SELECT 'r' || id AS cle, statut, validation FROM revisions
+     WHERE compte_id = %(compte)s AND (statut = 'en_attente' OR 'r' || id = ANY(%(suivies)s))
+    UNION ALL
+    SELECT 'c' || id, statut, validation FROM campagnes
+     WHERE compte_id = %(compte)s AND (statut = 'en_attente' OR 'c' || id = ANY(%(suivies)s))
+    UNION ALL
+    SELECT 'f:' || niveau, CASE WHEN statut IN ('a_chercher', 'en_cours') THEN 'en_attente' ELSE statut END, NULL
+      FROM formations
+     WHERE compte_id = %(compte)s AND (statut IN ('a_chercher', 'en_cours') OR 'f:' || niveau = ANY(%(suivies)s))"""
+
+
+def generations(compte_id: int, suivies: list[str] | tuple = ()) -> dict:
+    """{"actives": clés en cours, "finies": parmi `suivies`, celles maintenant prêtes}. Filtre explicite par compte :
+    l'admin en « Tout voir » ne voit tourner que ses propres demandes."""
+    suivies = [str(c)[:80] for c in suivies][:50]
+    with connect() as c:
+        lignes = c.execute(_GENERATIONS, {"compte": compte_id, "suivies": suivies}).fetchall()
+    actives = sorted(l["cle"] for l in lignes
+                     if l["statut"] == "en_attente" and l["validation"] not in ("attente", "refusee"))
+    finies = sorted(l["cle"] for l in lignes if l["statut"] == "pret" and l["cle"] in suivies)
+    return {"actives": actives, "finies": finies}
+
+
 def maj_revision(rev_id: int, statut: str, contenu=None, reperes=None, erreur=None, kdrive_id=None, web=None,
                  controle=None):
     with connect() as c:
