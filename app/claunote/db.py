@@ -3734,7 +3734,7 @@ def revision_partagee(rev_id: int):
 
 def cartes_partagees(rev_id: int):
     with partages(), connect() as c:
-        return c.execute("SELECT recto, verso FROM cartes WHERE revision_id = %s AND claunote_revision_publique(%s) "
+        return c.execute("SELECT id, recto, verso, source FROM cartes WHERE revision_id = %s AND claunote_revision_publique(%s) "
                          "ORDER BY id", (rev_id, rev_id)).fetchall()
 
 

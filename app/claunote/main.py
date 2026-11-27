@@ -4669,17 +4669,86 @@ def partage_revision(request: Request, rev_id: int):
     notes_lues = [(r, n) for r, n in _notes_citees(reperes) if n["public"]]   # notes publiques seulement
     visibles.update({r: -n["id"] for r, n in notes_lues})
     web = rev.get("sources_web") or []
-    contenu, questions, cartes = None, [], []
+    contenu, corrige, questions, cartes = None, None, [], []
     if rev["genre"] == "quiz":
         questions = json.loads(rev["contenu"] or "[]")
     elif rev["genre"] == "cartes":
         cartes = db.cartes_partagees(rev_id)
     else:
-        contenu = Markup(str(avec_sources(rendu_markdown(rev["contenu"]), visibles, web))
-                         .replace('href="/doc/', 'href="/partages/doc/'))
+        def rendu(texte):
+            return Markup(str(avec_sources(rendu_markdown(texte), visibles, web))
+                          .replace('href="/doc/', 'href="/partages/doc/'))
+        if rev["genre"] == "examen":
+            sujet, corr = revision.separer_corrige(rev["contenu"])
+            contenu, corrige = rendu(sujet), (rendu(corr) if corr else None)
+        else:
+            contenu = rendu(rev["contenu"])
     return templates.TemplateResponse(request, "partage_revision.html", {
-        "rev": rev, "genres": revision.GENRES, "contenu": contenu, "questions": questions, "cartes": cartes,
-        "sources": sources, "reperes": visibles, "notes_lues": notes_lues})
+        "rev": rev, "genres": revision.GENRES, "contenu": contenu, "corrige": corrige, "questions": questions,
+        "cartes": cartes, "sources": sources, "reperes": visibles, "notes_lues": notes_lues})
+
+
+# Révision publique d'un autre compte : PDF, carte mentale, export Anki, comme pour la sienne (rien ne s'écrit)
+
+def _revision_partagee(rev_id: int) -> dict:
+    rev = db.revision_partagee(rev_id)
+    if rev is None:
+        raise HTTPException(404)
+    return rev
+
+
+def _sources_partagees(reperes: dict) -> dict[int, str]:
+    """{id: titre} des sources d'une révision partagée, pour le PDF : seulement les cours et notes publics."""
+    ids = [int(i) for i in (reperes or {}).values()]
+    titres = {d["id"]: d["titre"] or d["nom"] for d in db.documents_partages([i for i in ids if i > 0])}
+    titres.update({-n["id"]: f"Note : {notes.titre_affiche(n)}"
+                   for _, n in _notes_citees(reperes or {}) if n["public"]})
+    return titres
+
+
+@app.get("/partages/revision/{rev_id}/pdf")
+def partage_revision_pdf(rev_id: int, corrige: int = 1, telecharger: int = 0):
+    rev = _revision_partagee(rev_id)
+    cartes = db.cartes_partagees(rev_id) if rev["genre"] == "cartes" else None
+    contenu = pdf.revision_pdf(rev, _sources_partagees(rev["reperes"]), cartes, corrige=bool(corrige))
+    suffixe = "" if corrige or rev["genre"] not in ("quiz", "examen") else " (sujet)"
+    return _pdf(contenu, pdf.nom(f"{revision.COURTS[rev['genre']]} {rev['sujet']}{suffixe}"), bool(telecharger))
+
+
+@app.get("/partages/campagne/{campagne_id}/pdf")
+def partage_campagne_pdf(campagne_id: int, corrige: int = 1, telecharger: int = 0):
+    """Livret d'une campagne publique : ses supports prêts, comme le sien."""
+    campagne, revs = db.campagne_partagee(campagne_id)
+    if campagne is None:
+        raise HTTPException(404)
+    revs = [r for r in (db.revision_partagee(x["id"]) for x in revs) if r]
+    reperes = {}
+    for r in revs:
+        reperes.update({f"{r['id']}:{k}": v for k, v in (r["reperes"] or {}).items()})
+    contenu = pdf.campagne_pdf(campagne, revs, _sources_partagees(reperes), corrige=bool(corrige))
+    return _pdf(contenu, pdf.nom(campagne["titre"]), bool(telecharger))
+
+
+@app.get("/partages/revision/{rev_id}/carte-mentale", response_class=HTMLResponse)
+def partage_revision_carte_mentale(request: Request, rev_id: int):
+    rev = _revision_partagee(rev_id)
+    if rev["genre"] not in revision.GENRES_TEXTE:
+        raise HTTPException(404)
+    texte = revision.separer_corrige(rev["contenu"])[0] if rev["genre"] == "examen" else rev["contenu"]
+    return _page_carte_mentale(request, revision.separer_web(texte)[0], rev["sujet"], f"/partages/revision/{rev_id}")
+
+
+@app.get("/partages/revision/{rev_id}/anki")
+def partage_revision_anki(rev_id: int):
+    rev = _revision_partagee(rev_id)
+    cartes = db.cartes_partagees(rev_id) if rev["genre"] == "cartes" else []
+    if not cartes:
+        raise HTTPException(404, "aucune flashcard")
+    titres = _sources_partagees(rev["reperes"])
+    deck = anki.paquet(rev_id, rev["sujet"], cartes, {r: titres.get(int(i), "") for r, i in (rev["reperes"] or {}).items()})
+    nom = f"claunote-{rangement.slug(rev['sujet'])[:40]}.apkg"
+    return Response(anki.exporter([deck]), media_type="application/apkg",
+                    headers={"Content-Disposition": f'attachment; filename="{nom}"'})
 
 
 @app.get("/partages/campagne/{campagne_id}", response_class=HTMLResponse)

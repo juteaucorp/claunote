@@ -239,50 +239,5 @@
 {% endif %}
 {% if web or ajout_ia or notes_lues %}<p class="doux">[D…] = tes cours{% if notes_lues %} et tes notes{% endif %}, la base de ce support.{% if web %} [W…] = pages web consultées par l'agent pour compléter ou vérifier.{% endif %}{% if ajout_ia %} « pas dans tes cours » = ajouté par l'IA.{% endif %}</p>{% endif %}
 {% endif %}
-<style>
-  .tete-revision { margin-bottom: 4px; }
-  .tete-revision + h1 { margin-top: 4px; margin-bottom: 4px; }
-  h1 + p.meta { margin: 0 0 16px; }
-  .sommaire { display: flex; gap: 6px; overflow-x: auto; padding: 0 0 10px; scrollbar-width: none; }
-  .sommaire::-webkit-scrollbar { display: none; }
-  .sommaire a { flex: none; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--bord); background: var(--carte); color: var(--texte); text-decoration: none; font-size: .86rem; font-weight: 500; }
-  .sommaire a:hover { border-color: var(--accent); color: var(--accent-fonce); }
-  .contenu-revision h2 { scroll-margin-top: 76px; }
-  .contenu-revision h2 { font-size: 1.15rem; margin: 22px 0 8px; color: var(--accent-fonce); }
-  .contenu-revision h1 { font-size: 1.35rem; }
-  .contenu-revision table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
-  .contenu-revision th, .contenu-revision td { border: 1px solid var(--bord); padding: 6px 8px; }
-  .corrige > summary { font-size: 1.05rem; }
-  .question { border: 1px solid var(--bord); margin: 0 0 12px; }
-  .question legend { float: left; width: 100%; padding: 0; margin-bottom: 10px; font-weight: 600; display: flex; gap: 10px; }
-  .question legend + * { clear: both; }
-  .num-q { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--fond-doux); font-size: .85rem; }
-  .choix-q { position: relative; display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 6px 0; border: 1.5px solid var(--bord); border-radius: 12px; cursor: pointer; line-height: 1.4; }
-  .choix-q input { position: absolute; opacity: 0; pointer-events: none; }
-  .choix-q .lettre { flex: none; width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; border: 1.5px solid var(--bord); font-size: .82rem; font-weight: 700; }
-  .choix-q:has(input:checked) { border-color: var(--g-quiz); background: color-mix(in srgb, var(--g-quiz) 9%, var(--carte)); }
-  .choix-q:has(input:checked) .lettre { background: var(--g-quiz); border-color: var(--g-quiz); color: #fff; }
-  .choix-q.bonne { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, var(--carte)); }
-  .choix-q.bonne .lettre { background: var(--ok); border-color: var(--ok); color: #fff; }
-  .choix-q.fausse { border-color: var(--alerte); background: color-mix(in srgb, var(--alerte) 10%, var(--carte)); }
-  .choix-q.fausse .lettre { background: var(--alerte); border-color: var(--alerte); color: #fff; }
-  .question.reussie .num-q { background: var(--ok); color: #fff; }
-  .question.ratee .num-q { background: var(--alerte); color: #fff; }
-  .resultat { font-size: 1.05rem; }
-  .etiquette-web { --g: var(--g-plan); }
-  .etiquette-note { --g: var(--g-cartes, var(--g-plan)); }
-  a.web { color: var(--g-plan); }
-  a.etat { text-decoration: none; }
-  .tete-revision + h1 + .renommer { margin: -2px 0 6px; }
-  .renommer summary { display: inline; cursor: pointer; font-size: .82rem; color: var(--doux); list-style: none; }
-  .renommer summary::-webkit-details-marker { display: none; }
-  .renommer[open] summary { display: none; }
-  .renommer form { display: flex; gap: 8px; margin: 4px 0 10px; }
-  .renommer input { flex: 1; min-width: 0; }
-  .modifier textarea { width: 100%; margin: 6px 0 8px; }
-  .modifier .doux { margin: 4px 0 0; }
-  .idees-modif { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
-  .idees-modif button { padding: 5px 11px; border-radius: 999px; font-size: .84rem; font-weight: 500; }
-  .resultat .score { font-size: 1.6rem; font-family: ui-serif, Georgia, serif; margin-right: 8px; }
-</style>
+{% include "_revision_style.html" %}
 {% endblock %}

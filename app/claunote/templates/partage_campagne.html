@@ -11,6 +11,11 @@
   {% for e in campagne.epreuves %}<strong>{{ e.matiere }}</strong> {% if e.date %}{{ (e.date|jour_iso).strftime('%d/%m') }}{% endif %}{{ ' · ' if not loop.last }}{% endfor %}</p>
 {% endif %}
 {% if revs %}
+{% include "_reviser.html" %}
+<div class="barre-actions">
+  <a class="bouton" href="/partages/campagne/{{ campagne.id }}/pdf" target="_blank">{{ icone('pdf', 18) }}<span>Livret PDF</span></a>
+  <a class="bouton" href="#" data-partager data-pdf="/partages/campagne/{{ campagne.id }}/pdf" data-nom="{{ campagne.titre|replace('/', '-') }}.pdf" data-titre="{{ campagne.titre }}">{{ icone('partager', 18) }}<span>Partager</span></a>
+</div>
 <div class="carte"><ul class="liste-partages">
   {% for r in revs %}<li><a href="/partages/revision/{{ r.id }}">{{ icone(r.genre, 15) }} {{ r.sujet }}</a>
     <span class="doux">· {{ genres[r.genre] }}{% if r.matiere %} · {{ r.matiere }}{% endif %}</span></li>{% endfor %}

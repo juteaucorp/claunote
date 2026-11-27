@@ -116,3 +116,34 @@ def test_reviser_montre_les_fiches_et_campagnes_publiques_des_autres(client, fau
     r = client.get("/reviser")
     assert "Publiques des autres" in r.text and "/partages/revision/4" in r.text and "CEJMA : nom de domaine" in r.text
     assert "/partages/campagne/3" in r.text and "camille" in r.text
+
+
+def test_revision_publique_pdf_carte_mentale_anki_sans_modifier(client, faux_comptes, monkeypatch):
+    """Une révision publique : PDF, sujet seul, carte mentale, Anki, quiz jouable ; aucun bouton qui modifie."""
+    _a_plusieurs(faux_comptes)
+    fiche = {"id": 4, "genre": "fiche", "sujet": "VLAN", "statut": "pret", "niveau": "BTS1", "matiere": "Réseaux",
+             "auteur": "camille", "reperes": {"D1": 9}, "sources_web": [], "campagne_id": None, "compte_id": 2,
+             "contenu": "## L'essentiel\nUn VLAN [D1]\n## Exemple\nVLAN 10", "cree_le": None}
+    examen = {**fiche, "id": 7, "genre": "examen", "contenu": "Exercice 1 : VLAN ?\n## Corrigé\nRéponse 802.1Q"}
+    quiz = {**fiche, "id": 5, "genre": "quiz", "contenu": '[{"question": "Q?", "choix": ["a", "b"], "reponse": 1, '
+            '"explication": "car", "source": "D1"}]'}
+    cartes = {**fiche, "id": 6, "genre": "cartes", "contenu": ""}
+    revs = {4: fiche, 5: quiz, 6: cartes, 7: examen}
+    monkeypatch.setattr(db, "revision_partagee", lambda i: revs.get(i))
+    monkeypatch.setattr(db, "documents_partages", lambda ids: [AUTRE] if 9 in ids else [])
+    monkeypatch.setattr(db, "cartes_partagees", lambda i: [{"id": 1, "recto": "VLAN ?", "verso": "réseau virtuel",
+                                                           "source": "D1"}])
+    r = client.get("/partages/revision/4")
+    assert "/partages/revision/4/pdf" in r.text and "/partages/revision/4/carte-mentale" in r.text
+    assert "/revision/4/modifier" not in r.text and "/revision/4/fait" not in r.text and "Supprimer" not in r.text
+    r = client.get("/partages/revision/4/pdf")
+    assert r.status_code == 200 and r.content.startswith(b"%PDF")
+    assert client.get("/partages/revision/4/carte-mentale").status_code == 200
+    assert client.get("/partages/revision/99/pdf").status_code == 404
+    r = client.get("/partages/revision/7")   # épreuve blanche : corrigé replié, PDF du sujet seul
+    assert "Voir le corrigé" in r.text and "/partages/revision/7/pdf?corrige=0" in r.text
+    r = client.get("/partages/revision/5")   # quiz jouable, rien d'envoyé à l'auteur
+    assert 'id="corriger"' in r.text and "/fait" not in r.text
+    r = client.get("/partages/revision/6/anki")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/apkg"
+    assert client.get("/partages/revision/4/anki").status_code == 404

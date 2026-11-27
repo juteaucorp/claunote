@@ -2,30 +2,82 @@
 {% from "_icones.html" import icone %}
 {% block titre %}{{ genres[rev.genre] }} : {{ rev.sujet|truncate(60) }}{% endblock %}
 {% block contenu %}
+{% include "_reviser.html" %}
+{# Révision publique d'un autre compte : tout se lit, s'exporte et se pratique ; rien ne se modifie chez lui #}
 <p class="fil"><a href="/reviser">Réviser</a> › Publiques des autres › {{ genres[rev.genre] }}</p>
 <div class="g-{{ rev.genre }} meta tete-revision">
   <span class="etiquette">{{ icone(rev.genre, 15) }} {{ genres[rev.genre] }}</span>
   {% if rev.matiere %}<span class="doux">{{ rev.matiere }}{% if rev.niveau %} · {{ rev.niveau }}{% endif %}</span>{% endif %}
 </div>
 <h1>{{ rev.sujet }}</h1>
-<p class="doux">🌐 Partagé par <strong>{{ rev.auteur }}</strong> · lecture seule</p>
+<p class="doux meta">🌐 Partagé par <strong>{{ rev.auteur }}</strong> · lecture seule
+  {% if rev.cree_le %}· créé le {{ (rev.cree_le|paris)[:10] }}{% endif %}</p>
+{% set base = '/partages/revision/' ~ rev.id %}
+{% set nom_pdf = (genres[rev.genre] ~ ' ' ~ rev.sujet)|replace('/', '-') ~ '.pdf' %}
+<div class="barre-actions">
+  <a class="bouton" href="{{ base }}/pdf" target="_blank">{{ icone('pdf', 18) }}<span>PDF</span></a>
+  <a class="bouton" href="#" data-partager data-pdf="{{ base }}/pdf" data-nom="{{ nom_pdf }}" data-titre="{{ rev.sujet }}">{{ icone('partager', 18) }}<span>Partager</span></a>
+  {% if rev.genre in ('fiche', 'examen', 'plan') %}<a class="bouton" href="{{ base }}/carte-mentale">{{ icone('carte_mentale', 18) }}<span>Carte mentale</span></a>{% endif %}
+  {% if rev.genre in ('quiz', 'examen') %}<a class="bouton" href="{{ base }}/pdf?corrige=0" target="_blank">{{ icone('examen', 18) }}<span>PDF du sujet seul</span></a>{% endif %}
+  {% if rev.genre == 'cartes' %}<a class="bouton" href="{{ base }}/anki" download>{{ icone('cartes', 18) }}<span>Exporter vers Anki</span></a>{% endif %}
+</div>
 {% if rev.genre == 'quiz' %}
+<form id="quiz" class="quiz" onsubmit="return false">
   {% for q in questions %}
-  <div class="carte">
-    <p><strong>{{ loop.index }}. {{ q.question|maths }}</strong></p>
+  {% set i = loop.index0 %}
+  <fieldset class="carte question" data-reponse="{{ q.reponse }}">
+    <legend><span class="num-q">{{ loop.index }}</span> {{ q.question|maths }}</legend>
     {% if q.schema %}{{ q.schema|schema }}{% endif %}
-    <ol type="A">{% for c in q.choix %}<li>{{ c|maths }}</li>{% endfor %}</ol>
-    <details><summary>Voir la réponse</summary>
+    {% for c in q.choix %}
+    <label class="choix-q"><input type="radio" name="q{{ i }}" value="{{ loop.index0 }}"><span class="lettre">{{ 'ABCDEFGH'[loop.index0] }}</span><span>{{ c|maths }}</span></label>
+    {% endfor %}
+    <details class="explication"><summary>Voir la réponse</summary>
       <p><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse]|maths }}</strong></p>
-      <p>{{ q.explication|maths }}</p></details>
-  </div>
+      <p>{{ q.explication|maths }}</p>
+    </details>
+  </fieldset>
   {% endfor %}
+  <div class="carte resultat" id="resultat" hidden></div>
+  <div class="actions"><button class="principal" id="corriger" type="button">Corriger</button>
+    <button type="button" id="recommencer" hidden>Recommencer</button></div>
+</form>
+<script>
+  // Correction dans le navigateur : rien n'est enregistré chez l'auteur du quiz
+  (() => {
+    const questions = [...document.querySelectorAll("#quiz .question")];
+    document.getElementById("corriger").addEventListener("click", () => {
+      let bonnes = 0;
+      questions.forEach((q) => {
+        const choisi = q.querySelector("input:checked");
+        const bon = q.querySelectorAll("input")[+q.dataset.reponse];
+        bon.closest("label").classList.add("bonne");
+        if (choisi && choisi === bon) bonnes++;
+        else if (choisi) choisi.closest("label").classList.add("fausse");
+        q.classList.add(choisi === bon ? "reussie" : "ratee");
+        q.querySelector(".explication").open = choisi !== bon;
+        q.querySelectorAll("input").forEach((i) => { i.disabled = true; });
+      });
+      const total = questions.length;
+      const r = document.getElementById("resultat");
+      r.hidden = false;
+      r.innerHTML = `<strong class="score">${bonnes}/${total}</strong> ${bonnes === total ? "Parfait !" : bonnes >= total * .7 ? "Bien joué." : "Relis les explications des questions ratées."}`;
+      r.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("corriger").hidden = true;
+      document.getElementById("recommencer").hidden = false;
+    });
+    document.getElementById("recommencer").addEventListener("click", () => location.reload());
+  })();
+</script>
 {% elif rev.genre == 'cartes' %}
-  <div class="carte"><ul class="liste-partages">
-  {% for c in cartes %}<li><details><summary>{{ c.recto|maths }}</summary><p>{{ c.verso|maths }}</p></details></li>{% endfor %}
-  </ul></div>
+<p class="doux">{{ cartes|length }} flashcard{{ 's' if cartes|length > 1 }} · touche une carte pour voir sa réponse.</p>
+{% for c in cartes %}
+<details class="carte"><summary>{{ c.recto|maths }}</summary><p>{{ c.verso|maths }}</p></details>
+{% endfor %}
 {% else %}
-  <div class="carte transcription contenu-revision">{{ contenu }}</div>
+<div class="carte transcription contenu-revision">{{ contenu }}</div>
+{% if corrige %}
+<details class="carte corrige"><summary>Voir le corrigé</summary><div class="transcription contenu-revision">{{ corrige }}</div></details>
+{% endif %}
 {% endif %}
 {% if sources %}
 <h2>Cours utilisés</h2>
@@ -35,5 +87,5 @@
 <h2>Notes utilisées</h2>
 <ul>{% for r, n in notes_lues %}<li><a href="/partages/note/{{ n.id }}">📝 {{ n|titre_note }}</a> <span class="doux">· {{ n.auteur }}</span></li>{% endfor %}</ul>
 {% endif %}
-<style>.liste-partages { margin: 0; padding-left: 18px; } .liste-partages li { margin: 6px 0; }</style>
+{% include "_revision_style.html" %}
 {% endblock %}
