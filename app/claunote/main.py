@@ -3815,8 +3815,8 @@ def page_actualites(request: Request, vue: str = "pour_toi", sujet: str = "", fl
         if not groupes or groupes[-1][0] != jour:
             groupes.append((jour, []))
         groupes[-1][1].append(a)
-    sujets = db.sujets()
-    flux_l = db.flux_liste()
+    sujets = db.sujets(comptes=False)   # noms et liens seulement : compter les articles de chacun coûtait cher
+    flux_l = db.flux_liste(comptes=False)
 
     recherche = {"q": q, "categorie": categorie, "type": type, "periode": periode, "non_lus": "1" if non_lus else "",
                  "tri": "pertinence" if tri == "pertinence" else ""}
