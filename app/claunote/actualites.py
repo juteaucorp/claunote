@@ -34,6 +34,7 @@ import datetime as dt
 import hashlib
 import html
 import json
+import os
 import re
 import tempfile
 import time
@@ -1210,7 +1211,11 @@ def cours_lies(notions: list[str], limite: int = 12) -> dict[str, dict]:
 
 VIGNETTE_MAX = 4 * 1024 * 1024   # octets téléchargés au plus
 VIGNETTE_COTE = 480              # pixels (côté le plus long) de la vignette gardée
-VIGNETTES = Path(tempfile.gettempdir()) / "claunote-vignettes"
+# Dans le cache partagé du site et du worker (volume « cache ») : gardées d'une mise à jour à l'autre, et préparées
+# par le worker dès le relevé (la page ne les télécharge plus elle-même). Sans CACHE_DIR (tests) : dossier temporaire.
+VIGNETTES = (Path(os.environ["CACHE_DIR"]) / "vignettes" if os.environ.get("CACHE_DIR")
+             else Path(tempfile.gettempdir()) / "claunote-vignettes")
+PRECHAUFFE = 120   # vignettes préparées au plus par relevé (les plus récentes d'abord)
 VIGNETTES_MAX = 300 * 1024 * 1024   # cache des vignettes borné : les plus anciennes effacées (retéléchargées au besoin)
 _vignettes_ecrites = {"n": 0}
 
@@ -1289,9 +1294,13 @@ def telecharger_image(url: str, client: httpx.Client | None = None, verifier_hot
             c.close()
 
 
+def _fichier_vignette(url: str) -> Path:
+    return VIGNETTES / (hashlib.sha256(url.encode()).hexdigest() + ".jpg")
+
+
 def vignette(url: str) -> bytes | None:
     """Vignette en cache (fichier vide = image refusée, pas retéléchargée)."""
-    fichier = VIGNETTES / (hashlib.sha256(url.encode()).hexdigest() + ".jpg")
+    fichier = _fichier_vignette(url)
     if fichier.exists():
         return fichier.read_bytes() or None
     image = telecharger_image(url)
@@ -1539,6 +1548,17 @@ def _tour_compte(claude_ok):
     quotidien()
 
 
+def prechauffer_vignettes(limite: int = PRECHAUFFE, fils: int = 4) -> int:
+    """Après un relevé : les vignettes des nouveaux articles (de tous les comptes) téléchargées et réduites tout de
+    suite, pour que la page Actualités les serve depuis le cache au lieu d'attendre les sites. Renvoie le nombre fait."""
+    with db.sans_compte():
+        urls = [u for u in db.images_recentes(limite * 3) if not _fichier_vignette(u).exists()][:limite]
+    if urls:
+        with ThreadPoolExecutor(max_workers=fils) as pool:
+            list(pool.map(vignette, urls))
+    return len(urls)
+
+
 def tour(claude_ok, maintenant: float | None = None):
     """Relevé de tous les fils (sans Claude), puis tri, alertes et point du jour de chacun, l'admin d'abord."""
     maintenant = maintenant or time.time()
@@ -1550,3 +1570,8 @@ def tour(claude_ok, maintenant: float | None = None):
         db.etat_ecrire("actualites_releve", str(maintenant))
         _chaque_compte(lambda: None if suit_l_admin() else relever(), comptes_ids)
     _chaque_compte(lambda: _tour_compte(claude_ok), comptes_ids)
+    if demande or maintenant - dernier >= RELEVE:   # après le tri et les alertes : jamais en retard à cause des images
+        try:
+            prechauffer_vignettes()
+        except Exception as e:
+            print(f"actualités : vignettes non préparées : {e}", flush=True)

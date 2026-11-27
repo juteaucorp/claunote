@@ -1577,7 +1577,7 @@ def nettoyer_cache(racine: Path = CACHE_DIR, maintenant: float | None = None) ->
         return 0
     candidats = []
     for e in racine.iterdir():
-        if e.name == "kdrive" and e.is_dir():   # fichiers kDrive déjà ouverts : limités en taille (kdrive_seul)
+        if e.name in ("kdrive", "vignettes") and e.is_dir():   # limités en taille (kdrive_seul, actualites.elaguer_vignettes)
             continue
         if e.name == "morceaux" and e.is_dir():
             candidats += [(m, CACHE_REPRISE) for m in e.iterdir()]

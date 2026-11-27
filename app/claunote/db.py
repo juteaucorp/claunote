@@ -634,6 +634,9 @@ BEGIN
         END IF;
     END LOOP;
 END $$;
+-- Page Actualités rapide : les articles d'un compte par date, d'une source, d'un sujet (sans parcourir toute la table)
+CREATE INDEX IF NOT EXISTS articles_compte_publie ON articles (compte_id, publie_le DESC);
+CREATE INDEX IF NOT EXISTS articles_flux_publie ON articles (flux_id, publie_le DESC);
 -- Pronote : chaque compte relie le sien. Deux élèves de la même classe ont les mêmes contrôles (mêmes ids tirés du
 -- contenu) : la clé devient (compte, id). Ce qui existait reste à l'admin d'origine.
 DO $$
@@ -2809,18 +2812,34 @@ def chercher_passages(requete: str, vecteur: list | None = None, niveau: str | N
 PERTINENT = ("((cardinality(a.sujets) > 0 AND (a.tri <> 'ia' OR a.score >= %(seuil)s)) OR f.notifier)")
 # Nombre de sources différentes qui racontent la même information (sur 3 jours) : une histoire très reprise compte plus
 COUVERTURE = ("(CASE WHEN a.evenement IS NULL THEN 1 ELSE (SELECT count(DISTINCT a2.flux_id) FROM articles a2 "
-              "WHERE a2.evenement = a.evenement AND a2.publie_le > a.publie_le - interval '3 days' "
+              "WHERE a2.evenement = a.evenement AND a2.compte_id = a.compte_id AND a2.publie_le > a.publie_le - interval '3 days' "
               "AND a2.publie_le < a.publie_le + interval '3 days') END)")
 SEUIL_POUR_TOI = 0.5
 
 
-def sujets():
+def _du_compte(alias: str = "a") -> str:
+    """Filtre explicite sur le compte en cours, en plus de la row-level security : la règle de la base
+    (« compte_id = claunote_compte() OR claunote_tout() ») ne peut pas se servir d'un index, la base lisait alors les
+    articles de tous les comptes, ligne par ligne. Rien de plus large que la règle : « Tout voir » et le travail
+    interne (sans compte) gardent tout."""
+    ctx = _compte.get()
+    return f"{alias}.compte_id = {int(ctx[0])}" if ctx and not ctx[1] else "true"
+
+
+def sujets(comptes: bool = True):
+    """Sujets suivis ; comptes=False : sans le nombre d'articles de chacun (la page Actualités n'en montre pas)."""
+    if not comptes:
+        with connect() as c:
+            return c.execute("""SELECT s.*, f.id AS recherche_id, f.erreur AS recherche_erreur, NULL::bigint AS n
+                                FROM sujets s LEFT JOIN flux f ON f.sujet_id = s.id ORDER BY s.nom""").fetchall()
     with connect() as c:
         return c.execute(
-            """SELECT s.*, f.id AS recherche_id, f.erreur AS recherche_erreur,
-                      (SELECT count(*) FROM articles a WHERE s.id = ANY(a.sujets)
-                        AND (a.tri <> 'ia' OR a.score >= %s)) AS n
-               FROM sujets s LEFT JOIN flux f ON f.sujet_id = s.id ORDER BY s.nom""", (SEUIL_POUR_TOI,)).fetchall()
+            # Les articles comptés en un seul passage (avant : un parcours complet de la table par sujet)
+            f"""SELECT s.*, f.id AS recherche_id, f.erreur AS recherche_erreur, coalesce(c.n, 0) AS n
+               FROM sujets s LEFT JOIN flux f ON f.sujet_id = s.id
+               LEFT JOIN (SELECT x.sujet, count(*) AS n FROM articles a, unnest(a.sujets) AS x(sujet)
+                          WHERE {_du_compte()} AND (a.tri <> 'ia' OR a.score >= %s) GROUP BY x.sujet) c ON c.sujet = s.id
+               ORDER BY s.nom""", (SEUIL_POUR_TOI,)).fetchall()
 
 
 def sujet_ajouter(nom: str, description: str, mots_cles: list[str], notifier: bool = True) -> int | None:
@@ -2844,14 +2863,24 @@ def sujet_supprimer(sujet_id: int):
         c.execute("DELETE FROM sujets WHERE id = %s", (sujet_id,))
 
 
-def flux_liste():
+def flux_liste(comptes: bool = True):
+    """Sources ; comptes=False : sans leurs nombres d'articles ni leur dernier article (inutiles sur la page Actualités)."""
+    if not comptes:
+        with connect() as c:
+            return c.execute(
+                """SELECT f.*, s.nom AS sujet, NULL::bigint AS n, NULL::bigint AS non_lus, NULL::timestamptz AS dernier,
+                          NULL::text AS media
+                   FROM flux f LEFT JOIN sujets s ON s.id = f.sujet_id
+                   ORDER BY f.sujet_id IS NOT NULL, lower(coalesce(nullif(f.titre, ''), f.url))""").fetchall()
     with connect() as c:
         return c.execute(
-            """SELECT f.*, s.nom AS sujet, (SELECT count(*) FROM articles a WHERE a.flux_id = f.id) AS n,
-                      (SELECT count(*) FROM articles a WHERE a.flux_id = f.id AND NOT a.lu) AS non_lus,
-                      (SELECT max(publie_le) FROM articles a WHERE a.flux_id = f.id) AS dernier,
+            # Les comptes de chaque source en un seul passage (avant : 4 sous-requêtes par source, ~4 s avec 75 sources)
+            f"""SELECT f.*, s.nom AS sujet, coalesce(c.n, 0) AS n, coalesce(c.non_lus, 0) AS non_lus, c.dernier,
                       (SELECT a.media FROM articles a WHERE a.flux_id = f.id ORDER BY a.publie_le DESC LIMIT 1) AS media
                FROM flux f LEFT JOIN sujets s ON s.id = f.sujet_id
+               LEFT JOIN (SELECT a.flux_id, count(*) AS n, count(*) FILTER (WHERE NOT a.lu) AS non_lus,
+                                 max(a.publie_le) AS dernier
+                          FROM articles a WHERE {_du_compte()} GROUP BY a.flux_id) c ON c.flux_id = f.id
                ORDER BY f.sujet_id IS NOT NULL, lower(coalesce(nullif(f.titre, ''), f.url))""").fetchall()
 
 
@@ -3040,6 +3069,15 @@ def ids_par_cles(cles: list[str]) -> dict[str, int]:
         return {r["cle"]: r["id"] for r in c.execute("SELECT id, cle FROM articles WHERE cle = ANY(%s)", (list(cles),)).fetchall()}
 
 
+def images_recentes(limite: int = 360, heures: int = 48) -> list[str]:
+    """Illustrations des articles arrivés ces dernières heures, les plus récents d'abord (vignettes à préparer)."""
+    with connect() as c:
+        return [r["image"] for r in c.execute(
+            """SELECT image, max(cree_le) AS le FROM articles
+               WHERE cree_le > now() - make_interval(hours => %s) AND image <> ''
+               GROUP BY image ORDER BY le DESC LIMIT %s""", (heures, limite)).fetchall()]
+
+
 def articles_par_ids(ids: list[int]):
     if not ids:
         return []
@@ -3098,7 +3136,7 @@ def articles(vue: str = "pour_toi", sujet_id: int | None = None, flux_id: int | 
     (page, total). tri « importance » (comme Techmeme) : jour par jour, les alertes, puis les histoires les plus
     importantes et les plus reprises par tes sources, avant les autres. Recherche : mots racinisés en français (« failles » trouve « faille », "phrase exacte",
     -exclu, OU), et sinon chaque mot tel quel, sans accents (« securite » trouve « sécurité »)."""
-    where, p = ["true"], {"seuil": SEUIL_POUR_TOI, "limite": limite, "decalage": decalage}
+    where, p = [_du_compte()], {"seuil": SEUIL_POUR_TOI, "limite": limite, "decalage": decalage}
     q = (q or "").strip()[:200]
     rang = "0"
     if q:
@@ -3142,15 +3180,23 @@ def articles(vue: str = "pour_toi", sujet_id: int | None = None, flux_id: int | 
         ordre = (f"(a.publie_le AT TIME ZONE 'Europe/Paris')::date DESC, a.alerte DESC, "
                  f"coalesce(a.score, 0.55) + 0.05 * least({COUVERTURE} - 1, 4) DESC, ")
     with connect() as c:
-        lignes = c.execute(
-            f"""SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, f.notifier AS flux_notifier,
-                       f.categorie, count(*) OVER () AS total,
-                       ARRAY(SELECT s.nom FROM sujets s WHERE s.id = ANY(a.sujets) ORDER BY s.nom) AS noms_sujets
+        # En deux temps : l'ordre et le total sur les seuls numéros (léger), puis les articles complets de la page.
+        # Avant, chaque article correspondant (des milliers) était lu en entier juste pour être compté.
+        page = c.execute(
+            f"""SELECT a.id, count(*) OVER () AS total
                 FROM articles a JOIN flux f ON f.id = a.flux_id
                 WHERE {' AND '.join(where)}
                 ORDER BY {ordre}a.publie_le DESC, a.id DESC
                 LIMIT %(limite)s OFFSET %(decalage)s""", p).fetchall()
-    return lignes, (lignes[0]["total"] if lignes else 0)
+        if not page:
+            return [], 0
+        par_id = {l["id"]: l for l in c.execute(
+            """SELECT a.*, coalesce(nullif(f.titre, ''), f.site) AS source, f.notifier AS flux_notifier, f.categorie,
+                      ARRAY(SELECT s.nom FROM sujets s WHERE s.id = ANY(a.sujets) ORDER BY s.nom) AS noms_sujets
+               FROM articles a JOIN flux f ON f.id = a.flux_id WHERE a.id = ANY(%s)""",
+            ([l["id"] for l in page],)).fetchall()}
+    total = page[0]["total"]
+    return [{**par_id[l["id"]], "total": total} for l in page if l["id"] in par_id], total
 
 
 def actualites_depuis(depuis, limite: int = 5) -> dict:
@@ -3163,13 +3209,13 @@ def actualites_depuis(depuis, limite: int = 5) -> dict:
                        count(DISTINCT coalesce(a.evenement, a.id::text)) AS histoires,
                        count(*) FILTER (WHERE NOT a.lu) AS non_lus
                 FROM articles a JOIN flux f ON f.id = a.flux_id
-                WHERE a.cree_le > %(depuis)s AND a.tri <> 'attente' AND {PERTINENT}""", p).fetchone()
+                WHERE {_du_compte()} AND a.cree_le > %(depuis)s AND a.tri <> 'attente' AND {PERTINENT}""", p).fetchone()
         tops = c.execute(
             f"""SELECT * FROM (SELECT DISTINCT ON (coalesce(a.evenement, a.id::text)) a.id, a.evenement, a.titre, a.titre_ia, a.lien,
                        a.pourquoi, a.alerte, a.score, a.lu, a.publie_le, coalesce(nullif(f.titre, ''), f.site) AS source,
                        {COUVERTURE} AS sources
                 FROM articles a JOIN flux f ON f.id = a.flux_id
-                WHERE a.cree_le > %(depuis)s AND a.tri <> 'attente' AND {PERTINENT}
+                WHERE {_du_compte()} AND a.cree_le > %(depuis)s AND a.tri <> 'attente' AND {PERTINENT}
                 ORDER BY coalesce(a.evenement, a.id::text), a.alerte DESC, a.score DESC NULLS LAST, a.publie_le DESC) t
                 ORDER BY alerte DESC, coalesce(score, 0.55) + 0.05 * least(sources - 1, 4) DESC, publie_le DESC
                 LIMIT %(limite)s""", p).fetchall()
@@ -3186,7 +3232,7 @@ def tendances(heures: int = 24, avant: int = 96, limite: int = 8) -> list[dict]:
                       count(*) FILTER (WHERE a.publie_le <= now() - make_interval(hours => %(h)s)) AS avant,
                       bool_or(a.alerte AND a.publie_le > now() - make_interval(hours => %(h)s)) AS alerte
                FROM articles a
-               WHERE a.notion IS NOT NULL AND a.tri <> 'attente' AND coalesce(a.score, 0.5) >= 0.3
+               WHERE {du_compte} AND a.notion IS NOT NULL AND a.tri <> 'attente' AND coalesce(a.score, 0.5) >= 0.3
                  AND a.publie_le > now() - make_interval(hours => %(tout)s)
                GROUP BY lower(a.notion)
                HAVING count(*) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) >= 2
@@ -3194,11 +3240,13 @@ def tendances(heures: int = 24, avant: int = 96, limite: int = 8) -> list[dict]:
                ORDER BY bool_or(a.alerte AND a.publie_le > now() - make_interval(hours => %(h)s)) DESC,
                         count(DISTINCT a.flux_id) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) DESC,
                         count(*) FILTER (WHERE a.publie_le > now() - make_interval(hours => %(h)s)) DESC
-               LIMIT %(limite)s""", {"h": heures, "tout": heures + avant, "limite": limite}).fetchall()
+               LIMIT %(limite)s""".replace("{du_compte}", _du_compte()),
+            {"h": heures, "tout": heures + avant, "limite": limite}).fetchall()
 
 
 def histoire_lue(article_id: int, jours: int = 7) -> list[int]:
     """L'article et tous ceux qui racontent la même information (même étiquette) : lus d'un coup."""
+    pastille_oublier()
     with connect() as c:
         return [r["id"] for r in c.execute(
             """UPDATE articles SET lu = true WHERE id = %(id)s OR (evenement IS NOT NULL AND evenement =
@@ -3214,23 +3262,44 @@ def article(article_id: int):
 def article_maj(article_id: int, **champs):
     champs = {k: bool(v) for k, v in champs.items() if k in {"lu", "favori"}}
     if champs:
+        pastille_oublier()
         with connect() as c:
             c.execute(f"UPDATE articles SET {', '.join(f'{k} = %s' for k in champs)} WHERE id = %s",
                       (*champs.values(), article_id))
 
 
 def articles_tout_lu(vue: str = "pour_toi"):
+    pastille_oublier()
     with connect() as c:
         c.execute(f"UPDATE articles a SET lu = true FROM flux f WHERE f.id = a.flux_id AND NOT a.lu"
                   f"{' AND ' + PERTINENT if vue == 'pour_toi' else ''}", {"seuil": SEUIL_POUR_TOI})
 
 
+_pastille: dict = {}   # (compte, tout voir) → (moment, nombre) : la même page la demande jusqu'à trois fois
+PASTILLE_CACHE = 3.0
+
+
+def pastille_oublier():
+    _pastille.clear()
+
+
 def nb_actualites_nouvelles() -> int:
-    """Pastille du menu : articles « Pour toi » pas encore lus des 3 derniers jours."""
+    """Pastille du menu : articles « Pour toi » pas encore lus des 3 derniers jours (gardée 3 s : le menu et les
+    onglets de la page la demandent chacun ; oubliée dès qu'un article est lu ici)."""
+    cle_ = _compte.get()
+    deja = _pastille.get(cle_)
+    if deja and time.monotonic() - deja[0] < PASTILLE_CACHE:
+        return deja[1]
+    n = _nb_actualites_nouvelles()
+    _pastille[cle_] = (time.monotonic(), n)
+    return n
+
+
+def _nb_actualites_nouvelles() -> int:
     with connect() as c:
         return c.execute(
             f"""SELECT count(*) AS n FROM articles a JOIN flux f ON f.id = a.flux_id
-                WHERE NOT a.lu AND a.publie_le > now() - interval '3 days' AND {PERTINENT}""",
+                WHERE {_du_compte()} AND NOT a.lu AND a.publie_le > now() - interval '3 days' AND {PERTINENT}""",
             {"seuil": SEUIL_POUR_TOI}).fetchone()["n"]
 
 

@@ -49,7 +49,7 @@ class Base:
         self.tries, self.notifs, self.annonces = [], [], []
 
     def brancher(self, monkeypatch):
-        monkeypatch.setattr(db, "sujets", lambda: self.sujets_)
+        monkeypatch.setattr(db, "sujets", lambda **k: self.sujets_)
         monkeypatch.setattr(db, "articles_a_trier", lambda limite=200: [a for a in self.articles_ if a["tri"] == "attente"])
         monkeypatch.setattr(db, "articles_trier", lambda r: self.tries.extend(r))
         monkeypatch.setattr(db, "articles_a_annoncer", lambda: self.articles_)
@@ -231,8 +231,8 @@ def test_page_actualites(client, monkeypatch):
     a = {**article(1, "Faille A", tri="ia", sujets=[7], score=0.9, pourquoi="Patch urgent"),
          "lu": False, "favori": False, "noms_sujets": ["Cybersécurité"], "total": 1}
     monkeypatch.setattr(db, "articles", lambda *x, **k: ([a], 1))
-    monkeypatch.setattr(db, "sujets", lambda: [{**SUJETS[0], "n": 1, "recherche_id": None, "recherche_erreur": None}])
-    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed",
+    monkeypatch.setattr(db, "sujets", lambda **k: [{**SUJETS[0], "n": 1, "recherche_id": None, "recherche_erreur": None}])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed",
                                                      "releve_le": MAINTENANT, "sujet": None, "sujet_id": None,
                                                      "notifier": False, "n": 1, "dernier": MAINTENANT,
                                                      "erreur": "le site répond 404", "echecs": 2, "site": ""}])
@@ -245,7 +245,7 @@ def test_page_actualites(client, monkeypatch):
 
 def test_ajouter_un_sujet_avec_recherche(client, monkeypatch):
     sujets, flux, appels = [], [], []
-    monkeypatch.setattr(db, "sujets", lambda: sujets)
+    monkeypatch.setattr(db, "sujets", lambda **k: sujets)
 
     def ajouter(nom, description, mots, notifier):
         sujets.append({"id": 4, "nom": nom, "description": description, "mots_cles": mots, "notifier": notifier,
@@ -265,8 +265,8 @@ def test_ajouter_un_sujet_avec_recherche(client, monkeypatch):
 
 def test_ajouter_un_flux_illisible(client, monkeypatch):
     monkeypatch.setattr(ac, "decouvrir", lambda url: (_ for _ in ()).throw(ac.FluxIllisible("aucun flux RSS trouvé")))
-    monkeypatch.setattr(db, "sujets", lambda: [])
-    monkeypatch.setattr(db, "flux_liste", lambda: [])
+    monkeypatch.setattr(db, "sujets", lambda **k: [])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [])
     r = client.post("/actualites/flux", data={"url": "exemple.fr"})
     assert "Flux non ajouté : aucun flux RSS trouvé." in r.text and 'value="exemple.fr"' in r.text
 
@@ -286,7 +286,7 @@ def test_passage_en_sisr_garde_les_sujets_modifies(monkeypatch):
     retires, ajoutes = [], []
     monkeypatch.setattr(db, "etat_valeur", etat.get)
     monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
-    monkeypatch.setattr(db, "sujets", lambda: sujets)
+    monkeypatch.setattr(db, "sujets", lambda **k: sujets)
     monkeypatch.setattr(db, "sujet_supprimer", retires.append)
     monkeypatch.setattr(db, "sujet_ajouter", lambda nom, d, m: ajoutes.append(nom))
     monkeypatch.setattr(db, "articles_retrier", lambda: 0)
@@ -298,7 +298,7 @@ def test_passage_en_sisr_garde_les_sujets_modifies(monkeypatch):
         flux.append(titre)
         suivis.append({"id": len(suivis) + 10, "url": url, "site": site, "sujet_id": None, "categorie": categorie})
     monkeypatch.setattr(db, "flux_ajouter", flux_ajouter)
-    monkeypatch.setattr(db, "flux_liste", lambda: suivis)
+    monkeypatch.setattr(db, "flux_liste", lambda **k: suivis)
     ranges = {}
     monkeypatch.setattr(db, "flux_maj", lambda i, **k: ranges.update({i: k["categorie"]}))
     ac.initialiser()
@@ -445,8 +445,8 @@ def test_page_actualites_essentiel_regroupement_et_cours(client, monkeypatch):
               {**carte(2, evenement="fuite-x", source="Numerama"), "favori": False, "total": 3},
               {**carte(4, notion="VLAN", pourquoi="Nouveau switch"), "favori": False, "total": 3}]
     monkeypatch.setattr(db, "articles", lambda *x, **k: (lignes, 3))
-    monkeypatch.setattr(db, "sujets", lambda: [{**SUJETS[0], "n": 1, "recherche_id": None, "recherche_erreur": None}])
-    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed",
+    monkeypatch.setattr(db, "sujets", lambda **k: [{**SUJETS[0], "n": 1, "recherche_id": None, "recherche_erreur": None}])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed",
                                                      "releve_le": MAINTENANT}])
     monkeypatch.setattr(db, "recherche", lambda q, limite=30: [{"id": 55, "titre": "TP VLAN", "nom": "tp.pdf"}]
                         if q == "VLAN" else [])
@@ -489,7 +489,7 @@ def test_descriptions_bts_rendues_neutres_si_intactes(monkeypatch):
     etat, maj = {}, {}
     monkeypatch.setattr(db, "etat_valeur", etat.get)
     monkeypatch.setattr(db, "etat_ecrire", lambda k, v: etat.update({k: v}))
-    monkeypatch.setattr(db, "sujets", lambda: [{"id": 1, "nom": "Réseaux", "description": ac.DESCRIPTIONS_BTS["Réseaux"]},
+    monkeypatch.setattr(db, "sujets", lambda **k: [{"id": 1, "nom": "Réseaux", "description": ac.DESCRIPTIONS_BTS["Réseaux"]},
                                                {"id": 2, "nom": "Systèmes et virtualisation", "description": "À moi"}])
     monkeypatch.setattr(db, "sujet_maj", lambda i, **k: maj.update({i: k["description"]}))
     ac.descriptions_neutres()
@@ -579,8 +579,8 @@ def test_flux_jamais_vers_le_reseau_local(monkeypatch):
 def test_easter_egg_vigie(client, monkeypatch):
     a = {**article(1, "Faille A"), "lu": False, "favori": False, "noms_sujets": [], "total": 1}
     monkeypatch.setattr(db, "articles", lambda *x, **k: ([a], 1))
-    monkeypatch.setattr(db, "sujets", lambda: [])
-    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed",
+    monkeypatch.setattr(db, "sujets", lambda **k: [])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed",
                                                      "releve_le": MAINTENANT, "sujet": None, "sujet_id": None,
                                                      "notifier": False, "n": 1, "dernier": MAINTENANT,
                                                      "erreur": None, "echecs": 0, "site": ""}])
@@ -638,8 +638,8 @@ def test_apparence_suit_le_compte_sur_tous_les_appareils(client, anonyme):
 
 
 def test_admin_met_son_fil_par_defaut(client, monkeypatch):
-    monkeypatch.setattr(db, "sujets", lambda: [{**SUJETS[1], "n": 0, "recherche_id": None, "recherche_erreur": None}])
-    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": None,
+    monkeypatch.setattr(db, "sujets", lambda **k: [{**SUJETS[1], "n": 0, "recherche_id": None, "recherche_erreur": None}])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": None,
                                                      "sujet": None, "sujet_id": None, "notifier": False, "n": 0,
                                                      "dernier": None, "erreur": None, "echecs": 0, "site": "ex.fr"}])
     r = client.get("/actualites/sources")
@@ -654,8 +654,8 @@ def test_admin_met_son_fil_par_defaut(client, monkeypatch):
 
 
 def test_admin_coupe_le_fil_par_defaut_permanent(client, monkeypatch):
-    monkeypatch.setattr(db, "sujets", lambda: [])
-    monkeypatch.setattr(db, "flux_liste", lambda: [])
+    monkeypatch.setattr(db, "sujets", lambda **k: [])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [])
     assert "Mon fil est le fil par défaut, en permanence" in client.get("/actualites/sources").text
     assert ac.defaut_en_permanence()
     client.post("/actualites/defaut/permanent", data={}, follow_redirects=False)
@@ -724,7 +724,7 @@ def test_trouver_un_podcast_ou_une_chaine_youtube():
 def test_releve_d_un_podcast_par_son_nom_puis_reparation(monkeypatch):
     maj, ajouts = {}, []
     monkeypatch.setattr(db, "flux_maj", lambda i, **k: maj.update(k))
-    monkeypatch.setattr(db, "flux_liste", lambda: [])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [])
     monkeypatch.setattr(db, "articles_ajouter", lambda f, items, annonce: ajouts.extend(items) or len(items))
 
     def repondre(r):
@@ -767,8 +767,8 @@ def test_page_recherche_filtres_et_categories(client, monkeypatch):
          "duree": 1500}
     appels = []
     monkeypatch.setattr(db, "articles", lambda *x, **k: appels.append((x, k)) or ([a], 1))
-    monkeypatch.setattr(db, "sujets", lambda: [])
-    monkeypatch.setattr(db, "flux_liste", lambda: [
+    monkeypatch.setattr(db, "sujets", lambda **k: [])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [
         {"id": 1, "titre": "Tech Café", "url": "https://feeds.ex/tc", "releve_le": MAINTENANT, "sujet": None, "sujet_id": None,
          "notifier": False, "n": 3, "non_lus": 2, "dernier": MAINTENANT, "erreur": None, "echecs": 0, "site": "",
          "categorie": "Podcast", "media": "audio"},
@@ -884,8 +884,8 @@ def test_page_coup_d_oeil(client, monkeypatch):
         appels.update(k)
         return lignes, 2
     monkeypatch.setattr(db, "articles", articles)
-    monkeypatch.setattr(db, "sujets", lambda: [])
-    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": MAINTENANT}])
+    monkeypatch.setattr(db, "sujets", lambda **k: [])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": MAINTENANT}])
     monkeypatch.setattr(db, "recherche", lambda q, limite=30: [{"id": 55, "titre": "Cours RGPD", "nom": "rgpd.pdf"}]
                         if q == "RGPD" else [])
     monkeypatch.setattr(db, "articles_par_ids", lambda ids: [
@@ -939,8 +939,8 @@ def test_alerte_lue_reste_marquee_dans_l_essentiel():
 
 
 def test_haut_de_page_allege(client, monkeypatch):
-    monkeypatch.setattr(db, "sujets", lambda: [{**SUJETS[0], "n": 1, "recherche_id": None, "recherche_erreur": None}])
-    monkeypatch.setattr(db, "flux_liste", lambda: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": MAINTENANT,
+    monkeypatch.setattr(db, "sujets", lambda **k: [{**SUJETS[0], "n": 1, "recherche_id": None, "recherche_erreur": None}])
+    monkeypatch.setattr(db, "flux_liste", lambda **k: [{"id": 1, "titre": "Ex", "url": "https://ex.fr/feed", "releve_le": MAINTENANT,
                                                      "categorie": "Linux", "non_lus": 44, "sujet_id": None}])
     t = client.get("/actualites").text
     # une seule rangée : Pour toi / Tout / Favoris, sujets et catégories repliés, sans compteurs
@@ -961,3 +961,16 @@ def test_cache_des_vignettes_borne(tmp_path, monkeypatch):
     assert ac.elaguer_vignettes(1000) == 0
     assert ac.elaguer_vignettes(300) == 3     # les plus anciennes, jusqu'à 80 % de la limite
     assert sorted(p.name for p in tmp_path.iterdir()) == ["3.jpg", "4.jpg"]
+
+
+def test_vignettes_preparees_apres_le_releve(tmp_path, monkeypatch):
+    """Le worker prépare les vignettes des nouveaux articles : la page les sert du cache, sans attendre les sites."""
+    monkeypatch.setattr(ac, "VIGNETTES", tmp_path)
+    ac._fichier_vignette("https://img.fr/deja.jpg").write_bytes(b"x")
+    monkeypatch.setattr(db, "images_recentes", lambda limite: ["https://img.fr/deja.jpg", "https://img.fr/1.jpg",
+                                                               "https://img.fr/2.jpg"])
+    vues = []
+    monkeypatch.setattr(ac, "telecharger_image", lambda url: vues.append(url) or b"\xff\xd8jpeg")
+    assert ac.prechauffer_vignettes() == 2
+    assert sorted(vues) == ["https://img.fr/1.jpg", "https://img.fr/2.jpg"]
+    assert ac.vignette("https://img.fr/1.jpg") == b"\xff\xd8jpeg" and len(vues) == 2   # ensuite : depuis le cache

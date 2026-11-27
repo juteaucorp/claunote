@@ -464,3 +464,38 @@ def test_titre_neutre_suit_le_miroir_et_les_verdicts(base):
                             "titre_ia": "FortiOS : faille critique exploitée"}])
         assert db.articles("tout")[0][0]["titre_ia"] == "FortiOS : faille critique exploitée"
     assert db.verdicts_ia(["ex.fr/fortios"], invite)["ex.fr/fortios"]["titre_ia"] == "FortiOS : faille critique exploitée"
+
+
+# --- Page Actualités rapide : mêmes résultats, sans parcourir les articles de tous les comptes ------------------
+
+def test_listes_rapides_memes_resultats_et_compte_separe(base):
+    invite = db.creer_compte("lou", "h", "invite", ["actualites"])
+    for compte_id in (1, invite):
+        with db.pour_compte(compte_id):
+            s = db.sujet_ajouter("Réseaux", "VLAN", ["vlan"])
+            f1, f2 = db.flux_ajouter("https://a.fr/feed", "A", "a.fr"), db.flux_ajouter("https://b.fr/feed", "B", "b.fr")
+            with db.connect() as c:
+                for i in range(7):
+                    c.execute("INSERT INTO articles (flux_id, cle, titre, publie_le, tri, sujets, score, lu, evenement, image) "
+                              "VALUES (%s, %s, %s, now() - make_interval(hours => %s), 'ia', %s, 0.8, %s, %s, %s)",
+                              (f1 if i % 2 else f2, f"k{i}", f"Article {i}", i, [s] if i < 5 else [], i == 0,
+                               "ev" if i in (1, 2) else None, f"https://img.fr/{i}.jpg"))
+    with db.pour_compte(invite):
+        assert {f["titre"]: (f["n"], f["non_lus"]) for f in db.flux_liste()} == {"A": (3, 3), "B": (4, 3)}
+        assert [(x["nom"], x["n"]) for x in db.sujets()] == [("Réseaux", 5)]
+        assert [x["nom"] for x in db.sujets(comptes=False)] == ["Réseaux"]
+        assert [f["titre"] for f in db.flux_liste(comptes=False)] == ["A", "B"]
+        page1, total = db.articles("tout", limite=3)
+        page3, _ = db.articles("tout", limite=3, decalage=6)
+        assert total == 7 and [a["titre"] for a in page1] == ["Article 0", "Article 1", "Article 2"]
+        assert [a["titre"] for a in page3] == ["Article 6"] and page1[0]["source"] == "B"
+        assert all(a["compte_id"] == invite for a in page1)
+        imp, n = db.articles("pour_toi", tri="importance")
+        assert n == 5 and sorted(a["titre"] for a in imp) == [f"Article {i}" for i in range(5)]
+        assert db.nb_actualites_nouvelles() == 4
+        db.article_maj(page1[1]["id"], lu=True)
+        assert db.nb_actualites_nouvelles() == 3   # pastille oubliée dès qu'un article est lu
+    with db.pour_compte(1, tout_voir=True):
+        assert db.articles("tout")[1] == 14   # « Tout voir » : tous les comptes, comme avant
+    with db.sans_compte():
+        assert len(db.images_recentes()) == 7   # même image chez deux comptes : une seule vignette
