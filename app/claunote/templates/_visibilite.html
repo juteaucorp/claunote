@@ -28,6 +28,6 @@
     <button name="valeur" value="public" class="{{ 'actif' if effectif and not suit }}" aria-pressed="{{ 'true' if effectif and not suit else 'false' }}">🌐 Tous les comptes</button>
     {% if matiere_publique is not none %}<button name="valeur" value="matiere" class="{{ 'actif' if suit }} {{ 'prive' if suit and not effectif }}" aria-pressed="{{ 'true' if suit else 'false' }}">Comme la matière ({{ 'publique' if matiere_publique else 'privée' }})</button>{% endif %}
   </span>
-  <span class="explication">{% if effectif %}<strong>Public</strong> : les autres comptes le lisent dans « Partagés », sans pouvoir le modifier.{% else %}<strong>Privé</strong> : toi seul{{ ' (et l’admin)' if not est_admin() }}.{% endif %}</span>
+  <span class="explication">{% if effectif %}<strong>Public</strong> : les autres comptes le voient dans {{ 'leur Bibliothèque' if genre == 'ce cours' else 'leurs Notes' if genre == 'cette note' else 'leur page Réviser' }}, sans pouvoir le modifier.{% else %}<strong>Privé</strong> : toi seul{{ ' (et l’admin)' if not est_admin() }}.{% endif %}</span>
 </form>
 {% endmacro %}

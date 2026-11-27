@@ -2428,8 +2428,12 @@ def reviser(request: Request, sujet: str = "", matiere: str = "", date_eval: str
     noms = sorted({r["matiere"] for r in db.niveaux_matieres()})
     evaluations = [{**e, "cours": pronote.trouver_matiere(e["matiere"], noms)}
                    for e in db.evenements_a_venir("evaluation", 14)][:4]
+    # Ce que les autres comptes ont rendu public (fiches, quiz, campagnes) : lisible ici, en lecture seule
+    revisions_publiques = db.partages_revisions() if db.plusieurs_comptes() else []
+    campagnes_publiques = db.partages_campagnes() if db.plusieurs_comptes() else []
     return templates.TemplateResponse(request, "reviser.html", {
         **contexte, "campagnes": campagnes, "du_jour": du_jour, "jour": jour, "compte": db.compte_revisions(),
+        "revisions_publiques": revisions_publiques, "campagnes_publiques": campagnes_publiques,
         "evaluations": evaluations, "paris": pronote.PARIS,
         "a_choisir": bool(db.niveaux_matieres()) or _partages_utilisables(), "a_archiver": archivage.nb_propositions()})
 
