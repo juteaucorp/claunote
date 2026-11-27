@@ -31,5 +31,9 @@
 <h2>Cours utilisés</h2>
 <ul>{% for d in sources %}<li><a href="/partages/doc/{{ d.id }}">{{ d.titre or d.nom }}</a></li>{% endfor %}</ul>
 {% endif %}
+{% if notes_lues %}
+<h2>Notes utilisées</h2>
+<ul>{% for r, n in notes_lues %}<li><a href="/partages/note/{{ n.id }}">📝 {{ n|titre_note }}</a> <span class="doux">· {{ n.auteur }}</span></li>{% endfor %}</ul>
+{% endif %}
 <style>.liste-partages { margin: 0; padding-left: 18px; } .liste-partages li { margin: 6px 0; }</style>
 {% endblock %}

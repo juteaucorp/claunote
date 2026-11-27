@@ -133,3 +133,42 @@ def test_notes_publiques_des_autres_dans_leur_liste(base):
         assert db.notes(niveau="BTS1", matiere="Maths", publiques_des_autres=True) == []
     with db.pour_compte(invite):
         assert db.notes(publiques_des_autres=True) == []                   # pas les siennes en double
+
+
+def test_notes_lues_par_une_revision(base):
+    """Les notes qu'une révision lit : cochées, liées aux cours, de la matière (sujet ou matière entière) ;
+    les siennes et les publiques des autres, jamais une note privée d'un autre ni une archivée ou vide."""
+    invite = db.creer_compte("camille", "h", "invite", ["notes"])
+    cours = _cours(1, "STP")
+    with db.pour_compte(1):
+        liee = db.creer_note("Oral", "le prof insiste sur le root bridge", "BTS2", "Réseaux", cours)["id"]
+        vlan = db.creer_note("VLAN", "trunk 802.1Q", "BTS2", "Réseaux")["id"]
+        maths = db.creer_note("Suites", "raison q", "BTS1", "Maths")["id"]
+        vide = db.creer_note("Vide", "   ", "BTS2", "Réseaux")["id"]
+        vieille = db.creer_note("Ancienne", "trunk", "BTS2", "Réseaux")["id"]
+        db.changer_note(vieille, archive_le=dt.datetime.now(dt.timezone.utc))
+    with db.pour_compte(invite):
+        publique = db.creer_note("Mes fiches", "trunk et VLAN natif", "BTS2", "Réseaux")["id"]
+        privee = db.creer_note("Secret", "trunk", "BTS2", "Réseaux", cours)["id"]
+        assert db.changer_visibilite("notes", publique, True)
+    with db.pour_compte(1):
+        tout = [n["id"] for n in db.notes_pour_revision([cours], [("BTS2", "Réseaux")])]
+        assert tout[0] == liee and set(tout) == {liee, vlan, publique}
+        assert [n["auteur"] for n in db.notes_pour_revision([cours], [("BTS2", "Réseaux")]) if n["id"] == publique] == ["camille"]
+        sujet = {n["id"] for n in db.notes_pour_revision([cours], [("BTS2", "Réseaux")], "trunk")}
+        assert sujet == {liee, vlan, publique}
+        assert {n["id"] for n in db.notes_pour_revision([cours], [("BTS2", "Réseaux")], "OSPF")} == {liee}
+        assert {n["id"] for n in db.notes_pour_revision([], [("BTS2", "Réseaux")], "OSPF", [maths], [liee])} == {maths}
+        assert {n["id"] for n in db.notes_pour_revision([], [], None, [privee])} == set()   # privée d'un autre
+        assert [n["id"] for n in db.notes_lisibles([publique, privee, liee])] == [publique, liee]
+        assert {n["id"] for n in db.notes_publiques_du_document(cours)} == set()   # la sienne est privée
+        assert {n["id"] for n in db.notes_a_lier("BTS2", "Réseaux", cours)} == {vlan, vide}
+        assert db.lier_note(vlan, cours) and db.note(vlan)["document_id"] == cours
+        assert db.lier_note(publique, cours) is False                 # la note d'un autre : jamais
+        assert [n["cours_titre"] for n in db.notes(niveau="BTS2", matiere="Réseaux") if n["id"] == vlan] == ["STP"]
+        assert vide not in {n["id"] for n in db.notes_pour_revision([cours], [("BTS2", "Réseaux")])}
+        assert {n["id"] for n in db.notes_pour_question("trunk ?", "BTS2", "Réseaux", 5)} == {vlan, publique}
+    with db.pour_compte(invite):
+        assert db.changer_visibilite("notes", privee, True)
+    with db.pour_compte(1):
+        assert [n["id"] for n in db.notes_publiques_du_document(cours)] == [privee]

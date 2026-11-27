@@ -36,6 +36,15 @@ class FaussesNotes:
         m(db, "notes_du_document", lambda d: [n for n in self.liste() if n["document_id"] == d])
         m(db, "notes_matiere", lambda niv, mat: [n for n in self.liste() if n["matiere"] == mat])
         m(db, "notes_choisies", lambda ids: [dict(self.notes[i]) for i in ids if self._a_moi(i)])
+        m(db, "notes_publiques_du_document", lambda d: [dict(n) for n in self.notes.values() if n["document_id"] == d
+                                                        and n["public"] and n["compte_id"] != self.compte])
+        m(db, "notes_a_lier", lambda niv, mat, d: [n for n in self.liste() if n["matiere"] == mat and not n["document_id"]])
+        m(db, "lier_note", self.lier)
+        m(db, "notes_lisibles", lambda ids: [dict(self.notes[i]) for i in ids if i in self.notes
+                                             and (self._a_moi(i) or self.notes[i]["public"])])
+        m(db, "notes_pour_revision", lambda docs, matieres, sujet=None, choisies=(), exclues=():
+          [dict(n) for n in self.notes.values() if (n["document_id"] in docs or n["id"] in choisies)
+           and n["id"] not in exclues and (n["compte_id"] == self.compte or n["public"])])
         m(db, "notes_pour_question", lambda q, niv, mat, limite=3: [n for n in self.liste() if "trunk" in n["contenu"]])
         m(db, "chercher_notes", lambda q, limite=10: [{**n, "extrait": "le <b>trunk</b>"} for n in self.liste()
                                                       if q in n["contenu"]])
@@ -71,6 +80,15 @@ class FaussesNotes:
         n.update(champs, maj_le=n["maj_le"] + dt.timedelta(seconds=1))
         n["debut"] = n["contenu"][:600]
         return "ok", n["maj_le"]
+
+    def lier(self, i, document_id, niveau=None, matiere=None):
+        if not self._a_moi(i):
+            return False
+        n = self.notes[i]
+        n["document_id"] = document_id
+        if n["matiere"] is None:
+            n["niveau"], n["matiere"] = niveau, matiere
+        return True
 
     def changer(self, i, **champs):
         if not self._a_moi(i):
@@ -194,23 +212,32 @@ def test_note_d_un_autre_compte_en_lecture_seule(client, carnet):
 
 def test_page_du_cours_et_reviser_avec_ses_notes(client, carnet):
     page = client.get("/doc/1").text
-    assert "Mes notes sur ce cours" in page and "/notes/nouvelle?doc=1" in page
+    assert "Notes sur ce cours" in page and "/notes/nouvelle?doc=1" in page
     r = client.get("/notes/nouvelle?doc=1")
     assert 'value="BTS1|Réseaux" selected' in r.text and '<option value="1" selected>' in r.text
     client.post("/notes", data={"titre": "Oral du prof", "contenu": "STP bloque les boucles", "document_id": "1"},
                 headers=AUTO)
     page = client.get("/doc/1").text
     assert "Oral du prof" in page and 'name="note_ids" value="1"' in page and "avec ta note sur ce cours" in page
-    # « Fiche » depuis le cours : la note jointe au support, comme le contexte donné par l'élève
-    client.post("/reviser", data={"doc_id": "1", "genre": "fiche", "note_ids": ["1", "1", "99"]})
-    assert ("pieces", ["Ma note - Oral du prof.md"], 5, None) in client.appels
+    # « Fiche » depuis le cours : la note cochée, gardée pour la rédaction (plus de copie en pièce jointe)
+    vu = {}
+    main.db.creer_revision, ancien = (lambda *a, **k: vu.update(k) or 5), main.db.creer_revision
+    try:
+        client.post("/reviser", data={"doc_id": "1", "genre": "fiche", "note_ids": ["1", "1", "99"],
+                                      "notes_vues": ["1", "4"]})
+    finally:
+        main.db.creer_revision = ancien
+    assert vu["note_ids"] == [1, 99] and vu["notes_exclues"] == [4]
+    assert not [a for a in client.appels if a[0] == "pieces"]
     # Formulaire complet : la note d'où l'on vient, cochée
     r = client.get("/reviser/nouvelle?note=1&matiere=Réseaux")
     assert 'name="note_ids" value="1" checked' in r.text and "/notes/pour-reviser" in r.text
+    assert 'name="notes_vues" value="1"' in r.text
     r = client.get("/notes/pour-reviser?niveau_matiere=BTS1|Réseaux&deja=1")
     assert "Oral du prof" not in r.text   # déjà proposée plus haut
     carnet.notes[1]["matiere"] = "Réseaux"
-    assert "Oral du prof" in client.get("/notes/pour-reviser?niveau_matiere=BTS1|Réseaux").text
+    r = client.get("/notes/pour-reviser?niveau_matiere=BTS1|Réseaux").text
+    assert "Oral du prof" in r and 'name="note_ids" value="1" checked' in r   # cochée d'office : lue par l'IA
 
 
 def test_recherche_du_site_et_chat(client, carnet, monkeypatch):
@@ -257,7 +284,7 @@ def test_droit_notes(client, carnet, faux_comptes):
     assert client.get("/partages/note/3").status_code == 403
     assert client.post("/notes", data={"contenu": "x"}).status_code == 403
     page = client.get("/doc/1")
-    assert "Mes notes sur ce cours" not in page.text
+    assert "Notes sur ce cours" not in page.text
 
 
 def test_invite_avec_le_droit_et_partage(client, carnet, faux_comptes):
@@ -349,3 +376,87 @@ def test_notes_publiques_des_autres_dans_l_onglet_notes(client, carnet):
     assert "Brouillon" not in page                                    # privée : jamais
     assert "Oral STP" in client.get("/notes?q=STP").text              # la recherche les trouve aussi
     assert "Notes publiques des autres" not in client.get("/notes?vue=archives").text
+
+
+def test_lier_une_note_au_cours_depuis_sa_page(client, carnet):
+    client.post("/notes", data={"titre": "Questions STP", "contenu": "pourquoi le root bridge ?",
+                                "matiere": "BTS1|Réseaux"}, headers=AUTO)
+    page = client.get("/doc/1").text
+    assert "Lier une de tes notes de Réseaux" in page and 'action="/notes/1/lier"' in page
+    r = client.post("/notes/1/lier", data={"document_id": "1", "suite": "/doc/1#notes-du-cours"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/doc/1#notes-du-cours"
+    assert carnet.notes[1]["document_id"] == 1
+    page = client.get("/doc/1").text
+    assert "Questions STP" in page and "Délier" in page and "Lier une de tes notes" not in page
+    assert "📎 " in client.get("/notes").text                       # la liste des notes montre le cours lié
+    assert client.post("/notes/1/lier", data={"document_id": "42"}).status_code == 404   # cours illisible
+    client.post("/notes/1/lier", data={"document_id": ""})          # « Délier »
+    assert carnet.notes[1]["document_id"] is None and carnet.notes[1]["matiere"] == "Réseaux"
+    carnet.notes[1]["compte_id"] = 2                                  # la note d'un autre : jamais liée par moi
+    assert client.post("/notes/1/lier", data={"document_id": "1"}).status_code in (403, 404)
+
+
+def test_note_publique_d_un_autre_sur_le_cours(client, carnet):
+    client.post("/notes", data={"titre": "Oral de Camille", "contenu": "STP : 802.1D", "document_id": "1"}, headers=AUTO)
+    carnet.notes[1].update(compte_id=2, public=True, auteur="Camille")
+    page = client.get("/doc/1").text
+    assert "Notes publiques des autres" in page and "/partages/note/1" in page and "Camille" in page
+    carnet.notes[1]["public"] = False                                 # privée : invisible
+    assert "Oral de Camille" not in client.get("/doc/1").text
+
+
+def test_page_revision_cite_les_notes(client, carnet, monkeypatch):
+    client.post("/notes", data={"titre": "Oral du prof", "contenu": "STP", "document_id": "1"}, headers=AUTO)
+    rev = {"id": 5, "genre": "quiz", "sujet": "STP", "statut": "pret", "reperes": {"D1": 1, "D2": -1},
+           "contenu": '[{"question": "q", "choix": ["a", "b"], "reponse": 0, "explication": "e", "source": "D2"}]',
+           "sources_web": [], "campagne_id": None, "date_eval": None, "cree_le": MAINTENANT, "matiere": "Réseaux",
+           "niveau": "BTS1", "consigne": "", "retouches": [], "public": False, "compte_id": 1}
+    monkeypatch.setattr(db, "revision", lambda i: dict(rev) if i == 5 else None)
+    monkeypatch.setattr(db, "noter_ouverture", lambda i: None)
+    page = client.get("/revision/5").text
+    assert '<a href="/notes/1">[D2]</a>' in page                     # le repère de la note mène à la note
+    assert "📝 Oral du prof" in page and "et tes notes" in page
+    assert main._sources({"D1": 1, "D2": -1})[-1] == "Note : Oral du prof"
+
+
+def test_sujet_precis():
+    assert notes.sujet_precis("Réseaux", ["Réseaux"]) is None
+    assert notes.sujet_precis("Réseaux (BTS1, BTS2)", ["Réseaux"]) is None
+    assert notes.sujet_precis("Réseaux : VLAN et trunk", ["Réseaux"]) == "VLAN et trunk"
+    assert notes.sujet_precis("Le protocole STP", ["Réseaux"]) == "Le protocole STP"
+    assert notes.sujet_precis("", ["Réseaux"]) is None
+
+
+def test_comme_source_et_consigne_des_notes():
+    from claunote import revision
+    mienne = {"id": 3, "compte_id": 1, "titre": "Oral", "contenu": " STP bloque les boucles ", "niveau": "BTS1",
+              "matiere": "Réseaux", "auteur": "admin"}
+    autre = {**mienne, "id": 4, "compte_id": 2, "auteur": "Camille"}
+    s, a = notes.comme_source(mienne, 1), notes.comme_source(autre, 1)
+    assert s["id"] == -3 and s["titre"] == "Ta note : Oral" and s["transcription"] == "STP bloque les boucles"
+    assert a["titre"] == "Note de Camille : Oral"
+    blocs, reperes = revision.blocs_cours([{"id": 1, "nom": "stp.pdf", "titre": "STP", "transcription": "cours"}, s])
+    assert reperes == {"D1": 1, "D2": -3} and blocs[1].startswith("[D2] Ta note : Oral (BTS1, Réseaux, note personnelle)")
+    assert "Ta note" in revision.consigne_notes([s]) and revision.consigne_notes([{"id": 1}]) == ""
+
+
+def test_worker_lit_les_notes_de_la_revision(monkeypatch):
+    from claunote import worker
+    vu = {}
+
+    def pour_revision(docs, matieres, sujet=None, choisies=(), exclues=()):
+        vu.update(docs=docs, matieres=matieres, sujet=sujet, choisies=choisies, exclues=exclues)
+        return [{"id": 7, "compte_id": 1, "titre": "Oral", "contenu": "trunk", "niveau": "BTS2", "matiere": "Réseaux"}]
+    monkeypatch.setattr(db, "notes_pour_revision", pour_revision)
+    monkeypatch.setattr(comptes, "trouver", lambda i: {"id": i, "role": "invite", "droits": ["notes"] if i == 1 else []})
+    docs = [{"id": 10, "niveau": "BTS2", "matiere": "Réseaux"}, {"id": 11, "niveau": "BTS1", "matiere": "Réseaux"}]
+    rev = {"id": 5, "compte_id": 1, "sujet": "Réseaux : VLAN", "note_ids": [3], "notes_exclues": [4]}
+    lues = worker.notes_de_revision(rev, docs)
+    assert [n["id"] for n in lues] == [-7] and lues[0]["titre"] == "Ta note : Oral"
+    assert vu == {"docs": [10, 11], "matieres": [("BTS2", "Réseaux"), ("BTS1", "Réseaux")], "sujet": "VLAN",
+                  "choisies": [3], "exclues": [4]}
+    worker.notes_de_revision({**rev, "sujet": "Réseaux (BTS1, BTS2)"}, docs)
+    assert vu["sujet"] is None                                       # matière entière : toutes ses notes
+    assert worker.notes_de_revision({**rev, "compte_id": 2}, docs) == []   # sans le droit « notes »
+    monkeypatch.setattr(db, "notes_pour_revision", lambda *a, **k: 1 / 0)
+    assert worker.notes_de_revision(rev, docs) == []                 # une erreur ne bloque jamais la fiche

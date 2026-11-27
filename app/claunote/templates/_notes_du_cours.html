@@ -1,16 +1,42 @@
-{# Page d'un cours (le sien ou partagé) : ses notes rattachées à ce cours, et en écrire une #}
+{# Page d'un cours (le sien ou partagé) : ses notes liées à ce cours, les notes publiques des autres sur ce cours,
+   et ses notes de la matière pas encore liées, à lier en un appui. Toutes sont lues par l'IA quand il révise ce cours. #}
 {% if peut('notes') %}
-<div class="carte notes-du-cours">
-  <div class="tete-ndc"><strong>📝 Mes notes sur ce cours{% if notes_cours %} <span class="doux">· {{ notes_cours|length }}</span>{% endif %}</strong>
+{% set publiques = notes_publiques_cours | default([]) %}
+{% set a_lier = notes_a_lier | default([]) %}
+<div class="carte notes-du-cours" id="notes-du-cours">
+  <div class="tete-ndc"><strong>📝 Notes sur ce cours{% if notes_cours or publiques %} <span class="doux">· {{ notes_cours|length + publiques|length }}</span>{% endif %}</strong>
     <a class="bouton" href="/notes/nouvelle?doc={{ doc.id }}">Prendre une note</a></div>
   {% if notes_cours %}
   <ul class="liste-ndc">
-    {% for n in notes_cours %}<li><a href="/notes/{{ n.id }}">{% if n.epinglee %}📌 {% endif %}{{ n|titre_note }}</a> <span class="doux">· {{ n.maj_le|date_note }}</span></li>{% endfor %}
+    {% for n in notes_cours %}<li><a href="/notes/{{ n.id }}">{% if n.epinglee %}📌 {% endif %}{{ n|titre_note }}</a> <span class="doux">· {{ n.maj_le|date_note }}</span>
+      <form method="post" action="/notes/{{ n.id }}/lier" class="en-ligne"><input type="hidden" name="suite" value="{{ request.url.path }}#notes-du-cours">
+        <button class="lien" title="Ne plus lier cette note à ce cours (elle reste dans tes notes)">Délier</button></form></li>{% endfor %}
   </ul>
-  {% else %}<p class="doux">Ce que le prof a dit à l'oral, tes questions, un résumé à ta façon : rattaché à ce cours, retrouvé dans <a href="/notes">Notes</a>.</p>{% endif %}
+  {% elif not publiques %}<p class="doux">Ce que le prof a dit à l'oral, tes questions, un résumé à ta façon : lié à ce cours, retrouvé dans <a href="/notes">Notes</a>.</p>{% endif %}
+  {% if publiques %}
+  <p class="doux sous-ndc">Notes publiques des autres</p>
+  <ul class="liste-ndc">
+    {% for n in publiques %}<li><a href="/partages/note/{{ n.id }}">{{ n|titre_note }}</a> <span class="doux">· {{ n.auteur }} · {{ n.maj_le|date_note }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if a_lier %}
+  <details class="a-lier">
+    <summary>Lier une de tes notes de {{ doc.matiere }} <span class="doux">· {{ a_lier|length }}</span></summary>
+    <ul class="liste-ndc">
+      {% for n in a_lier %}<li><a href="/notes/{{ n.id }}">{{ n|titre_note }}</a> <span class="doux">· {{ n.maj_le|date_note }}</span>
+        <form method="post" action="/notes/{{ n.id }}/lier" class="en-ligne"><input type="hidden" name="document_id" value="{{ doc.id }}">
+          <input type="hidden" name="suite" value="{{ request.url.path }}#notes-du-cours"><button class="lien">Lier ici</button></form></li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  <p class="doux pied-ndc">L'IA lit ces notes quand tu révises ce cours (fiche, quiz, flashcards, épreuve, question).</p>
 </div>
 <style>
   .tete-ndc { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
   .liste-ndc { margin: 8px 0 0; padding-left: 18px; } .liste-ndc li { margin: 4px 0; }
+  .notes-du-cours .en-ligne { display: inline; margin: 0; }
+  .notes-du-cours .lien { border: 0; background: none; padding: 2px 4px; min-height: 0; color: var(--accent-fonce); font-weight: 600; cursor: pointer; font-size: .9em; }
+  .sous-ndc { margin: 12px 0 0; } .a-lier { margin-top: 10px; } .a-lier summary { cursor: pointer; color: var(--accent-fonce); font-weight: 600; }
+  .pied-ndc { margin: 10px 0 0; font-size: .85em; }
 </style>
 {% endif %}

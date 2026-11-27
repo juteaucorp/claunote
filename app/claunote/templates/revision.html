@@ -113,7 +113,7 @@
     <details class="explication"><summary>Voir la réponse</summary>
       <p><strong>{{ 'ABCDEFGH'[q.reponse] }}. {{ q.choix[q.reponse]|maths }}</strong></p>
       <p>{{ q.explication|maths }}
-      {% if q.source in reperes %}<a href="/doc/{{ reperes[q.source] }}">[{{ q.source }}]</a>
+      {% if q.source in reperes %}<a href="{{ reperes[q.source]|lien_source }}">[{{ q.source }}]</a>
       {% elif q.source in web %}<a class="web" href="{{ web[q.source].url }}" target="_blank" rel="noopener noreferrer">[{{ q.source }}]</a>
       {% elif q.source == 'IA' %}{{ HORS_COURS }}{% endif %}</p>
     </details>
@@ -162,7 +162,7 @@
 <details class="carte">
   <summary>{{ k.recto|maths }}</summary>
   <p>{{ k.verso|maths }}
-  {% if k.source in reperes %}<a href="/doc/{{ reperes[k.source] }}">[{{ k.source }}]</a>
+  {% if k.source in reperes %}<a href="{{ reperes[k.source]|lien_source }}">[{{ k.source }}]</a>
   {% elif k.source in web %}<a class="web" href="{{ web[k.source].url }}" target="_blank" rel="noopener noreferrer">[{{ k.source }}]</a>
   {% elif k.source == 'IA' %}{{ HORS_COURS }}{% endif %}</p>
 </details>
@@ -223,6 +223,10 @@
 {% macro ligne_source(repere, d) %}<li><span class="etiquette">{{ repere }}</span><div class="corps"><a href="/doc/{{ d.id }}">{{ d.titre or d.nom }}</a> <span class="doux">{{ d.type }}</span></div></li>{% endmacro %}
 <ul class="carte lignes">
   {% for repere, d in cours[:12] %}{{ ligne_source(repere, d) }}{% endfor %}
+  {% for repere, n in notes_lues %}
+  <li><span class="etiquette etiquette-note">{{ repere }}</span><div class="corps"><a href="/notes/{{ n.id }}">📝 {{ n|titre_note }}</a>
+    <span class="doux">{{ 'ta note' if n.compte_id == moi_id else 'note de ' ~ n.auteur }}</span></div></li>
+  {% endfor %}
   {% for w in web.values() %}
   <li><span class="etiquette etiquette-web">{{ w.repere }}</span><div class="corps"><a href="{{ w.url }}" target="_blank" rel="noopener noreferrer">{{ w.titre }} ↗</a>
     <div class="doux">{{ w.url.split('/')[2] }} · web</div></div></li>
@@ -233,7 +237,7 @@
   <ul class="lignes">{% for repere, d in cours[12:] %}{{ ligne_source(repere, d) }}{% endfor %}</ul>
 </details>
 {% endif %}
-{% if web or ajout_ia %}<p class="doux">[D…] = tes cours, la base de ce support.{% if web %} [W…] = pages web consultées par l'agent pour compléter ou vérifier.{% endif %}{% if ajout_ia %} « pas dans tes cours » = ajouté par l'IA.{% endif %}</p>{% endif %}
+{% if web or ajout_ia or notes_lues %}<p class="doux">[D…] = tes cours{% if notes_lues %} et tes notes{% endif %}, la base de ce support.{% if web %} [W…] = pages web consultées par l'agent pour compléter ou vérifier.{% endif %}{% if ajout_ia %} « pas dans tes cours » = ajouté par l'IA.{% endif %}</p>{% endif %}
 {% endif %}
 <style>
   .tete-revision { margin-bottom: 4px; }
@@ -266,6 +270,7 @@
   .question.ratee .num-q { background: var(--alerte); color: #fff; }
   .resultat { font-size: 1.05rem; }
   .etiquette-web { --g: var(--g-plan); }
+  .etiquette-note { --g: var(--g-cartes, var(--g-plan)); }
   a.web { color: var(--g-plan); }
   a.etat { text-decoration: none; }
   .tete-revision + h1 + .renommer { margin: -2px 0 6px; }

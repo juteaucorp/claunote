@@ -24,7 +24,8 @@
 {% if doc.statut == 'classe' %}
 <form method="post" action="/reviser" class="carte">
   <input type="hidden" name="doc_id" value="{{ doc.id }}">
-  <strong>Réviser ce document</strong>{% if notes_cours %} <span class="doux">· avec {{ 'ta note' if notes_cours|length == 1 else 'tes ' ~ notes_cours|length ~ ' notes' }} sur ce cours</span>{% endif %}
+  {% set nb_notes = (notes_cours|length) + (notes_publiques_cours|default([])|length) %}
+  <strong>Réviser ce document</strong>{% if nb_notes %} <span class="doux">· avec {{ 'ta note' if nb_notes == 1 else 'les ' ~ nb_notes ~ ' notes' }} sur ce cours</span>{% endif %}
   <div class="actions" style="margin-top: 8px">
     <button name="genre" value="fiche" class="principal">Fiche</button>
     <button name="genre" value="quiz">Quiz</button>

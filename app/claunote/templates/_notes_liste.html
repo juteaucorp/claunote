@@ -5,7 +5,7 @@
   {% set texte = n.debut|extrait_note(140) %}{% if texte and texte != (n|titre_note) %}<span class="note-extrait">{{ texte }}</span>{% endif %}
   <span class="note-meta doux">
     {% if avec_matiere %}{{ n.matiere or 'Sans matière' }}{% if n.niveau %} · {{ n.niveau }}{% endif %} · {% endif %}{{ n.maj_le|date_note }}
-    {% if n.document_id %} · 📎 cours{% endif %}{% if n.public %} · 🌐 publique{% endif %}
+    {% if n.document_id %} · 📎 {{ n.cours_titre or 'cours lié' }}{% endif %}{% if n.public %} · 🌐 publique{% endif %}
     {% if moi_id and n.compte_id != moi_id %} · {{ n.auteur }}{% endif %}
   </span>
 </a>
@@ -17,7 +17,7 @@
   {% else %}
   <p><strong>Aucune note {{ 'ici' if m else 'pour l’instant' }}.</strong></p>
   <p class="doux">Une note se range dans une <strong>matière</strong>, se rattache à un <strong>cours</strong> (bouton « Prendre une note » sur la page du cours), ou reste libre.
-    Tes notes sont <strong>privées</strong> ; elles servent aussi au chat « Une question » et aux fiches.</p>
+    Tes notes sont <strong>privées</strong> ; l'IA les lit quand tu révises (fiches, quiz, flashcards, épreuves, campagnes) et dans le chat « Une question ».</p>
   <p><a class="bouton principal" href="/notes/nouvelle{{ ('?matiere=' ~ m|urlencode) if m and m != 'libres' }}">Écrire une note</a></p>
   {% endif %}
 </div>
