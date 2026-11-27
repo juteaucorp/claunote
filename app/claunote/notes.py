@@ -2,6 +2,8 @@
 
     Nouvelle note ──► /notes/nouvelle (?matiere=BTS2|Réseaux, ?doc=12, ?pronote=… depuis l'Agenda)
          │               éditeur Markdown, enregistré tout seul pendant la frappe (POST /notes/<id>)
+         │               ▦ Tableau : grille de cases (créer, ou modifier celui sous le curseur)
+         │               collage Word / Google Docs et import .docx → Markdown (collage.py)
          ▼
     table notes (une par ligne, compte_id + row-level security, comme les cours)
          ├──► /notes : épinglées, puis par matière ; recherche pendant la frappe ; archivées à part

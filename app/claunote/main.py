@@ -29,7 +29,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, UploadFile as FichierRecu
 
-from claunote import (actualites, agent, anki, apercu, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, comptes, db, decoupage, demande, demandes_ia,
+from claunote import (actualites, agent, anki, apercu, apparence, appareils, archivage, auth, carte_mentale, cles, cloudflare, collage, comptes, db, decoupage, demande, demandes_ia,
                       disque, emploi_du_temps, formations, formules, importation, index, installation, kdrive_seul, lecture, local, maj, matieres, modeles, notes, notifications, pdf, progression,
                       pronote, profil, question, raccourci, rangement, reglages, ressources, revision, schemas, securite, sensible,
                       stockage_local, turnstile, version)
@@ -511,7 +511,11 @@ def rendu_markdown(texte: str | None) -> str:
     # Le HTML brut éventuel de la transcription est neutralisé avant le rendu
     texte = texte.replace("&", "&amp;").replace("<", "&lt;")
     rendu = formules.restaurer(markdown.markdown(texte, extensions=["tables", "fenced_code"]), maths)
+    rendu = RE_SAUT.sub("<br>", rendu)   # « <br> » écrit dans une case de tableau : un retour à la ligne (seule balise permise)
     return schemas.restaurer(liens_surs(rendu), figures)
+
+
+RE_SAUT = re.compile(r"&lt;br\s*/?&gt;", re.I)
 
 
 SCHEMA_URL = re.compile(r"^\s*([a-z][a-z0-9+.\-]*)\s*:", re.I)
@@ -4379,6 +4383,38 @@ def apercu_note(contenu: str = Form("")):
     """Aperçu dans l'éditeur : le même rendu que la note enregistrée (formules, schémas, cases à cocher)."""
     rendu = rendu_note(contenu[:notes.CONTENU_MAX]) if contenu.strip() else Markup('<p class="doux">Rien à afficher pour l’instant.</p>')
     return HTMLResponse(str(rendu))
+
+
+@app.post("/notes/coller")
+def coller_dans_note(html_: str = Form("", alias="html")):
+    """Collage depuis Word, Google Docs, une page web… : le HTML du presse-papiers en Markdown (collage.py)."""
+    if len(html_) > collage.HTML_MAX:
+        raise HTTPException(413, "collage trop gros : colle-le en plusieurs fois")
+    return JSONResponse({"markdown": collage.html_en_markdown(html_)})
+
+
+DOCX_MAX = 30 * 1024 * 1024
+
+
+@app.post("/notes/importer")
+async def importer_dans_note(fichier: UploadFile = File(...)):
+    """Un .docx choisi dans l'éditeur : son texte mis en forme (titres, listes, gras, tableaux), à insérer."""
+    nom = PurePosixPath((fichier.filename or "document.docx").replace("\\", "/")).name
+    if PurePosixPath(nom).suffix.lower() != ".docx":
+        raise HTTPException(400, "choisis un document Word (.docx) ; un vieux .doc : ouvre-le et enregistre-le en .docx")
+    contenu = await fichier.read(DOCX_MAX + 1)
+    if len(contenu) > DOCX_MAX:
+        raise HTTPException(413, f"document trop gros ({DOCX_MAX // 1024 // 1024} Mo au maximum)")
+    with tempfile.TemporaryDirectory() as dossier:
+        chemin = Path(dossier) / "document.docx"
+        chemin.write_bytes(contenu)
+        try:
+            texte = await run_in_threadpool(collage.docx_en_markdown, chemin)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+    if len(texte) > notes.CONTENU_MAX:
+        raise HTTPException(413, "document trop long pour une note")
+    return JSONResponse({"markdown": texte, "titre": PurePosixPath(nom).stem[:notes.TITRE_MAX]})
 
 
 @app.get("/notes/pour-reviser", response_class=HTMLResponse)
