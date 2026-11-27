@@ -98,5 +98,21 @@ def test_pages_partages(client, faux_comptes, monkeypatch):
 def test_partages_demande_le_droit_bibliotheque():
     from claunote import comptes
     assert comptes.droit_requis("/partages") == "bibliotheque"
-    assert comptes.droit_requis("/partages/revision/4") == "bibliotheque"
+    # Fiches et campagnes publiques : lues depuis Réviser, avec le droit « reviser »
+    assert comptes.droit_requis("/partages/revision/4") == "reviser"
+    assert comptes.droit_requis("/partages/campagne/3") == "reviser"
     assert comptes.droit_requis("/doc/1/visibilite", "POST") == "bibliotheque"
+
+
+def test_reviser_montre_les_fiches_et_campagnes_publiques_des_autres(client, faux_comptes, monkeypatch):
+    """Une fiche mise sur « Tous les comptes » apparaît dans Réviser des autres (plus de page cachée)."""
+    fiche = {"id": 4, "genre": "fiche", "sujet": "CEJMA : nom de domaine", "niveau": "BTS2", "matiere": "CEJMA",
+             "auteur": "camille", "cree_le": None, "campagne_id": None, "compte_id": 2}
+    monkeypatch.setattr(db, "partages_revisions", lambda: [fiche])
+    monkeypatch.setattr(db, "partages_campagnes", lambda: [{"id": 3, "titre": "BTS blanc", "auteur": "camille",
+                                                            "debut": date(2026, 12, 1), "fin": date(2026, 12, 5)}])
+    assert "Publiques des autres" not in client.get("/reviser").text   # seul compte : rien
+    _a_plusieurs(faux_comptes)
+    r = client.get("/reviser")
+    assert "Publiques des autres" in r.text and "/partages/revision/4" in r.text and "CEJMA : nom de domaine" in r.text
+    assert "/partages/campagne/3" in r.text and "camille" in r.text

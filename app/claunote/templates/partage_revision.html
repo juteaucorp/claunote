@@ -2,7 +2,7 @@
 {% from "_icones.html" import icone %}
 {% block titre %}{{ genres[rev.genre] }} : {{ rev.sujet|truncate(60) }}{% endblock %}
 {% block contenu %}
-<p class="fil"><a href="/partages">Partagés</a> › {{ genres[rev.genre] }}</p>
+<p class="fil"><a href="/reviser">Réviser</a> › Publiques des autres › {{ genres[rev.genre] }}</p>
 <div class="g-{{ rev.genre }} meta tete-revision">
   <span class="etiquette">{{ icone(rev.genre, 15) }} {{ genres[rev.genre] }}</span>
   {% if rev.matiere %}<span class="doux">{{ rev.matiere }}{% if rev.niveau %} · {{ rev.niveau }}{% endif %}</span>{% endif %}

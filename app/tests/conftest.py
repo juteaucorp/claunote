@@ -50,6 +50,8 @@ class FauxComptes:
         m(db, "plusieurs_comptes", lambda: sum(1 for k in self.comptes.values() if k["actif"]) > 1)
         m(db, "matieres_publiques", lambda: set(self.matieres_publiques))
         m(db, "bibliotheque_partagee", lambda: [])
+        m(db, "partages_revisions", lambda: [])   # Réviser : fiches publiques des autres (à plusieurs comptes)
+        m(db, "partages_campagnes", lambda: [])
         m(db, "rendre_matiere", lambda n, mat, pub: (self.matieres_publiques.add if pub
                                                      else self.matieres_publiques.discard)((n, mat)))
 

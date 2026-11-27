@@ -65,7 +65,8 @@ PAGES = [
     # Chacun relie SON Pronote (un jeton par compte dans le service) : le droit « agenda » suffit
     ("/agenda", "agenda"), ("/actualites", "actualites"),
     ("/bibliotheque", "bibliotheque"), ("/liste", "bibliotheque"), ("/recherche", "bibliotheque"),
-    ("/piece/", "reviser"), ("/notes", "notes"), ("/partages/note", "notes"), ("/partages", "bibliotheque"),
+    ("/piece/", "reviser"), ("/notes", "notes"), ("/partages/note", "notes"),
+    ("/partages/revision", "reviser"), ("/partages/campagne", "reviser"), ("/partages", "bibliotheque"),
 ]
 # Pages de rangement où l'admin ne travaille que sur ses propres dépôts, même avec « Tout voir » : chaque compte
 # trie ses imports, choisit sa formation et range ses matières (l'admin garde l'accès aux documents des autres
