@@ -7,10 +7,12 @@
          ▼
     table notes (une par ligne, compte_id + row-level security, comme les cours)
          ├──► /notes : épinglées, puis par matière ; recherche pendant la frappe ; archivées à part
-         ├──► page du cours : « Mes notes sur ce cours »
+         ├──► page du cours : ses notes liées, les publiques des autres, ses notes de la matière à lier
+         ├──► /notes : le cours lié de chaque note ; la note : « Ouvrir le cours »
          ├──► Recherche du site : « Dans tes notes »
          ├──► chat « Une question » : les notes qui en parlent, repères [D…] vers la note
-         ├──► fiches, quiz, flashcards : notes cochées jointes au support (contexte de l'élève)
+         ├──► toute révision (fiche, quiz, flashcards, épreuve, plan, campagne, « en une phrase », modification) :
+         │      lues comme des cours, repères [Dn] vers la note (worker.notes_de_revision, db.notes_pour_revision)
          └──► 🔒 privée par défaut / 🌐 publique : lue par les autres comptes sur « Partagés »
 
 Droit « notes » (comptes.DROITS). Deux appareils sur la même note : chaque envoi porte la version lue
@@ -104,10 +106,37 @@ def piece_jointe(note: dict) -> tuple[str, bytes]:
     return nom, markdown_complet(note).encode()
 
 
-def comme_passage(note: dict) -> dict:
+def comme_passage(note: dict, compte_id: int | None = None) -> dict:
     """Une note au format des passages du chat (question.py). Son identifiant est négatif : le repère [D…]
-    mène à /notes/<id> et non à un cours (main.avec_sources)."""
+    mène à /notes/<id> et non à un cours (main.avec_sources). Celle d'un autre compte (publique) porte son auteur."""
     texte = (note.get("contenu") or "").strip()[:TEXTE_POUR_QUESTION]
-    return {"document_id": -int(note["id"]), "titre": f"Ta note : {titre_affiche(note)}", "nom": titre_affiche(note),
+    autre = compte_id is not None and note.get("compte_id") not in (None, compte_id)
+    titre = (f"Note de {note.get('auteur') or 'un autre élève'} : " if autre else "Ta note : ") + titre_affiche(note)
+    return {"document_id": -int(note["id"]), "titre": titre, "nom": titre_affiche(note),
             "niveau": note.get("niveau"), "matiere": note.get("matiere"), "type": "note personnelle",
             "statut": "note", "texte": texte or titre_affiche(note), "extrait": extrait(texte, 300)}
+
+
+def comme_source(note: dict, compte_id: int | None = None) -> dict:
+    """Une note au format des cours lus par une révision (revision.blocs_cours) : repère [Dn] comme un cours,
+    identifiant négatif pour que le lien mène à la note (main.avec_sources). La note publique d'un autre
+    compte porte le nom de son auteur."""
+    autre = compte_id is not None and note.get("compte_id") not in (None, compte_id)
+    titre = (f"Note de {note.get('auteur') or 'un autre élève'} : " if autre else "Ta note : ") + titre_affiche(note)
+    return {"id": -int(note["id"]), "note_id": int(note["id"]), "titre": titre, "nom": titre,
+            "niveau": note.get("niveau"), "matiere": note.get("matiere"),
+            "type": "note publique d'un autre élève" if autre else "note personnelle",
+            "transcription": (note.get("contenu") or "").strip(), "statut": "note"}
+
+
+def sujet_precis(sujet: str | None, matieres: list[str]) -> str | None:
+    """Le sujet d'une révision sans le nom de la matière ; None si elle couvre la matière entière
+    (« Réseaux », « Réseaux (BTS1, BTS2) ») : toutes les notes de la matière sont alors lues."""
+    s = (sujet or "").strip()
+    for m in sorted((m for m in matieres if m), key=len, reverse=True):
+        if s.casefold() == m.casefold() or re.fullmatch(rf"{re.escape(m)}\s*\([^)]*\)", s, flags=re.I):
+            return None
+        if s.casefold().startswith(f"{m.casefold()} : "):
+            s = s[len(m) + 3:].strip()
+            break
+    return s or None

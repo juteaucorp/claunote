@@ -1,11 +1,13 @@
-{# Réviser : ses notes de la matière choisie, à joindre au support (cochées = l'IA les lit avec les cours) #}
+{# Réviser : les notes de la matière choisie (les siennes et les publiques des autres). Cochées = lues par l'IA
+   avec les cours ; décochées = laissées de côté. Les notes rattachées aux cours lus le sont aussi (worker). #}
 {% if liste %}
 <div class="liste-cours notes-a-joindre">
-  <div class="doux tete-liste">📝 {{ liste|length }} note{{ 's' if liste|length > 1 }} en {{ matiere }} · cochées = jointes au support
-    <button type="button" class="lien" onclick="const l = this.closest('.liste-cours').querySelectorAll('input[type=checkbox]'); const tout = [...l].some((c) => !c.checked); l.forEach((c) => { c.checked = tout; }); this.textContent = tout ? 'Tout décocher' : 'Tout cocher'">Tout cocher</button></div>
+  <div class="doux tete-liste">📝 {{ liste|length }} note{{ 's' if liste|length > 1 }} en {{ matiere }} · lues par l'IA avec tes cours, décoche pour en laisser de côté
+    <button type="button" class="lien" onclick="const l = this.closest('.liste-cours').querySelectorAll('input[type=checkbox]'); const tout = [...l].some((c) => !c.checked); l.forEach((c) => { c.checked = tout; }); this.textContent = tout ? 'Tout décocher' : 'Tout cocher'">Tout décocher</button></div>
   {% for n in liste %}
-  <label><input type="checkbox" name="note_ids" value="{{ n.id }}">
-    <span><strong>{{ n|titre_note }}</strong> <span class="doux">· {{ n.maj_le|date_note }}</span></span></label>
+  <input type="hidden" name="notes_vues" value="{{ n.id }}">
+  <label><input type="checkbox" name="note_ids" value="{{ n.id }}" checked>
+    <span><strong>{{ n|titre_note }}</strong> <span class="doux">· {% if moi_id and n.compte_id != moi_id %}note publique de {{ n.auteur }} · {% endif %}{{ n.maj_le|date_note }}</span></span></label>
   {% endfor %}
 </div>
 <style>

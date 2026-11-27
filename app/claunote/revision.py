@@ -13,6 +13,10 @@ Pas de limite de cours : au-delà de BUDGET caractères, les cours sont condens�
                  ──► groupe 2 ─► condensé 2 ─┼─► fiche / quiz / épreuve…
                  ──► groupe 3 ─► condensé 3 ─┘
 
+Les notes de l'élève (notes.py) sont lues comme des cours, avec leur repère [Dn] : celles des cours
+choisis, celles de la matière qui parlent du sujet (toutes si la révision couvre la matière), les siennes
+et les publiques des autres (worker.notes_de_revision). Le repère d'une note mène à la note.
+
 Des pièces jointes (emploi du temps, dates d'épreuves…) peuvent accompagner la consigne :
 c'est du contexte, pas des cours.
 """
@@ -378,6 +382,19 @@ def consigne_pieces(a_lire: list[str]) -> str:
             ". Ce ne sont pas des cours : ne les cite pas avec un repère [Dn].\n")
 
 
+CONSIGNE_NOTES = """- Parmi les documents numérotés, ceux dont l'en-tête commence par « Ta note » sont les notes que l'élève
+  a prises lui-même (ce que le prof a dit à l'oral, ses questions, ses résumés, ses exemples) ; « Note de … » :
+  la note qu'un autre élève a rendue publique. Lis-les comme ses cours et sers-t'en : reprends ce sur quoi
+  elles insistent (points répétés par le prof, pièges, astuces, exemples, questions de l'élève) et cite-les
+  avec leur repère [Dn]. Si une note contredit un cours, suis le cours et signale l'écart en une phrase.
+"""
+
+
+def consigne_notes(docs: list[dict]) -> str:
+    """La règle des notes, seulement s'il y en a parmi les documents lus (identifiant négatif)."""
+    return CONSIGNE_NOTES if any(int(d.get("id") or 0) < 0 for d in docs) else ""
+
+
 def entree_avec_pieces(texte: str, texte_pieces: str) -> str:
     if not texte_pieces:
         return texte
@@ -581,6 +598,7 @@ def generer(genre: str, sujet: str, docs: list[dict], date_eval: dt.date | None 
         a_lire, texte_pieces = preparer_pieces(pieces or [], Path(dossier))
         progres("recentrage" if recentrer else "rédaction")
         texte_prompt = prompt(genre, sujet, date_eval, consigne=consigne, fichiers=a_lire, strict=strict)
+        texte_prompt += consigne_notes(docs)
         if reperes_perimetre:
             texte_prompt += "\n" + coherence.CONSIGNE_REPERES
         texte_prompt += recentrer
@@ -626,6 +644,7 @@ def retoucher(rev: dict, demande: str, docs: list[dict], pieces: list[dict] | No
         progres("modification")
         texte_prompt = prompt(genre, rev["sujet"], rev.get("date_eval") if genre == "plan" else None,
                               consigne=consigne, fichiers=a_lire, strict=bool(rev.get("strict")))
+        texte_prompt += consigne_notes(docs)
         texte_prompt += RETOUCHE.format(marque=MARQUE_ACTUEL,
                                         demande="\n".join(f"  > {ligne}" for ligne in demande.splitlines()))
         entree = entree_avec_pieces(texte_cours, texte_pieces) + f"\n\n{MARQUE_ACTUEL}\n\n{rev['contenu']}"

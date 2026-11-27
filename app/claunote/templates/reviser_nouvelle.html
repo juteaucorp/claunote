@@ -43,9 +43,9 @@
     {% endif %}
     {% if notes_jointes %}
       <div class="liste-cours notes-jointes">
-        <div class="doux">📝 Avec {{ 'ta note' if notes_jointes|length == 1 else 'tes notes' }} (l'IA les lit avec les cours ; décoche pour les laisser de côté)</div>
-        {% for n in notes_jointes %}<label><input type="checkbox" name="note_ids" value="{{ n.id }}" checked>
-          <span><strong>{{ n|titre_note }}</strong> <span class="doux">· {{ n.matiere or 'Sans matière' }}</span></span></label>{% endfor %}
+        <div class="doux">📝 Avec {{ 'cette note' if notes_jointes|length == 1 else 'ces notes' }} (l'IA les lit avec les cours ; décoche pour les laisser de côté)</div>
+        {% for n in notes_jointes %}<input type="hidden" name="notes_vues" value="{{ n.id }}"><label><input type="checkbox" name="note_ids" value="{{ n.id }}" checked>
+          <span><strong>{{ n|titre_note }}</strong> <span class="doux">· {{ n.matiere or 'Sans matière' }}{% if moi_id and n.compte_id != moi_id %} · note publique de {{ n.auteur }}{% endif %}</span></span></label>{% endfor %}
       </div>
     {% endif %}
     {% if peut('notes') and not document %}

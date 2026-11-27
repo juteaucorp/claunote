@@ -34,7 +34,7 @@ from pathlib import Path, PurePosixPath
 import httpx
 
 from claunote import (actualites, agent, cloudflare, coherence, comptes, db, decoupage, demandes_ia, disque, emploi_du_temps, formations, importation, index, kdrive_seul, lecture, local, modeles,
-                      notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
+                      notes, notifications, ocr, pdf, pronote, rangement, reglages, ressources, revision, sensible,
                       stockage_local, version)
 from claunote.agent import (NIVEAUX, ClaudeDeconnecte, ClaudeIndisponible, ErreurAgent, Interrompu, LimiteAtteinte,
                             SansForfait, analyser)
@@ -748,6 +748,7 @@ def traiter_revision(kd: KDrive, rev: dict):
         return retoucher_revision(kd, rev, quoi)
     activite(quoi)
     docs = db.documents(rev["doc_ids"])
+    docs += notes_de_revision(rev, docs)   # ses notes (et les publiques des autres) lues comme des cours
     perimetre, anciens = coherence.preparer(rev)   # anciens supports + autres cours : rester dans le sujet
 
     def rediger(recentrer: str = ""):
@@ -801,12 +802,43 @@ def traiter_revision(kd: KDrive, rev: dict):
         log(f"notification impossible : {e}")
 
 
+def notes_de_revision(rev: dict, docs: list[dict]) -> list[dict]:
+    """Notes lues avec les cours (db.notes_pour_revision) : cochées, rattachées aux cours, puis celles de la
+    matière qui parlent du sujet (toutes si la révision couvre la matière). Les siennes et les publiques des
+    autres ; rien si le compte n'a pas le droit « notes ». Une erreur ici ne bloque jamais la fiche."""
+    compte_id = rev.get("compte_id")
+    try:
+        compte = comptes.trouver(compte_id) if compte_id else None
+        if compte_id and not comptes.peut(compte, "notes"):
+            return []
+        matieres = list(dict.fromkeys((d.get("niveau"), d["matiere"]) for d in docs if d.get("matiere")))
+        sujet = notes.sujet_precis(rev.get("sujet"), [m for _, m in matieres])
+        lues = db.notes_pour_revision([d["id"] for d in docs], matieres, sujet, rev.get("note_ids") or [],
+                                      rev.get("notes_exclues") or [])
+    except Exception as e:
+        log(f"notes de la révision {rev.get('id')} illisibles : {e}")
+        return []
+    return [notes.comme_source(n, compte_id) for n in lues]
+
+
+def notes_des_reperes(rev: dict) -> list[dict]:
+    """Pour une modification : les notes déjà citées, dans le même ordre, pour garder les mêmes repères [Dn]."""
+    reperes = rev.get("reperes") or {}
+    ordre = sorted(((int(r[1:]), -int(i)) for r, i in reperes.items() if r[1:].isdigit() and int(i) < 0))
+    try:
+        return [notes.comme_source(n, rev.get("compte_id")) for n in db.notes_lisibles([i for _, i in ordre])]
+    except Exception as e:
+        log(f"notes de la révision {rev.get('id')} illisibles : {e}")
+        return []
+
+
 def retoucher_revision(kd: KDrive, rev: dict, quoi: str):
     """Modification demandée par l'élève sur un support prêt. Ratée : l'ancien contenu reste, avec l'erreur."""
     activite(f"{quoi} : modification")
     try:
+        docs = db.documents(rev["doc_ids"])
         contenu, web = revision.retoucher(
-            rev, rev["retouche"], db.documents(rev["doc_ids"]),
+            rev, rev["retouche"], docs + notes_des_reperes(rev),
             pieces=kdrive_seul.avec_contenu(db.pieces_jointes(rev["id"], rev.get("campagne_id"), contenu=True)), memoire=db.Condenses(),
             progres=lambda etape: activite(f"{quoi} : {etape}"))
     except ErreurAgent as e:
@@ -826,6 +858,18 @@ def retoucher_revision(kd: KDrive, rev: dict, quoi: str):
         log(f"PDF de la révision {rev['id']} : kDrive indisponible ({e}), copie au prochain tour")
 
 
+def titres_sources(reperes: dict | None) -> dict[int, str]:
+    """{id: titre} des cours et des notes (identifiant négatif) cités par une révision, pour son PDF."""
+    ids = list((reperes or {}).values())
+    sources = {d["id"]: d["titre"] or d["nom"] for d in db.documents([i for i in ids if int(i) > 0])}
+    try:
+        sources.update({-n["id"]: f"Note : {notes.titre_affiche(n)}"
+                        for n in db.notes_lisibles([-int(i) for i in ids if int(i) < 0])})
+    except Exception as e:
+        log(f"notes citées illisibles : {e}")
+    return sources
+
+
 def copier_pdf(kd: KDrive, rev: dict) -> int | None:
     """PDF de la révision dans Etudes/fiches/<campagne ou matière>/, pour l'ouvrir ou le partager depuis kDrive.
 
@@ -833,7 +877,7 @@ def copier_pdf(kd: KDrive, rev: dict) -> int | None:
     """
     kdrive_id = None
     try:
-        sources = {d["id"]: d["titre"] or d["nom"] for d in db.documents(list((rev["reperes"] or {}).values()))}
+        sources = titres_sources(rev["reperes"])
         dossier = kd.ensure_path(ETUDES_ID, racine(rev.get("compte_id")) + [
             "fiches", rev.get("campagne_titre") or rev.get("matiere") or "divers"])
         nom = revision.nom_fichier(rev["genre"], rev["sujet"], rev["cree_le"].date(), "pdf")
@@ -867,6 +911,9 @@ def traiter_campagne(campagne: dict):
             m["cours"] = [f"[{d.get('niveau')}] {d['titre'] or d['nom']}" for d in docs]
         else:
             m["cours"] = [d["titre"] or d["nom"] for d in docs]
+        # Ses notes de la matière aussi : le programme peut prévoir de les relire
+        faux = {"id": None, "compte_id": campagne.get("compte_id"), "sujet": m["sujet"] or m["matiere"]}
+        m["cours"] += [n["titre"] for n in notes_de_revision(faux, docs)]
     activite(f"Programme de « {campagne['titre']} »")
     try:
         programme = revision.generer_programme(campagne, list(matieres.values()),

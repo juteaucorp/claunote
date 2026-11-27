@@ -557,6 +557,13 @@ def avec_sources(rendu: str, reperes: dict, web: list[dict] | None = None) -> Ma
     return Markup(re.sub(r"\[IA\]", HORS_COURS, rendu))
 
 
+def lien_source(source_id) -> str:
+    """Lien d'un repère [Dn] : le cours, ou la note (identifiant négatif)."""
+    i = int(source_id)
+    return f"/notes/{-i}" if i < 0 else f"/doc/{i}"
+
+
+templates.env.filters["lien_source"] = lien_source
 HORS_COURS = '<span class="ajout-ia" title="Ajouté par l\'IA : ce n\'est pas dans tes cours">pas dans tes cours</span>'
 templates.env.globals["HORS_COURS"] = Markup(HORS_COURS)
 
@@ -1771,12 +1778,17 @@ def document(request: Request, doc_id: int):
         "niveaux": NIVEAUX, "types": TYPES, "matieres": db.matieres(),
         "matiere_publique": (doc["niveau"], doc["matiere"]) in db.matieres_publiques()
         if doc["statut"] == "classe" and db.plusieurs_comptes() else False,
-        "notes_cours": _notes_cours(doc_id)})
+        **_notes_du_cours(doc)})
 
 
-def _notes_cours(doc_id: int) -> list[dict]:
-    """Ses notes rattachées à ce cours (section « Mes notes » de la page du cours)."""
-    return db.notes_du_document(doc_id) if comptes.peut(moi(), "notes") else []
+def _notes_du_cours(doc: dict) -> dict:
+    """Section « Notes » de la page d'un cours : ses notes rattachées, les notes publiques des autres sur ce
+    cours, et ses notes de la matière pas encore liées (à lier en un appui)."""
+    if not comptes.peut(moi(), "notes") or doc.get("statut") != "classe":
+        return {"notes_cours": [], "notes_publiques_cours": [], "notes_a_lier": []}
+    return {"notes_cours": db.notes_du_document(doc["id"]),
+            "notes_publiques_cours": db.notes_publiques_du_document(doc["id"]),
+            "notes_a_lier": db.notes_a_lier(doc.get("niveau"), doc.get("matiere"), doc["id"])}
 
 
 def _page_carte_mentale(request: Request, texte: str, titre: str, retour: str) -> HTMLResponse:
@@ -2432,11 +2444,12 @@ def nouvelle_revision(request: Request, sujet: str = "", matiere: str = "", date
     """Formulaire d'une révision ; les paramètres le préremplissent (depuis l'agenda Pronote, un cours, une note)."""
     document = db.document(doc) if doc else None
     jointes = db.notes_choisies([note]) if note and comptes.peut(moi(), "notes") else []
-    if document and comptes.peut(moi(), "notes"):
-        jointes += [n for n in db.notes_du_document(document["id"]) if n["id"] != note]
+    if document and comptes.peut(moi(), "notes"):   # ses notes sur ce cours et les publiques des autres
+        jointes += [n for n in db.notes_du_document(document["id"]) + db.notes_publiques_du_document(document["id"])
+                    if n["id"] != note]
     return templates.TemplateResponse(request, "reviser_nouvelle.html", {
         "choix": db.niveaux_matieres_comptes(), "genres": revision.GENRES, "document": document,
-        "notes_jointes": jointes,
+        "notes_jointes": jointes, "moi_id": (moi() or {}).get("id"),
         "demain": dt.date.today() + dt.timedelta(days=1),
         "pre": {"sujet": sujet, "matiere": matiere, "date_eval": date_eval, "genre": genre or "fiche"}})
 
@@ -2475,20 +2488,25 @@ async def demander_revision(request: Request):
         sujet = sujet or f"{matiere} ({niveau})"
     if not ids:
         raise HTTPException(400, "aucun document classé pour ce choix")
-    pieces = await _pieces(f) + _notes_jointes(f)
-    rev_id = db.creer_revision(genre, sujet, ids, eval_le, consigne=consigne, strict=bool(f.get("strict")))
+    pieces = await _pieces(f)
+    note_ids, exclues = _choix_notes(f)
+    rev_id = db.creer_revision(genre, sujet, ids, eval_le, consigne=consigne, strict=bool(f.get("strict")),
+                               note_ids=note_ids, notes_exclues=exclues)
     if pieces:
         db.ajouter_pieces(pieces, revision_id=rev_id)
     db.demander_scan()
     return RedirectResponse(f"/revision/{rev_id}", status_code=303)
 
 
-def _notes_jointes(f) -> list[tuple[str, bytes]]:
-    """Notes cochées pour une fiche, un quiz… : jointes au support comme le contexte de l'élève (ses mots à lui)."""
+def _choix_notes(f) -> tuple[list[int], list[int]]:
+    """(notes cochées : toujours lues, notes décochées : jamais). Les notes de la matière et des cours que le
+    formulaire ne montrait pas sont choisies par le worker au moment d'écrire (worker.notes_de_revision).
+    Le worker ne lit que les siennes et les publiques des autres, quels que soient les numéros envoyés."""
     if not comptes.peut(moi(), "notes"):
-        return []
-    ids = list(dict.fromkeys(int(i) for i in f.getlist("note_ids") if str(i).isdigit()))
-    return [notes.piece_jointe(n) for n in db.notes_choisies(ids)]
+        return [], []
+    cochees = list(dict.fromkeys(int(i) for i in f.getlist("note_ids") if str(i).isdigit()))
+    vues = {int(i) for i in f.getlist("notes_vues") if str(i).isdigit()}
+    return cochees, sorted(vues - set(cochees))
 
 
 def descriptions_genres() -> dict:
@@ -2581,7 +2599,19 @@ async def lancer_demande(request: Request):
 
 
 def _sources(reperes: dict) -> dict[int, str]:
-    return {d["id"]: d["titre"] or d["nom"] for d in db.documents(sorted(set((reperes or {}).values())))}
+    """{id: titre} des cours et des notes (identifiant négatif) cités, pour le PDF."""
+    ids = sorted(set((reperes or {}).values()))
+    titres = {d["id"]: d["titre"] or d["nom"] for d in db.documents([i for i in ids if int(i) > 0])}
+    titres.update({-n["id"]: f"Note : {notes.titre_affiche(n)}"
+                   for n in db.notes_lisibles([-int(i) for i in ids if int(i) < 0])})
+    return titres
+
+
+def _notes_citees(reperes: dict) -> list[tuple[str, dict]]:
+    """(repère, note) des notes lues par une révision : les siennes et les publiques des autres."""
+    ids = {r: -int(i) for r, i in (reperes or {}).items() if int(i) < 0}
+    par_id = {n["id"]: n for n in db.notes_lisibles(list(ids.values()))} if ids else {}
+    return [(r, par_id[i]) for r, i in ids.items() if i in par_id]
 
 
 @app.get("/revision/{rev_id}", response_class=HTMLResponse)
@@ -2607,11 +2637,13 @@ def voir_revision(request: Request, rev_id: int):
             contenu = avec_sources(rendu_markdown(rev["contenu"]), reperes, web)
     # Sources : ses cours, et ceux qu'on lui partage (un invité fait aussi ses fiches avec les cours de l'admin)
     with (nullcontext() if comptes.est_admin(moi()) else db.partages()):
-        sources = db.documents(list(reperes.values()))
+        sources = db.documents([i for i in reperes.values() if int(i) > 0])
     par_id = {d["id"]: d for d in sources}
+    notes_lues = _notes_citees(reperes)
     return templates.TemplateResponse(request, "revision.html", {
         "rev": rev, "genres": revision.GENRES, "contenu": contenu, "corrige": corrige, "questions": questions,
-        "cartes": cartes, "reperes": reperes, "sources": sources,
+        "cartes": cartes, "reperes": reperes, "sources": sources or notes_lues, "notes_lues": notes_lues,
+        "moi_id": (moi() or {}).get("id"),
         "cours": [(r, par_id[i]) for r, i in reperes.items() if i in par_id],
         "pieces": db.pieces_jointes(rev_id, rev.get("campagne_id")),
         "web": {w["repere"]: w for w in web},
@@ -2960,16 +2992,22 @@ def _passages(q: str, conv: dict, limite: int = 10) -> list[dict]:
         passages = [{**d, "document_id": d["id"], "texte": (d.get("transcription") or "")[:3000]}
                     for d in db.cours_pour_question(question.requete(q), conv["niveau"], conv["matiere"], 5,
                                                     avec_texte=True, statuts=db.STATUTS_UTILES)]
-    return _notes_pour_question(q, conv) + passages
+    return _notes_pour_question(q, conv, passages) + passages
 
 
-def _notes_pour_question(q: str, conv: dict) -> list[dict]:
-    """Ses propres notes qui en parlent, en tête des passages : ce qu'il a compris et noté lui-même."""
+def _notes_pour_question(q: str, conv: dict, passages: list[dict] | None = None) -> list[dict]:
+    """Les notes qui en parlent (les siennes, puis les publiques des autres), et celles rattachées aux cours
+    trouvés, en tête des passages : ce que l'élève a compris et noté lui-même."""
     if not comptes.peut(moi(), "notes"):
         return []
     try:
-        return [notes.comme_passage(n) for n in db.notes_pour_question(q, conv["niveau"], conv["matiere"],
-                                                                        notes.NB_POUR_QUESTION)]
+        trouvees = db.notes_pour_question(q, conv["niveau"], conv["matiere"], notes.NB_POUR_QUESTION)
+        cours = list(dict.fromkeys(p["document_id"] for p in passages or [] if int(p.get("document_id") or 0) > 0))[:5]
+        if cours:
+            deja = {n["id"] for n in trouvees}
+            trouvees += [n for n in db.notes_pour_revision(cours, [], None)
+                         if n["document_id"] in cours and n["id"] not in deja][:notes.NB_POUR_QUESTION]
+        return [notes.comme_passage(n, (moi() or {}).get("id")) for n in trouvees]
     except Exception as e:   # la recherche dans les cours suffit
         print(f"notes pour la question impossibles : {e}", flush=True)
         return []
@@ -4422,8 +4460,11 @@ def notes_pour_reviser(request: Request, niveau_matiere: str = "", deja_: str = 
     """Formulaire d'une fiche ou d'un quiz : ses notes de la matière choisie, à cocher pour les joindre."""
     niveau, matiere = notes.matiere_choisie(niveau_matiere)
     deja = {int(i) for i in deja_.split(",") if i.strip().isdigit()}
-    liste = [n for n in (db.notes_matiere(niveau, matiere) if matiere else []) if n["id"] not in deja]
-    return templates.TemplateResponse(request, "_notes_reviser.html", {"liste": liste, "matiere": matiere})
+    liste = (db.notes_matiere(niveau, matiere) + db.notes(niveau=niveau, matiere=matiere, publiques_des_autres=True)
+             if matiere else [])
+    liste = [n for n in liste if n["id"] not in deja]
+    return templates.TemplateResponse(request, "_notes_reviser.html", {"liste": liste, "matiere": matiere,
+                                                                        "moi_id": (moi() or {}).get("id")})
 
 
 @app.get("/notes/cours", response_class=HTMLResponse)
@@ -4480,6 +4521,17 @@ async def enregistrer_note(request: Request, note_id: int):
 @app.post("/notes/{note_id}/visibilite")
 def visibilite_note(note_id: int, valeur: str = Form(...)):
     return _visibilite("notes", note_id, valeur, f"/notes/{note_id}")
+
+
+@app.post("/notes/{note_id}/lier")
+def lier_note(note_id: int, document_id: str = Form(""), suite: str = Form("")):
+    """Rattache sa note à un cours qu'il peut lire (depuis la page du cours), ou la détache (vide)."""
+    _note_a_moi(note_id)
+    cours = db.cours_lisible(int(document_id)) if document_id.isdigit() else None
+    if document_id and cours is None:
+        raise HTTPException(404, "cours introuvable")
+    db.lier_note(note_id, cours["id"] if cours else None, *((cours["niveau"], cours["matiere"]) if cours else ()))
+    return RedirectResponse(_suite_sure(suite) if suite else f"/notes/{note_id}", status_code=303)
 
 
 @app.post("/notes/{note_id}/{action}")
@@ -4579,7 +4631,7 @@ def partage_document(request: Request, doc_id: int):
     if doc is None:
         raise HTTPException(404)
     return templates.TemplateResponse(request, "partage_doc.html", {
-        "doc": doc, "transcription": rendu_markdown(doc["transcription"]), "notes_cours": _notes_cours(doc_id)})
+        "doc": doc, "transcription": rendu_markdown(doc["transcription"]), **_notes_du_cours(doc)})
 
 
 @app.get("/partages/doc/{doc_id}/fichier")
@@ -4596,8 +4648,10 @@ def partage_revision(request: Request, rev_id: int):
     if rev is None:
         raise HTTPException(404)
     reperes = rev["reperes"] or {}
-    sources = db.documents_partages(list(reperes.values()))   # seulement les cours publics eux aussi
+    sources = db.documents_partages([i for i in reperes.values() if int(i) > 0])   # seulement les cours publics eux aussi
     visibles = {r: i for r, i in reperes.items() if i in {d["id"] for d in sources}}
+    notes_lues = [(r, n) for r, n in _notes_citees(reperes) if n["public"]]   # notes publiques seulement
+    visibles.update({r: -n["id"] for r, n in notes_lues})
     web = rev.get("sources_web") or []
     contenu, questions, cartes = None, [], []
     if rev["genre"] == "quiz":
@@ -4609,7 +4663,7 @@ def partage_revision(request: Request, rev_id: int):
                          .replace('href="/doc/', 'href="/partages/doc/'))
     return templates.TemplateResponse(request, "partage_revision.html", {
         "rev": rev, "genres": revision.GENRES, "contenu": contenu, "questions": questions, "cartes": cartes,
-        "sources": sources, "reperes": visibles})
+        "sources": sources, "reperes": visibles, "notes_lues": notes_lues})
 
 
 @app.get("/partages/campagne/{campagne_id}", response_class=HTMLResponse)

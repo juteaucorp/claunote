@@ -12,7 +12,7 @@
   <details id="reponse">
     <summary>Voir la réponse <span class="doux clavier">(espace)</span></summary>
     <div class="verso">{{ carte.verso|maths }}
-      {% if carte.source in reperes %}<p class="doux"><a href="/doc/{{ reperes[carte.source] }}">[{{ carte.source }}] voir le cours</a></p>{% endif %}
+      {% if carte.source in reperes %}<p class="doux"><a href="{{ reperes[carte.source]|lien_source }}">[{{ carte.source }}] voir {{ 'la note' if reperes[carte.source] < 0 else 'le cours' }}</a></p>{% endif %}
     </div>
   </details>
 </div>

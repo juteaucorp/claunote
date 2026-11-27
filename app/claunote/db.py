@@ -113,6 +113,10 @@ ALTER TABLE revisions ADD COLUMN IF NOT EXISTS strict BOOLEAN NOT NULL DEFAULT f
 -- Modification demandée par l'élève (« ajoute un exemple sur… ») en attente, et l'historique de celles faites
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS retouche TEXT;
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS retouches JSONB NOT NULL DEFAULT '[]';
+-- Notes lues par l'IA (worker.notes_de_revision) : cochées dans le formulaire (toujours lues) et décochées (jamais).
+-- Les autres notes de la matière et des cours sont choisies au moment de la rédaction.
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS note_ids INT[] NOT NULL DEFAULT '{}';
+ALTER TABLE revisions ADD COLUMN IF NOT EXISTS notes_exclues INT[] NOT NULL DEFAULT '{}';
 -- Archivage (archivage.py) : ce qui ne sert plus sort des listes et des flashcards du jour, sans être supprimé.
 -- garder_jusqu_au : « Garder » sur une proposition, pas reproposé avant cette date.
 ALTER TABLE revisions ADD COLUMN IF NOT EXISTS ouverte_le TIMESTAMPTZ;       -- dernière ouverture de la page
@@ -1382,7 +1386,8 @@ def niveaux_matieres():
 
 
 def creer_revision(genre: str, sujet: str, doc_ids: list[int], date_eval=None, consigne: str = "",
-                   campagne_id: int | None = None, strict: bool = False) -> int:
+                   campagne_id: int | None = None, strict: bool = False, note_ids: list[int] | None = None,
+                   notes_exclues: list[int] | None = None) -> int:
     """La matière de la révision est celle de son premier cours (filtre de l'historique).
     Un sujet trop long (une demande collée en entier) donne un titre court ; le texte entier va à l'IA."""
     from claunote.revision import titre_court  # import ici : revision charge l'agent
@@ -1392,10 +1397,12 @@ def creer_revision(genre: str, sujet: str, doc_ids: list[int], date_eval=None, c
     sujet = court
     with connect() as c:
         return c.execute(
-            """INSERT INTO revisions (genre, sujet, doc_ids, date_eval, consigne, campagne_id, strict, niveau, matiere)
-               SELECT %s, %s, %s, %s, %s, %s, %s, d.niveau, d.matiere
+            """INSERT INTO revisions (genre, sujet, doc_ids, date_eval, consigne, campagne_id, strict, niveau, matiere,
+                                    note_ids, notes_exclues)
+               SELECT %s, %s, %s, %s, %s, %s, %s, d.niveau, d.matiere, %s, %s
                FROM (SELECT 1) AS x LEFT JOIN documents d ON d.id = %s RETURNING id""",
-            (genre, sujet, doc_ids, date_eval, consigne, campagne_id, strict, doc_ids[0] if doc_ids else None)
+            (genre, sujet, doc_ids, date_eval, consigne, campagne_id, strict, list(note_ids or []),
+             list(notes_exclues or []), doc_ids[0] if doc_ids else None)
         ).fetchone()["id"]
 
 
@@ -3764,7 +3771,8 @@ def titres_documents_tous(ids: list[int]) -> dict[int, str]:
 
 _NOTE_COLS = ("n.id, n.titre, n.niveau, n.matiere, n.document_id, n.epinglee, n.public, n.archive_le, n.cree_le, "
               "n.maj_le, n.compte_id, left(n.contenu, 600) AS debut, length(n.contenu) AS taille, "
-              "coalesce(nullif(a.nom, ''), a.identifiant) AS auteur")
+              "coalesce(nullif(a.nom, ''), a.identifiant) AS auteur, "
+              "(SELECT coalesce(nullif(d.titre, ''), d.nom) FROM documents d WHERE d.id = n.document_id) AS cours_titre")
 _NOTE_DE = "notes n LEFT JOIN comptes a ON a.id = n.compte_id"
 _A_L_AUTEUR = "compte_id = claunote_compte()"
 
@@ -3878,6 +3886,76 @@ def notes_matiere(niveau: str, matiere: str):
                          (matiere, niveau)).fetchall()
 
 
+def notes_publiques_du_document(doc_id: int):
+    """Les notes que les autres comptes ont rendues publiques sur ce cours (lecture seule)."""
+    with partages(), connect() as c:
+        return c.execute(f"SELECT {_NOTE_COLS} FROM {_NOTE_DE} WHERE n.document_id = %s AND n.public "
+                         "AND n.archive_le IS NULL AND n.compte_id <> claunote_compte() ORDER BY n.maj_le DESC",
+                         (doc_id,)).fetchall()
+
+
+def notes_a_lier(niveau: str | None, matiere: str | None, doc_id: int):
+    """Ses notes de la matière d'un cours qui ne sont rattachées à aucun cours : à lier en un appui."""
+    if not matiere:
+        return []
+    with connect() as c:
+        return c.execute(f"SELECT {_NOTE_COLS} FROM {_NOTE_DE} WHERE n.matiere = %s AND n.niveau IS NOT DISTINCT FROM %s "
+                         f"AND n.document_id IS NULL AND n.archive_le IS NULL AND n.{_A_L_AUTEUR} "
+                         "ORDER BY n.epinglee DESC, n.maj_le DESC", (matiere, niveau)).fetchall()
+
+
+def lier_note(note_id: int, document_id: int | None, niveau: str | None = None, matiere: str | None = None) -> bool:
+    """Rattache sa note à un cours (ou la détache : None). Une note sans matière prend celle du cours."""
+    with connect() as c:
+        return c.execute(f"UPDATE notes SET document_id = %s, niveau = CASE WHEN matiere IS NULL THEN %s ELSE niveau END, "
+                         f"matiere = coalesce(matiere, %s) WHERE id = %s AND {_A_L_AUTEUR}",
+                         (document_id, niveau, matiere, note_id)).rowcount == 1
+
+
+def notes_pour_revision(doc_ids: list[int], matieres: list[tuple[str | None, str]], sujet: str | None = None,
+                        choisies: list[int] | None = None, exclues: list[int] | None = None):
+    """Notes que l'IA lit avec les cours d'une révision : les siennes et celles que les autres ont rendues
+    publiques (jamais une note privée d'un autre), pas archivées, pas vides.
+
+        cochées dans le formulaire ─┐
+        rattachées aux cours lus ───┼─► toujours
+        de la matière ──────────────┴─► toutes si la révision couvre la matière entière (`sujet` vide),
+                                        sinon celles qui parlent du sujet (un mot du sujet suffit)
+    `exclues` : décochées par l'élève, jamais lues. Ordre : cochées et rattachées, puis les plus proches du sujet."""
+    from claunote import notes as n_
+    requete = n_.requete_prefixe(sujet or "")
+    souple = requete.replace(" & ", " | ") if requete else None
+    niveaux = [niv or "" for niv, _ in matieres]
+    noms = [mat for _, mat in matieres]
+    with partages(), connect() as c:
+        return c.execute(
+            f"""SELECT n.*, coalesce(nullif(a.nom, ''), a.identifiant) AS auteur FROM {_NOTE_DE}
+               WHERE n.archive_le IS NULL AND length(btrim(n.contenu)) > 0
+                 AND (n.compte_id = claunote_compte() OR n.public) AND NOT (n.id = ANY(%(exclues)s))
+                 AND (n.id = ANY(%(choisies)s) OR n.document_id = ANY(%(docs)s)
+                      OR (EXISTS (SELECT 1 FROM unnest(%(niveaux)s::text[], %(noms)s::text[]) AS m(niv, mat)
+                                  WHERE n.matiere = m.mat AND coalesce(n.niveau, '') = m.niv)
+                          AND (%(souple)s::text IS NULL OR n.recherche @@ to_tsquery('french', %(souple)s))))
+               ORDER BY coalesce(n.id = ANY(%(choisies)s) OR n.document_id = ANY(%(docs)s), false) DESC,
+                        CASE WHEN %(souple)s::text IS NULL THEN 0
+                             ELSE ts_rank(n.recherche, to_tsquery('french', %(souple)s)) END DESC,
+                        n.compte_id <> claunote_compte(), n.epinglee DESC, n.maj_le DESC, n.id""",
+            {"exclues": list(exclues or []), "choisies": list(choisies or []), "docs": list(doc_ids or []),
+             "niveaux": niveaux, "noms": noms, "souple": souple}).fetchall()
+
+
+def notes_lisibles(ids: list[int]):
+    """Notes citées par une révision : les siennes et les publiques des autres, dans l'ordre demandé."""
+    if not ids:
+        return []
+    with partages(), connect() as c:
+        lignes = c.execute(f"SELECT n.*, coalesce(nullif(a.nom, ''), a.identifiant) AS auteur FROM {_NOTE_DE} "
+                           "WHERE n.id = ANY(%s) AND (n.compte_id = claunote_compte() OR n.public)",
+                           (list(ids),)).fetchall()
+    par_id = {n["id"]: n for n in lignes}
+    return [par_id[i] for i in ids if i in par_id]
+
+
 def notes_choisies(ids: list[int]):
     """Notes cochées (les siennes seulement), texte compris."""
     if not ids:
@@ -3888,24 +3966,28 @@ def notes_choisies(ids: list[int]):
 
 
 def notes_pour_question(q: str, niveau: str | None, matiere: str | None, limite: int = 3):
-    """Ses notes qui parlent de la question (chat « Une question »), dans la matière choisie s'il y en a une."""
+    """Les notes qui parlent de la question (chat « Une question »), dans la matière choisie s'il y en a une :
+    les siennes et celles que les autres ont rendues publiques, les plus proches d'abord."""
     from claunote import notes as n_
     requete = n_.requete_prefixe(q)
     if not requete:
         return []
-    conditions, params = [f"{_A_L_AUTEUR}", "archive_le IS NULL", "recherche @@ to_tsquery('french', %s)"], [requete]
+    conditions = ["(n.compte_id = claunote_compte() OR n.public)", "n.archive_le IS NULL",
+                  "n.recherche @@ to_tsquery('french', %s)"]
+    params = [requete]
     if matiere:
-        conditions.append("matiere = %s")
+        conditions.append("n.matiere = %s")
         params.append(matiere)
     if niveau:
-        conditions.append("niveau IS NOT DISTINCT FROM %s")
+        conditions.append("n.niveau IS NOT DISTINCT FROM %s")
         params.append(niveau)
-    with connect() as c:
+    with partages(), connect() as c:
         # Les mots d'une question ne sont pas tous dans la note : au moins l'un d'eux (|), les meilleures d'abord
         souple = requete.replace(" & ", " | ")
         params[0] = souple
-        return c.execute(f"SELECT * FROM notes WHERE {' AND '.join(conditions)} "
-                         "ORDER BY ts_rank(recherche, to_tsquery('french', %s)) DESC LIMIT %s",
+        return c.execute(f"SELECT n.*, coalesce(nullif(a.nom, ''), a.identifiant) AS auteur FROM {_NOTE_DE} "
+                         f"WHERE {' AND '.join(conditions)} "
+                         "ORDER BY ts_rank(n.recherche, to_tsquery('french', %s)) DESC, n.compte_id <> claunote_compte() LIMIT %s",
                          (*params, requete, limite)).fetchall()
 
 
